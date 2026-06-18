@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: wt_postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-worktogether}
+      POSTGRES_USER: ${DB_USER:-wt}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-wt} -d ${DB_NAME:-worktogether}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: wt_backend
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-worktogether}
+      DB_USER: ${DB_USER:-wt}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      JWT_SECRET: ${JWT_SECRET:-please-change-this-secret-key-in-production}
+      JWT_EXPIRY_MS: ${JWT_EXPIRY_MS:-900000}
+      JWT_REFRESH_EXPIRY_MS: ${JWT_REFRESH_EXPIRY_MS:-604800000}
+      ADMIN_INIT_EMAIL: ${ADMIN_INIT_EMAIL:-admin@example.com}
+      ADMIN_INIT_PASSWORD: ${ADMIN_INIT_PASSWORD:-Admin1234!}
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - backend_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  # Frontend scollegato dall'avvio di default: su Windows gira fuori da Docker (npm run dev).
+  # `docker compose up` avvia SOLO postgres + backend.
+  # Per buildare/avviare anche il frontend in Docker: `docker compose --profile frontend up`
+  frontend:
+    profiles: ["frontend"]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+    container_name: wt_frontend
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  backend_uploads:

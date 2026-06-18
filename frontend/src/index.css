@@ -1,0 +1,284 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 222 47% 11%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 222 47% 11%;
+    --radius: 0.5rem;
+    --sidebar: 210 40% 98%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-border: 214 32% 91%;
+  }
+
+  /* Tema CREMA — bianco caldo */
+  :root[data-theme="crema"] {
+    --background: 40 33% 96%;
+    --foreground: 30 15% 18%;
+    --card: 40 40% 98%;
+    --card-foreground: 30 15% 18%;
+    --popover: 40 40% 98%;
+    --popover-foreground: 30 15% 18%;
+    --primary: 25 45% 35%;
+    --primary-foreground: 40 40% 97%;
+    --secondary: 40 25% 90%;
+    --secondary-foreground: 30 15% 20%;
+    --muted: 40 25% 91%;
+    --muted-foreground: 30 10% 42%;
+    --accent: 40 30% 88%;
+    --accent-foreground: 30 15% 20%;
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 40 40% 97%;
+    --border: 38 25% 85%;
+    --input: 38 25% 85%;
+    --ring: 25 45% 35%;
+    --sidebar: 40 30% 93%;
+    --sidebar-foreground: 30 15% 18%;
+    --sidebar-border: 38 25% 85%;
+  }
+
+  /* Tema BEIGE — tono tan/greige */
+  :root[data-theme="beige"] {
+    --background: 36 24% 90%;
+    --foreground: 30 12% 16%;
+    --card: 36 28% 94%;
+    --card-foreground: 30 12% 16%;
+    --popover: 36 28% 94%;
+    --popover-foreground: 30 12% 16%;
+    --primary: 30 20% 28%;
+    --primary-foreground: 36 30% 95%;
+    --secondary: 36 20% 84%;
+    --secondary-foreground: 30 12% 18%;
+    --muted: 36 20% 85%;
+    --muted-foreground: 30 8% 40%;
+    --accent: 36 22% 82%;
+    --accent-foreground: 30 12% 18%;
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 36 30% 95%;
+    --border: 35 18% 78%;
+    --input: 35 18% 78%;
+    --ring: 30 20% 28%;
+    --sidebar: 36 22% 87%;
+    --sidebar-foreground: 30 12% 16%;
+    --sidebar-border: 35 18% 78%;
+  }
+
+  /* Tema BLU — chiaro con accenti blu */
+  :root[data-theme="blu"] {
+    --background: 210 60% 98%;
+    --foreground: 222 47% 16%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 16%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 16%;
+    --primary: 221 83% 53%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 214 50% 93%;
+    --secondary-foreground: 222 47% 20%;
+    --muted: 214 45% 93%;
+    --muted-foreground: 215 25% 45%;
+    --accent: 213 60% 90%;
+    --accent-foreground: 222 47% 20%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214 40% 86%;
+    --input: 214 40% 86%;
+    --ring: 221 83% 53%;
+    --sidebar: 214 55% 95%;
+    --sidebar-foreground: 222 47% 16%;
+    --sidebar-border: 214 40% 86%;
+  }
+
+  /* Tema LAVANDA — chiaro con accenti viola */
+  :root[data-theme="lavanda"] {
+    --background: 270 40% 98%;
+    --foreground: 270 30% 18%;
+    --card: 0 0% 100%;
+    --card-foreground: 270 30% 18%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 270 30% 18%;
+    --primary: 262 60% 55%;
+    --primary-foreground: 270 40% 98%;
+    --secondary: 270 30% 93%;
+    --secondary-foreground: 270 30% 22%;
+    --muted: 270 30% 93%;
+    --muted-foreground: 270 12% 48%;
+    --accent: 270 35% 90%;
+    --accent-foreground: 270 30% 22%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 270 25% 88%;
+    --input: 270 25% 88%;
+    --ring: 262 60% 55%;
+    --sidebar: 270 35% 95%;
+    --sidebar-foreground: 270 30% 18%;
+    --sidebar-border: 270 25% 88%;
+  }
+
+  /* Tema GRIGIO SCURO — applicato anche tramite la classe .dark per le utility dark: */
+  .dark {
+    --background: 0 0% 9%;
+    --foreground: 0 0% 95%;
+    --card: 0 0% 12%;
+    --card-foreground: 0 0% 95%;
+    --popover: 0 0% 12%;
+    --popover-foreground: 0 0% 95%;
+    --primary: 0 0% 95%;
+    --primary-foreground: 0 0% 12%;
+    --secondary: 0 0% 16%;
+    --secondary-foreground: 0 0% 95%;
+    --muted: 0 0% 16%;
+    --muted-foreground: 0 0% 60%;
+    --accent: 0 0% 20%;
+    --accent-foreground: 0 0% 95%;
+    --destructive: 0 63% 45%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 20%;
+    --input: 0 0% 20%;
+    --ring: 0 0% 75%;
+    --sidebar: 0 0% 11%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-border: 0 0% 18%;
+  }
+
+  /* Tema NOTTE — blu profondo */
+  :root[data-theme="notte"] {
+    --background: 222 47% 11%;
+    --foreground: 213 31% 91%;
+    --card: 222 47% 14%;
+    --card-foreground: 213 31% 91%;
+    --popover: 222 47% 14%;
+    --popover-foreground: 213 31% 91%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 217 33% 20%;
+    --secondary-foreground: 213 31% 91%;
+    --muted: 217 33% 18%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 217 33% 24%;
+    --accent-foreground: 213 31% 91%;
+    --destructive: 0 63% 50%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 217 33% 22%;
+    --input: 217 33% 22%;
+    --ring: 217 91% 60%;
+    --sidebar: 222 47% 13%;
+    --sidebar-foreground: 213 31% 91%;
+    --sidebar-border: 217 33% 20%;
+  }
+
+  /* Tema CARBONE — quasi nero */
+  :root[data-theme="carbone"] {
+    --background: 0 0% 4%;
+    --foreground: 0 0% 92%;
+    --card: 0 0% 7%;
+    --card-foreground: 0 0% 92%;
+    --popover: 0 0% 7%;
+    --popover-foreground: 0 0% 92%;
+    --primary: 0 0% 92%;
+    --primary-foreground: 0 0% 7%;
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 0 0% 92%;
+    --muted: 0 0% 12%;
+    --muted-foreground: 0 0% 55%;
+    --accent: 0 0% 16%;
+    --accent-foreground: 0 0% 92%;
+    --destructive: 0 63% 48%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 15%;
+    --input: 0 0% 15%;
+    --ring: 0 0% 70%;
+    --sidebar: 0 0% 6%;
+    --sidebar-foreground: 0 0% 92%;
+    --sidebar-border: 0 0% 14%;
+  }
+
+  /* Tema FORESTA — verde scuro */
+  :root[data-theme="foresta"] {
+    --background: 150 18% 9%;
+    --foreground: 140 20% 92%;
+    --card: 150 18% 12%;
+    --card-foreground: 140 20% 92%;
+    --popover: 150 18% 12%;
+    --popover-foreground: 140 20% 92%;
+    --primary: 142 60% 45%;
+    --primary-foreground: 150 30% 8%;
+    --secondary: 150 15% 18%;
+    --secondary-foreground: 140 20% 92%;
+    --muted: 150 15% 16%;
+    --muted-foreground: 140 12% 62%;
+    --accent: 150 15% 22%;
+    --accent-foreground: 140 20% 92%;
+    --destructive: 0 63% 50%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 150 15% 20%;
+    --input: 150 15% 20%;
+    --ring: 142 60% 45%;
+    --sidebar: 150 18% 11%;
+    --sidebar-foreground: 140 20% 92%;
+    --sidebar-border: 150 15% 18%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+  html {
+    @apply scroll-smooth;
+  }
+}
+
+/* Tiptap editor */
+.ProseMirror {
+  @apply outline-none min-h-[200px];
+}
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  @apply text-muted-foreground pointer-events-none float-left h-0;
+}
+.ProseMirror ul[data-type="taskList"] {
+  @apply list-none pl-0;
+}
+.ProseMirror ul[data-type="taskList"] li {
+  @apply flex items-start gap-2;
+}
+.ProseMirror ul[data-type="taskList"] li > label {
+  @apply mt-1;
+}
+.ProseMirror h1 { @apply text-2xl font-semibold mt-4 mb-2; }
+.ProseMirror h2 { @apply text-xl font-semibold mt-3 mb-2; }
+.ProseMirror h3 { @apply text-lg font-medium mt-2 mb-1; }
+.ProseMirror ul { @apply list-disc pl-5 my-1; }
+.ProseMirror ol { @apply list-decimal pl-5 my-1; }
+.ProseMirror blockquote { @apply border-l-4 border-muted-foreground pl-4 italic text-muted-foreground; }
+.ProseMirror code { @apply bg-muted px-1 py-0.5 rounded text-sm font-mono; }
+.ProseMirror pre { @apply bg-muted p-4 rounded-lg overflow-x-auto; }
+.ProseMirror pre code { @apply bg-transparent p-0; }
+.ProseMirror hr { @apply border-border my-4; }
+
+/* Kanban scrollbar */
+.kanban-scroll::-webkit-scrollbar { height: 6px; }
+.kanban-scroll::-webkit-scrollbar-track { @apply bg-transparent; }
+.kanban-scroll::-webkit-scrollbar-thumb { @apply bg-border rounded-full; }
