@@ -99,17 +99,32 @@ export const driveApi = {
     api.post(`/workspaces/${wsId}/drive/folders`, { name, parentId }).then(r => r.data),
   deleteFolder: (wsId: string, folderId: string) =>
     api.delete(`/workspaces/${wsId}/drive/folders/${folderId}`),
+  moveFolder: (wsId: string, folderId: string, targetFolderId?: string) =>
+    api.patch(`/workspaces/${wsId}/drive/folders/${folderId}/move`, { targetFolderId: targetFolderId ?? null }).then(r => r.data),
+  renameFolder: (wsId: string, folderId: string, name: string) =>
+    api.patch(`/workspaces/${wsId}/drive/folders/${folderId}/rename`, { name }).then(r => r.data),
   listFiles: (wsId: string, folderId?: string) =>
     api.get(`/workspaces/${wsId}/drive/files`, { params: folderId ? { folderId } : {} }).then(r => r.data),
-  upload: (wsId: string, file: File, folderId?: string) => {
+  upload: (wsId: string, file: File, folderId?: string, onProgress?: (percent: number) => void) => {
     const form = new FormData()
     form.append('file', file)
     return api
-      .post(`/workspaces/${wsId}/drive/files`, form, { params: folderId ? { folderId } : {} })
+      .post(`/workspaces/${wsId}/drive/files`, form, {
+        params: folderId ? { folderId } : {},
+        onUploadProgress: e => {
+          if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100))
+        },
+      })
       .then(r => r.data)
   },
   deleteFile: (wsId: string, fileId: string) =>
     api.delete(`/workspaces/${wsId}/drive/files/${fileId}`),
+  moveFile: (wsId: string, fileId: string, targetFolderId?: string) =>
+    api.patch(`/workspaces/${wsId}/drive/files/${fileId}/move`, { targetFolderId: targetFolderId ?? null }).then(r => r.data),
+  renameFile: (wsId: string, fileId: string, name: string) =>
+    api.patch(`/workspaces/${wsId}/drive/files/${fileId}/rename`, { name }).then(r => r.data),
+  copyFile: (wsId: string, fileId: string) =>
+    api.post(`/workspaces/${wsId}/drive/files/${fileId}/copy`).then(r => r.data),
   download: async (wsId: string, fileId: string, filename: string) => {
     const res = await api.get(`/workspaces/${wsId}/drive/files/${fileId}`, { responseType: 'blob' })
     const url = URL.createObjectURL(res.data)
@@ -133,6 +148,101 @@ export const driveApi = {
     api.post(`/workspaces/${wsId}/drive/files/${fileId}/lock`).then(r => r.data),
   unlock: (wsId: string, fileId: string) =>
     api.delete(`/workspaces/${wsId}/drive/files/${fileId}/lock`),
+}
+
+// API keys (integrazioni esterne)
+export const apiKeysApi = {
+  list: (wsId: string) => api.get(`/workspaces/${wsId}/api-keys`).then(r => r.data),
+  create: (wsId: string, data: { name: string; scopes: string[]; expiresInDays?: number | null }) =>
+    api.post(`/workspaces/${wsId}/api-keys`, data).then(r => r.data),
+  delete: (wsId: string, keyId: string) =>
+    api.delete(`/workspaces/${wsId}/api-keys/${keyId}`),
+}
+
+// Handler per lo streaming SSE dell'agente.
+export interface AiStreamHandlers {
+  onToken: (t: string) => void
+  onTool?: (name: string) => void
+  onConfirm?: (actions: any[]) => void
+  onDone?: () => void
+  onError?: (m: string) => void
+}
+
+// Legge una risposta SSE via fetch (per poter inviare il Bearer token).
+async function aiStreamSse(path: string, body: object, handlers: AiStreamHandlers) {
+  const token = useAuthStore.getState().accessToken
+  const base = (import.meta as any).env?.VITE_API_URL || '/api'
+  let res: Response
+  try {
+    res = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    handlers.onError?.('Errore di rete')
+    return
+  }
+  if (!res.ok || !res.body) {
+    let msg = 'Errore nella richiesta'
+    try { const j = await res.json(); msg = j.error || msg } catch { /* ignore */ }
+    handlers.onError?.(msg)
+    return
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    const events = buf.split('\n\n')
+    buf = events.pop() ?? ''
+    for (const evt of events) {
+      const dataLine = evt.split('\n').find(l => l.startsWith('data:'))
+      if (!dataLine) continue
+      const payload = dataLine.slice(5).trim()
+      if (!payload) continue
+      try {
+        const ev = JSON.parse(payload)
+        if (ev.type === 'token') handlers.onToken(ev.text)
+        else if (ev.type === 'tool') handlers.onTool?.(ev.name)
+        else if (ev.type === 'confirm') handlers.onConfirm?.(ev.actions || [])
+        else if (ev.type === 'done') handlers.onDone?.()
+        else if (ev.type === 'error') handlers.onError?.(ev.message || 'Errore')
+      } catch { /* frammento non-JSON */ }
+    }
+  }
+}
+
+// Agente AI
+export const aiApi = {
+  getSettings: (wsId: string) => api.get(`/workspaces/${wsId}/ai/settings`).then(r => r.data),
+  updateSettings: (wsId: string, data: object) =>
+    api.put(`/workspaces/${wsId}/ai/settings`, data).then(r => r.data),
+  testConnection: (wsId: string, apiKey?: string) =>
+    api.post(`/workspaces/${wsId}/ai/test`, apiKey ? { apiKey } : {}).then(r => r.data),
+  status: (wsId: string) => api.get(`/workspaces/${wsId}/ai/status`).then(r => r.data),
+
+  listConversations: (wsId: string, scope: string) =>
+    api.get(`/workspaces/${wsId}/ai/conversations`, { params: { scope } }).then(r => r.data),
+  createConversation: (wsId: string, data: { scope: string; title?: string }) =>
+    api.post(`/workspaces/${wsId}/ai/conversations`, data).then(r => r.data),
+  getMessages: (wsId: string, convId: string) =>
+    api.get(`/workspaces/${wsId}/ai/conversations/${convId}/messages`).then(r => r.data),
+  deleteConversation: (wsId: string, convId: string) =>
+    api.delete(`/workspaces/${wsId}/ai/conversations/${convId}`),
+
+  // Invio messaggio con risposta in streaming.
+  streamMessage: (wsId: string, convId: string, text: string, handlers: AiStreamHandlers) =>
+    aiStreamSse(`/workspaces/${wsId}/ai/conversations/${convId}/messages`, { text }, handlers),
+
+  // Conferma/annulla le azioni in attesa e riprende lo stream.
+  confirmActions: (wsId: string, convId: string, confirm: boolean, handlers: AiStreamHandlers) =>
+    aiStreamSse(`/workspaces/${wsId}/ai/conversations/${convId}/confirm`, { confirm }, handlers),
 }
 
 // Attachments

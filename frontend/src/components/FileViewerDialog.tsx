@@ -6,7 +6,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button'
 import { toast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
-import { Save, Eye, Pencil, Lock, Download } from 'lucide-react'
+import { CodeEditor } from '@/components/editor/CodeEditor'
+import { detectLang, LANGUAGES, LangId } from '@/components/editor/languages'
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
+import { Save, Eye, Pencil, Lock, Download, WrapText } from 'lucide-react'
 
 interface Props {
   open: boolean
@@ -27,6 +30,8 @@ export function FileViewerDialog({ open, onClose, wsId, file, canEdit, resolveNa
   const [iHoldLock, setIHoldLock] = useState(false)
   const [lockedByName, setLockedByName] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [lang, setLang] = useState<LangId>('plaintext')
+  const [wrap, setWrap] = useState(false)
 
   // ref per accedere allo stato del lock nella pulizia
   const holdRef = useRef(false)
@@ -44,6 +49,8 @@ export function FileViewerDialog({ open, onClose, wsId, file, canEdit, resolveNa
       setIHoldLock(false); setLockedByName(null); setMode('view')
       const k = fileKind(file.filename, file.contentType)
       setKind(k)
+      setLang(detectLang(file.filename))
+      setWrap(false)
       try {
         if (k === 'image' || k === 'pdf') {
           const blob = await driveApi.fetchBlob(wsId, file.id)
@@ -105,13 +112,38 @@ export function FileViewerDialog({ open, onClose, wsId, file, canEdit, resolveNa
 
   const editable = iHoldLock && !lockedByName
   const dirty = edited !== content
+  // Strumenti editor visibili quando si mostra il CodeEditor (testo, o markdown in modifica).
+  const showEditorTools = kind === 'text' || (kind === 'markdown' && mode === 'edit')
 
   return (
     <Dialog open={open} onOpenChange={v => !v && handleClose()}>
-      <DialogContent className="max-w-3xl w-full h-[80vh] flex flex-col p-0 gap-0">
-        <DialogHeader className="pl-5 pr-12 py-3 border-b flex-row items-center justify-between space-y-0">
-          <DialogTitle className="text-sm truncate pr-4">{file?.filename}</DialogTitle>
-          <div className="flex items-center gap-2">
+      <DialogContent className="max-w-none w-[96vw] h-[94vh] flex flex-col p-0 gap-0">
+        <DialogHeader className="pl-5 pr-12 py-2.5 border-b flex-row items-center justify-between gap-3 space-y-0">
+          <DialogTitle className="text-sm truncate pr-2 shrink min-w-0">{file?.filename}</DialogTitle>
+          <div className="flex items-center gap-2 shrink-0">
+            {showEditorTools && (
+              <>
+                <Select value={lang} onValueChange={v => setLang(v as LangId)}>
+                  <SelectTrigger className="h-8 w-[148px] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    {LANGUAGES.map(l => (
+                      <SelectItem key={l.id} value={l.id} className="text-xs">{l.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant={wrap ? 'secondary' : 'ghost'}
+                  size="icon"
+                  className="h-8 w-8"
+                  title="A capo automatico"
+                  onClick={() => setWrap(w => !w)}
+                >
+                  <WrapText className="h-4 w-4" />
+                </Button>
+              </>
+            )}
             {kind === 'markdown' && (
               <div className="flex rounded-md border overflow-hidden">
                 <button
@@ -160,12 +192,12 @@ export function FileViewerDialog({ open, onClose, wsId, file, canEdit, resolveNa
               dangerouslySetInnerHTML={{ __html: markdownToHtml(content) }}
             />
           ) : kind === 'text' || kind === 'markdown' ? (
-            <textarea
+            <CodeEditor
               value={editable ? edited : content}
-              onChange={e => editable && setEdited(e.target.value)}
+              onChange={editable ? setEdited : undefined}
+              language={lang}
+              wrap={wrap}
               readOnly={!editable}
-              spellCheck={false}
-              className="w-full h-full resize-none border-0 bg-background p-4 font-mono text-sm leading-relaxed focus:outline-none"
             />
           ) : (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-center text-sm text-muted-foreground p-6">

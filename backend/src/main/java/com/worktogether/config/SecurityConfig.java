@@ -1,5 +1,6 @@
 package com.worktogether.config;
 
+import com.worktogether.security.ApiKeyAuthFilter;
 import com.worktogether.security.JwtAuthFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.*;
@@ -26,6 +27,7 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
+    private final ApiKeyAuthFilter apiKeyAuthFilter;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -45,6 +47,8 @@ public class SecurityConfig {
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(
                         new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                // L'autenticazione via API key (token "wt_...") precede il filtro JWT.
+                .addFilterBefore(apiKeyAuthFilter, JwtAuthFilter.class)
                 .build();
     }
 

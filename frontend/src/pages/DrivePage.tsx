@@ -4,10 +4,15 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { driveApi, workspacesApi } from '@/lib/api'
 import { Folder as FolderType, DriveFile, Member } from '@/types'
 import { useWorkspaceStore } from '@/store/workspaceStore'
+import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Progress } from '@/components/ui/progress'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
 import { toast } from '@/components/ui/toast'
 import { formatBytes, formatDate, cn } from '@/lib/utils'
 import { fileKind } from '@/lib/markdown'
@@ -15,16 +20,29 @@ import { UserAvatar } from '@/components/UserAvatar'
 import { FileViewerDialog } from '@/components/FileViewerDialog'
 import {
   Folder as FolderIcon, FolderPlus, Upload, Download, Trash2,
-  ChevronRight, File as FileIcon, Home, Lock,
+  ChevronRight, File as FileIcon, Home, Lock, GripVertical,
+  MoreVertical, Pencil, Copy,
 } from 'lucide-react'
 
 interface Crumb { id?: string; name: string }
+
+// Elemento trascinato internamente (file o cartella).
+interface DragItem { kind: 'file' | 'folder'; id: string; name: string }
+const DND_MIME = 'application/x-wt-item'
+
+const isExternalDrag = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files')
+const isInternalDrag = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes(DND_MIME)
 
 export default function DrivePage() {
   const { wsId } = useParams<{ wsId: string }>()
   const queryClient = useQueryClient()
   const workspace = useWorkspaceStore(s => s.current)
+  const myUserId = useAuthStore(s => s.user?.id)
   const canEdit = workspace?.myRole !== 'GUEST'
+  const isAdmin = workspace?.myRole === 'ADMIN'
+  // Spostare/eliminare è permesso solo a chi possiede l'elemento o all'admin.
+  const canMoveFile = (f: DriveFile) => canEdit && (isAdmin || f.uploadedBy === myUserId)
+  const canMoveFolder = (f: FolderType) => canEdit && (isAdmin || f.createdBy === myUserId)
 
   const [path, setPath] = useState<Crumb[]>([])
   const currentFolderId = path.length ? path[path.length - 1].id : undefined
@@ -33,8 +51,18 @@ export default function DrivePage() {
   const [newFolderName, setNewFolderName] = useState('')
   const [creating, setCreating] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [progress, setProgress] = useState<{ index: number; total: number; percent: number; name: string } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [viewerFile, setViewerFile] = useState<DriveFile | null>(null)
+  const [renameTarget, setRenameTarget] = useState<{ kind: 'file' | 'folder'; id: string; name: string } | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [renaming, setRenaming] = useState(false)
+
+  // Stato drag-and-drop.
+  const [dragItem, setDragItem] = useState<DragItem | null>(null)
+  const [dropTarget, setDropTarget] = useState<string | null>(null) // id cartella o 'crumb:<id|root>'
+  const [externalOver, setExternalOver] = useState(false)
+  const dragDepth = useRef(0)
 
   const { data: folders = [] } = useQuery<FolderType[]>({
     queryKey: ['drive-folders', wsId, currentFolderId],
@@ -70,9 +98,14 @@ export default function DrivePage() {
     queryClient.invalidateQueries({ queryKey: ['drive-folders', wsId, currentFolderId] })
     queryClient.invalidateQueries({ queryKey: ['drive-files', wsId, currentFolderId] })
   }
+  // Invalida tutte le viste del Drive (utile quando lo spostamento tocca più cartelle).
+  const refreshAll = () => {
+    queryClient.invalidateQueries({ queryKey: ['drive-folders', wsId] })
+    queryClient.invalidateQueries({ queryKey: ['drive-files', wsId] })
+  }
 
   const openFolder = (f: FolderType) => setPath(p => [...p, { id: f.id, name: f.name }])
-  const goToCrumb = (index: number) => setPath(p => p.slice(0, index)) // index -1 → root handled below
+  const goToCrumb = (index: number) => setPath(p => p.slice(0, index))
 
   const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -91,19 +124,71 @@ export default function DrivePage() {
     }
   }
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file || !wsId) return
+  // Carica uno o più file nella cartella indicata (default: cartella corrente).
+  const uploadFiles = async (fileList: FileList | File[], folderId = currentFolderId) => {
+    const list = Array.from(fileList)
+    if (!list.length || !wsId) return
     setUploading(true)
+    let ok = 0
     try {
-      await driveApi.upload(wsId, file, currentFolderId)
-      refresh()
-      toast('File caricato')
-    } catch (err: any) {
-      toast(err.response?.data?.error ?? 'Errore nel caricamento', 'destructive')
+      for (let i = 0; i < list.length; i++) {
+        const file = list[i]
+        setProgress({ index: i + 1, total: list.length, percent: 0, name: file.name })
+        try {
+          await driveApi.upload(wsId, file, folderId, p =>
+            setProgress(prev => prev && { ...prev, percent: p }))
+          ok++
+        } catch (err: any) {
+          toast(`Errore con "${file.name}": ${err.response?.data?.error ?? 'caricamento fallito'}`, 'destructive')
+        }
+      }
+      if (ok > 0) {
+        refreshAll()
+        toast(ok === 1 ? 'File caricato' : `${ok} file caricati`)
+      }
     } finally {
       setUploading(false)
-      if (fileRef.current) fileRef.current.value = ''
+      setProgress(null)
+    }
+  }
+
+  const handleUploadInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files?.length) await uploadFiles(e.target.files)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  const openRename = (kind: 'file' | 'folder', id: string, name: string) => {
+    setRenameTarget({ kind, id, name })
+    setRenameValue(name)
+  }
+
+  const handleRename = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!wsId || !renameTarget) return
+    const name = renameValue.trim()
+    if (!name || name === renameTarget.name) { setRenameTarget(null); return }
+    setRenaming(true)
+    try {
+      if (renameTarget.kind === 'file') await driveApi.renameFile(wsId, renameTarget.id, name)
+      else await driveApi.renameFolder(wsId, renameTarget.id, name)
+      setRenameTarget(null)
+      refresh()
+      toast('Rinominato')
+    } catch (err: any) {
+      toast(err.response?.data?.error ?? 'Errore nella rinomina', 'destructive')
+    } finally {
+      setRenaming(false)
+    }
+  }
+
+  const handleCopyFile = async (f: DriveFile) => {
+    if (!wsId) return
+    try {
+      await driveApi.copyFile(wsId, f.id)
+      refresh()
+      toast('File copiato')
+    } catch (err: any) {
+      toast(err.response?.data?.error ?? 'Errore nella copia', 'destructive')
     }
   }
 
@@ -140,6 +225,91 @@ export default function DrivePage() {
     }
   }
 
+  // ---- Drag & drop interno ----
+
+  const startDrag = (e: React.DragEvent, item: DragItem) => {
+    if (!canEdit) return
+    e.dataTransfer.setData(DND_MIME, JSON.stringify(item))
+    e.dataTransfer.effectAllowed = 'move'
+    setDragItem(item)
+  }
+  const endDrag = () => { setDragItem(null); setDropTarget(null) }
+
+  // Sposta l'elemento trascinato nella cartella target (undefined = radice).
+  const moveTo = async (targetFolderId?: string) => {
+    if (!wsId || !dragItem) return
+    const item = dragItem
+    if (item.kind === 'folder' && item.id === targetFolderId) return
+    try {
+      if (item.kind === 'file') await driveApi.moveFile(wsId, item.id, targetFolderId)
+      else await driveApi.moveFolder(wsId, item.id, targetFolderId)
+      refreshAll()
+      toast(`"${item.name}" spostato`)
+    } catch (err: any) {
+      toast(err.response?.data?.error ?? 'Errore nello spostamento', 'destructive')
+    }
+  }
+
+  // Drop su una riga cartella: sposta dentro (interno) o carica dentro (esterno).
+  const handleDropOnFolder = async (e: React.DragEvent, folder: FolderType) => {
+    e.preventDefault(); e.stopPropagation()
+    setDropTarget(null)
+    if (isExternalDrag(e)) { await uploadFiles(e.dataTransfer.files, folder.id); return }
+    await moveTo(folder.id)
+    endDrag()
+  }
+
+  // Drop su un breadcrumb: sposta/carica in quella cartella (o radice).
+  const handleDropOnCrumb = async (e: React.DragEvent, targetId?: string) => {
+    e.preventDefault(); e.stopPropagation()
+    setDropTarget(null)
+    if (isExternalDrag(e)) { await uploadFiles(e.dataTransfer.files, targetId); return }
+    await moveTo(targetId)
+    endDrag()
+  }
+
+  // ---- Drop esterno sull'area principale (upload nella cartella corrente) ----
+
+  const onAreaDragEnter = (e: React.DragEvent) => {
+    if (!canEdit || !isExternalDrag(e)) return
+    dragDepth.current += 1
+    setExternalOver(true)
+  }
+  const onAreaDragOver = (e: React.DragEvent) => {
+    if (canEdit && isExternalDrag(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }
+  }
+  const onAreaDragLeave = (e: React.DragEvent) => {
+    if (!isExternalDrag(e)) return
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setExternalOver(false)
+  }
+  const onAreaDrop = async (e: React.DragEvent) => {
+    dragDepth.current = 0
+    setExternalOver(false)
+    if (!canEdit) return
+    if (isExternalDrag(e)) {
+      e.preventDefault()
+      await uploadFiles(e.dataTransfer.files)
+    }
+  }
+
+  const allowFolderDrop = (e: React.DragEvent, folder: FolderType) => {
+    if (!canEdit) return
+    if (isExternalDrag(e) || (isInternalDrag(e) && !(dragItem?.kind === 'folder' && dragItem.id === folder.id))) {
+      e.preventDefault(); e.stopPropagation()
+      e.dataTransfer.dropEffect = isExternalDrag(e) ? 'copy' : 'move'
+      setDropTarget(folder.id)
+    }
+  }
+  const allowCrumbDrop = (e: React.DragEvent, key: string) => {
+    if (!canEdit) return
+    if (isExternalDrag(e) || isInternalDrag(e)) {
+      e.preventDefault(); e.stopPropagation()
+      e.dataTransfer.dropEffect = isExternalDrag(e) ? 'copy' : 'move'
+      setDropTarget(key)
+    }
+  }
+
   const empty = folders.length === 0 && files.length === 0
 
   return (
@@ -152,7 +322,7 @@ export default function DrivePage() {
         </div>
         {canEdit && (
           <div className="flex gap-2">
-            <input ref={fileRef} type="file" className="hidden" onChange={handleUpload} />
+            <input ref={fileRef} type="file" multiple className="hidden" onChange={handleUploadInput} />
             <Button size="sm" variant="outline" onClick={() => setNewFolderOpen(true)}>
               <FolderPlus className="h-4 w-4 mr-1.5" /> Nuova cartella
             </Button>
@@ -163,12 +333,16 @@ export default function DrivePage() {
         )}
       </div>
 
-      {/* Breadcrumb */}
+      {/* Breadcrumb (anche drop target per lo spostamento) */}
       <div className="flex items-center gap-1 px-6 py-2.5 border-b text-sm shrink-0">
         <button
           onClick={() => setPath([])}
-          className={cn('flex items-center gap-1 hover:text-foreground transition-colors',
-            path.length === 0 ? 'text-foreground font-medium' : 'text-muted-foreground')}
+          onDragOver={e => allowCrumbDrop(e, 'crumb:root')}
+          onDragLeave={() => setDropTarget(null)}
+          onDrop={e => handleDropOnCrumb(e, undefined)}
+          className={cn('flex items-center gap-1 rounded px-1 py-0.5 hover:text-foreground transition-colors',
+            path.length === 0 ? 'text-foreground font-medium' : 'text-muted-foreground',
+            dropTarget === 'crumb:root' && 'ring-2 ring-primary bg-primary/10 text-foreground')}
         >
           <Home className="h-3.5 w-3.5" /> Home
         </button>
@@ -177,8 +351,12 @@ export default function DrivePage() {
             <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
             <button
               onClick={() => goToCrumb(i + 1)}
-              className={cn('hover:text-foreground transition-colors truncate max-w-[160px]',
-                i === path.length - 1 ? 'text-foreground font-medium' : 'text-muted-foreground')}
+              onDragOver={e => allowCrumbDrop(e, `crumb:${c.id}`)}
+              onDragLeave={() => setDropTarget(null)}
+              onDrop={e => handleDropOnCrumb(e, c.id)}
+              className={cn('rounded px-1 py-0.5 hover:text-foreground transition-colors truncate max-w-[160px]',
+                i === path.length - 1 ? 'text-foreground font-medium' : 'text-muted-foreground',
+                dropTarget === `crumb:${c.id}` && 'ring-2 ring-primary bg-primary/10 text-foreground')}
             >
               {c.name}
             </button>
@@ -186,13 +364,29 @@ export default function DrivePage() {
         ))}
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      {/* Content (drop esterno → upload nella cartella corrente) */}
+      <div
+        className="flex-1 overflow-y-auto p-6 relative"
+        onDragEnter={onAreaDragEnter}
+        onDragOver={onAreaDragOver}
+        onDragLeave={onAreaDragLeave}
+        onDrop={onAreaDrop}
+      >
+        {externalOver && (
+          <div className="absolute inset-3 z-10 rounded-xl border-2 border-dashed border-primary bg-primary/5 flex flex-col items-center justify-center gap-2 pointer-events-none">
+            <Upload className="h-8 w-8 text-primary" />
+            <p className="text-sm font-medium text-primary">Rilascia qui per caricare</p>
+            <p className="text-xs text-muted-foreground">
+              nella cartella {currentFolderId ? `"${path[path.length - 1].name}"` : 'Home'}
+            </p>
+          </div>
+        )}
+
         {empty ? (
           <div className="flex flex-col items-center justify-center h-64 text-center gap-2">
             <FolderIcon className="h-10 w-10 text-muted-foreground/40" />
             <p className="text-sm text-muted-foreground">Questa cartella è vuota.</p>
-            {canEdit && <p className="text-xs text-muted-foreground">Carica un file o crea una cartella per iniziare.</p>}
+            {canEdit && <p className="text-xs text-muted-foreground">Trascina qui dei file o crea una cartella per iniziare.</p>}
           </div>
         ) : (
           <div className="space-y-1.5 max-w-3xl">
@@ -200,20 +394,46 @@ export default function DrivePage() {
             {folders.map(f => (
               <div
                 key={f.id}
-                className="group flex items-center gap-3 rounded-lg border px-4 py-2.5 hover:bg-muted/40 transition-colors"
+                draggable={canMoveFolder(f)}
+                onDragStart={e => startDrag(e, { kind: 'folder', id: f.id, name: f.name })}
+                onDragEnd={endDrag}
+                onDragOver={e => allowFolderDrop(e, f)}
+                onDragLeave={() => setDropTarget(null)}
+                onDrop={e => handleDropOnFolder(e, f)}
+                className={cn(
+                  'group flex items-center gap-3 rounded-lg border px-4 py-2.5 hover:bg-muted/40 transition-colors',
+                  canMoveFolder(f) && 'cursor-grab active:cursor-grabbing',
+                  dragItem?.kind === 'folder' && dragItem.id === f.id && 'opacity-50',
+                  dropTarget === f.id && 'ring-2 ring-primary bg-primary/10',
+                )}
               >
+                {canMoveFolder(f) && (
+                  <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity" />
+                )}
                 <button onClick={() => openFolder(f)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
                   <FolderIcon className="h-5 w-5 shrink-0 text-primary" />
                   <span className="text-sm font-medium truncate">{f.name}</span>
                 </button>
-                {canEdit && (
-                  <button
-                    onClick={() => handleDeleteFolder(f)}
-                    className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-accent opacity-0 group-hover:opacity-100 transition"
-                    title="Elimina cartella"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                {canMoveFolder(f) && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent opacity-0 group-hover:opacity-100 transition"
+                        title="Azioni"
+                      >
+                        <MoreVertical className="h-4 w-4" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => openRename('folder', f.id, f.name)}>
+                        <Pencil className="h-4 w-4" /> Rinomina
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => handleDeleteFolder(f)} className="text-destructive focus:text-destructive">
+                        <Trash2 className="h-4 w-4" /> Elimina
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 )}
               </div>
             ))}
@@ -222,8 +442,18 @@ export default function DrivePage() {
             {files.map(f => (
               <div
                 key={f.id}
-                className="group flex items-center gap-3 rounded-lg border px-4 py-2.5 hover:bg-muted/40 transition-colors"
+                draggable={canMoveFile(f)}
+                onDragStart={e => startDrag(e, { kind: 'file', id: f.id, name: f.filename })}
+                onDragEnd={endDrag}
+                className={cn(
+                  'group flex items-center gap-3 rounded-lg border px-4 py-2.5 hover:bg-muted/40 transition-colors',
+                  canMoveFile(f) && 'cursor-grab active:cursor-grabbing',
+                  dragItem?.kind === 'file' && dragItem.id === f.id && 'opacity-50',
+                )}
               >
+                {canMoveFile(f) && (
+                  <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity" />
+                )}
                 <button onClick={() => openFile(f)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
                   <FileIcon className="h-5 w-5 shrink-0 text-muted-foreground" />
                   <div className="flex-1 min-w-0">
@@ -246,19 +476,53 @@ export default function DrivePage() {
                   <Download className="h-4 w-4" />
                 </button>
                 {canEdit && (
-                  <button
-                    onClick={() => handleDeleteFile(f)}
-                    className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-accent transition-colors"
-                    title="Elimina"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                        title="Azioni"
+                      >
+                        <MoreVertical className="h-4 w-4" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => handleCopyFile(f)}>
+                        <Copy className="h-4 w-4" /> Copia
+                      </DropdownMenuItem>
+                      {canMoveFile(f) && (
+                        <DropdownMenuItem onClick={() => openRename('file', f.id, f.filename)}>
+                          <Pencil className="h-4 w-4" /> Rinomina
+                        </DropdownMenuItem>
+                      )}
+                      {canMoveFile(f) && <DropdownMenuSeparator />}
+                      {canMoveFile(f) && (
+                        <DropdownMenuItem onClick={() => handleDeleteFile(f)} className="text-destructive focus:text-destructive">
+                          <Trash2 className="h-4 w-4" /> Elimina
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 )}
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* Avanzamento upload */}
+      {progress && (
+        <div className="fixed bottom-5 right-5 z-50 w-72 rounded-lg border bg-background shadow-lg p-3.5 space-y-2">
+          <div className="flex items-center gap-2">
+            <Upload className="h-4 w-4 shrink-0 text-primary" />
+            <span className="text-sm font-medium">
+              Caricamento {progress.total > 1 ? `(${progress.index}/${progress.total})` : ''}
+            </span>
+            <span className="ml-auto text-xs text-muted-foreground">{progress.percent}%</span>
+          </div>
+          <p className="text-xs text-muted-foreground truncate">{progress.name}</p>
+          <Progress value={progress.percent} />
+        </div>
+      )}
 
       {/* New folder dialog */}
       <Dialog open={newFolderOpen} onOpenChange={v => !v && setNewFolderOpen(false)}>
@@ -272,6 +536,23 @@ export default function DrivePage() {
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setNewFolderOpen(false)}>Annulla</Button>
               <Button type="submit" disabled={creating || !newFolderName.trim()}>{creating ? 'Creazione...' : 'Crea'}</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename dialog */}
+      <Dialog open={!!renameTarget} onOpenChange={v => !v && setRenameTarget(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Rinomina {renameTarget?.kind === 'folder' ? 'cartella' : 'file'}</DialogTitle></DialogHeader>
+          <form onSubmit={handleRename} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>Nome</Label>
+              <Input value={renameValue} onChange={e => setRenameValue(e.target.value)} autoFocus required />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setRenameTarget(null)}>Annulla</Button>
+              <Button type="submit" disabled={renaming || !renameValue.trim()}>{renaming ? 'Salvataggio...' : 'Rinomina'}</Button>
             </div>
           </form>
         </DialogContent>

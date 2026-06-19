@@ -2,6 +2,8 @@ package com.worktogether.controller;
 
 import com.worktogether.domain.entity.User;
 import com.worktogether.dto.request.CreateFolderRequest;
+import com.worktogether.dto.request.MoveRequest;
+import com.worktogether.dto.request.RenameRequest;
 import com.worktogether.dto.request.UpdateFileContentRequest;
 import com.worktogether.dto.response.DriveFileResponse;
 import com.worktogether.dto.response.FolderResponse;
@@ -41,6 +43,24 @@ public class DriveController {
             @Valid @RequestBody CreateFolderRequest req,
             @AuthenticationPrincipal User user) {
         return ResponseEntity.status(HttpStatus.CREATED).body(driveService.createFolder(wsId, req, user));
+    }
+
+    @PatchMapping("/folders/{folderId}/rename")
+    public ResponseEntity<FolderResponse> renameFolder(
+            @PathVariable UUID wsId,
+            @PathVariable UUID folderId,
+            @Valid @RequestBody RenameRequest req,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(driveService.renameFolder(wsId, folderId, req.name(), user));
+    }
+
+    @PatchMapping("/folders/{folderId}/move")
+    public ResponseEntity<FolderResponse> moveFolder(
+            @PathVariable UUID wsId,
+            @PathVariable UUID folderId,
+            @RequestBody MoveRequest req,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(driveService.moveFolder(wsId, folderId, req.targetFolderId(), user));
     }
 
     @DeleteMapping("/folders/{folderId}")
@@ -84,6 +104,32 @@ public class DriveController {
                 .contentType(mediaType)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + d.filename() + "\"")
                 .body(d.resource());
+    }
+
+    @PatchMapping("/files/{fileId}/rename")
+    public ResponseEntity<DriveFileResponse> renameFile(
+            @PathVariable UUID wsId,
+            @PathVariable UUID fileId,
+            @Valid @RequestBody RenameRequest req,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(driveService.renameFile(wsId, fileId, req.name(), user));
+    }
+
+    @PostMapping("/files/{fileId}/copy")
+    public ResponseEntity<DriveFileResponse> copyFile(
+            @PathVariable UUID wsId,
+            @PathVariable UUID fileId,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(driveService.copyFile(wsId, fileId, user));
+    }
+
+    @PatchMapping("/files/{fileId}/move")
+    public ResponseEntity<DriveFileResponse> moveFile(
+            @PathVariable UUID wsId,
+            @PathVariable UUID fileId,
+            @RequestBody MoveRequest req,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(driveService.moveFile(wsId, fileId, req.targetFolderId(), user));
     }
 
     @DeleteMapping("/files/{fileId}")

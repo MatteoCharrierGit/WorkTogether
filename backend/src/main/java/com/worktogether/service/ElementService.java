@@ -1,5 +1,10 @@
 package com.worktogether.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.worktogether.domain.entity.*;
 import com.worktogether.domain.enums.*;
 import com.worktogether.dto.request.ElementRequest;
@@ -24,6 +29,7 @@ public class ElementService {
     private final TagRepository tagRepository;
     private final WorkspaceService workspaceService;
     private final WorkspaceEventPublisher eventPublisher;
+    private final ObjectMapper objectMapper;
 
     public List<ElementResponse> getElements(UUID workspaceId, User user) {
         workspaceService.assertMember(workspaceId, user);
@@ -79,7 +85,7 @@ public class ElementService {
                 .type(req.type())
                 .status(req.status() != null ? req.status() : ElementStatus.DA_FARE)
                 .title(req.title())
-                .body(req.body())
+                .body(normalizeBody(req.body()))
                 .startDate(req.startDate())
                 .endDate(req.endDate())
                 .allDay(req.allDay() != null ? req.allDay() : false)
@@ -118,7 +124,7 @@ public class ElementService {
         }
 
         if (req.title() != null) element.setTitle(req.title());
-        if (req.body() != null) element.setBody(req.body());
+        if (req.body() != null) element.setBody(normalizeBody(req.body()));
         if (req.status() != null) element.setStatus(req.status());
         if (req.startDate() != null) element.setStartDate(req.startDate());
         if (req.endDate() != null) element.setEndDate(req.endDate());
@@ -162,6 +168,45 @@ public class ElementService {
 
         elementRepository.delete(element);
         eventPublisher.publish(workspaceId, "ELEMENT_DELETED", Map.of("id", elementId));
+    }
+
+    /**
+     * Normalizza il campo body: se è già JSON dell'editor (oggetto/array) lo lascia invariato;
+     * se è testo semplice (es. inviato da un'integrazione esterna) lo avvolge in un documento
+     * compatibile con l'editor, così viene salvato correttamente nella colonna jsonb e mostrato.
+     */
+    private String normalizeBody(String body) {
+        if (body == null) return null;
+        String trimmed = body.trim();
+        if (trimmed.isEmpty()) return null;
+        try {
+            JsonNode node = objectMapper.readTree(trimmed);
+            if (node.isObject() || node.isArray()) return trimmed; // già JSON editor
+        } catch (JsonProcessingException ignored) {
+            // non è JSON: lo trattiamo come testo semplice
+        }
+        return wrapPlainText(body);
+    }
+
+    private String wrapPlainText(String text) {
+        ObjectNode doc = objectMapper.createObjectNode();
+        doc.put("type", "doc");
+        ArrayNode content = doc.putArray("content");
+        // Una riga = un paragrafo; le righe vuote diventano paragrafi vuoti.
+        for (String line : text.split("\n", -1)) {
+            ObjectNode para = content.addObject();
+            para.put("type", "paragraph");
+            if (!line.isEmpty()) {
+                ObjectNode textNode = para.putArray("content").addObject();
+                textNode.put("type", "text");
+                textNode.put("text", line);
+            }
+        }
+        try {
+            return objectMapper.writeValueAsString(doc);
+        } catch (JsonProcessingException e) {
+            return null;
+        }
     }
 
     private Element findInWorkspace(UUID workspaceId, UUID elementId) {

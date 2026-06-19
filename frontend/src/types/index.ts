@@ -92,6 +92,73 @@ export interface Attachment {
   createdAt: string
 }
 
+export type ApiScope =
+  | 'elements:read' | 'elements:write'
+  | 'drive:read' | 'drive:write'
+  | 'tags:read' | 'tags:write'
+
+export interface ApiKey {
+  id: string
+  name: string
+  prefix: string
+  scopes: ApiScope[]
+  createdAt: string
+  lastUsedAt?: string
+  expiresAt?: string
+  revoked: boolean
+}
+
+export interface CreatedApiKey {
+  key: ApiKey
+  secret: string
+}
+
+export type AiAutonomy = 'READ_ONLY' | 'CONFIRM_DESTRUCTIVE' | 'FULL'
+export type AiMemoryMode = 'ADMIN_ONLY' | 'AUTO_AND_ADMIN'
+
+export interface AiSettings {
+  enabled: boolean
+  apiKeySet: boolean
+  apiKeyPreview?: string
+  model: string
+  temperature: number
+  maxTokens: number
+  contextWindowTokens: number
+  compactThresholdPct: number
+  autonomy: AiAutonomy
+  memoryMode: AiMemoryMode
+  maxToolIterations: number
+  personalityMd: string
+  memoryMd: string
+  toolsMd: string
+  updatedAt: string
+}
+
+export interface AiTestResult {
+  ok: boolean
+  message: string
+}
+
+export type AiConversationScope = 'PRIVATE' | 'SHARED'
+export type AiMessageRole = 'USER' | 'ASSISTANT' | 'TOOL' | 'SYSTEM'
+
+export interface AiConversation {
+  id: string
+  scope: AiConversationScope
+  ownerUserId?: string
+  title?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AiMessage {
+  id: string
+  role: AiMessageRole
+  content: string
+  authorUserId?: string
+  createdAt: string
+}
+
 export interface WsEvent {
   type: 'ELEMENT_CREATED' | 'ELEMENT_UPDATED' | 'ELEMENT_DELETED'
   payload: Element | { id: string }

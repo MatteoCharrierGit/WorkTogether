@@ -1,0 +1,136 @@
+{
+  "info": {
+    "name": "WorkTogether API",
+    "description": "Richieste pronte per testare l'API di WorkTogether tramite API key. Le variabili (baseUrl, wsId, apiKey) sono nella scheda 'Variables' della collection.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{apiKey}}", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080", "type": "string" },
+    { "key": "wsId", "value": "e55b99c2-6b66-42c2-9060-484e33084334", "type": "string" },
+    { "key": "apiKey", "value": "wt_IzLd6GpVOSH91Ko5MdgM0uqoT089VocajemZMxHY4i0", "type": "string" },
+    { "key": "storyId", "value": "", "type": "string", "description": "Id di una STORIA: incollalo qui dopo aver creato/elencato una storia. Serve a 'Crea Task' per sapere in quale storia mettere il task." }
+  ],
+  "item": [
+    {
+      "name": "Crea Epica",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/workspaces/{{wsId}}/elements",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "workspaces", "{{wsId}}", "elements"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Lancio nuova piattaforma\",\n  \"type\": \"EPICA\",\n  \"status\": \"DA_FARE\",\n  \"body\": \"Epica creata via API per test\"\n}"
+        },
+        "description": "Crea un'epica. Richiede scope elements:write. Risposta attesa: 201 Created con l'elemento."
+      }
+    },
+    {
+      "name": "Crea Storia",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/workspaces/{{wsId}}/elements",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "workspaces", "{{wsId}}", "elements"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Prima storia via API\",\n  \"type\": \"STORIA\",\n  \"status\": \"DA_FARE\"\n}"
+        },
+        "description": "Crea una storia (compare come corsia nella Kanban). Dalla risposta copia il campo 'id' e incollalo nella variabile storyId della collection: serve per 'Crea Task'. Puoi anche aggiungere \"parentId\": \"<id epica>\" per collegarla a un'epica."
+      }
+    },
+    {
+      "name": "Crea Task (in una storia)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/workspaces/{{wsId}}/elements",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "workspaces", "{{wsId}}", "elements"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Primo task via API\",\n  \"type\": \"TASK\",\n  \"status\": \"DA_FARE\",\n  \"parentId\": \"{{storyId}}\"\n}"
+        },
+        "description": "Crea un task DENTRO una storia. Imposta prima la variabile storyId con l'id di una storia, altrimenti il task non comparirà nella Kanban (o darà errore se l'id è vuoto/non valido). Richiede scope elements:write."
+      }
+    },
+    {
+      "name": "Crea Evento (calendario)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/workspaces/{{wsId}}/elements",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "workspaces", "{{wsId}}", "elements"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Riunione di team\",\n  \"type\": \"EVENTO\",\n  \"startDate\": \"2026-07-01T15:00:00Z\",\n  \"endDate\": \"2026-07-01T16:00:00Z\"\n}"
+        },
+        "description": "Crea un evento a calendario. Richiede scope elements:write."
+      }
+    },
+    {
+      "name": "Lista elementi",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/workspaces/{{wsId}}/elements",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "workspaces", "{{wsId}}", "elements"]
+        },
+        "description": "Elenca tutti gli elementi del workspace. Richiede scope elements:read."
+      }
+    },
+    {
+      "name": "Lista file Drive",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/workspaces/{{wsId}}/drive/files",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "workspaces", "{{wsId}}", "drive", "files"]
+        },
+        "description": "Elenca i file nella radice del Drive. Richiede scope drive:read."
+      }
+    },
+    {
+      "name": "Lista tag",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/workspaces/{{wsId}}/tags",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "workspaces", "{{wsId}}", "tags"]
+        },
+        "description": "Elenca i tag del workspace. Richiede scope tags:read."
+      }
+    }
+  ]
+}

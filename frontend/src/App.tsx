@@ -14,6 +14,7 @@ import AdminPage from '@/pages/AdminPage'
 import MyTasksPage from '@/pages/MyTasksPage'
 import SettingsPage from '@/pages/SettingsPage'
 import DrivePage from '@/pages/DrivePage'
+import AssistantPage from '@/pages/AssistantPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -41,6 +42,7 @@ export default function App() {
                 <Route path="/my-tasks" element={<MyTasksPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/workspace/:wsId/drive" element={<DrivePage />} />
+                <Route path="/workspace/:wsId/assistant" element={<AssistantPage />} />
                 <Route path="/workspace/:wsId" element={<WorkspaceHomePage />} />
                 <Route path="/workspace/:wsId/kanban" element={<KanbanPage />} />
                 <Route path="/workspace/:wsId/roadmap" element={<RoadmapPage />} />

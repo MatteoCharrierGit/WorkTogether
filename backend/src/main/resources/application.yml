@@ -30,6 +30,10 @@ app:
     init-password: ${ADMIN_INIT_PASSWORD:Admin1234!}
   upload:
     dir: ${UPLOAD_DIR:/app/uploads}
+  ai:
+    # Segreto per cifrare la chiave OpenRouter a riposo (fallback: JWT secret).
+    secret: ${AI_SECRET:${JWT_SECRET:please-change-this-secret-key-in-production}}
+    base-url: ${OPENROUTER_BASE_URL:https://openrouter.ai/api/v1}
 
 server:
   port: 8080

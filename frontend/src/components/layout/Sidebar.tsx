@@ -3,12 +3,12 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   ChevronDown, ChevronRight, KanbanSquare, GanttChartSquare, Calendar,
-  Settings, LogOut, Plus, Building2, CheckSquare, Check, Palette, Folder, UserCog
+  Settings, LogOut, Plus, Building2, CheckSquare, Check, Palette, Folder, UserCog, Bot
 } from 'lucide-react'
 import { cn, TYPE_ICONS } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
-import { elementsApi, workspacesApi } from '@/lib/api'
+import { elementsApi, workspacesApi, aiApi } from '@/lib/api'
 import { Element, Workspace } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -81,6 +81,12 @@ export function Sidebar() {
   const { data: elements = [] } = useQuery<Element[]>({
     queryKey: ['elements', workspace?.id],
     queryFn: () => elementsApi.list(workspace!.id),
+    enabled: !!workspace?.id,
+  })
+
+  const { data: aiStatus } = useQuery<{ enabled: boolean }>({
+    queryKey: ['ai-status', workspace?.id],
+    queryFn: () => aiApi.status(workspace!.id),
     enabled: !!workspace?.id,
   })
 
@@ -173,6 +179,7 @@ export function Sidebar() {
           {navLink(`${wsBase}/roadmap`, <GanttChartSquare className="h-4 w-4" />, 'Roadmap')}
           {navLink(`${wsBase}/calendar`, <Calendar className="h-4 w-4" />, 'Calendario')}
           {navLink(`${wsBase}/drive`, <Folder className="h-4 w-4" />, 'File')}
+          {aiStatus?.enabled && navLink(`${wsBase}/assistant`, <Bot className="h-4 w-4" />, 'Assistente AI')}
           {(workspace.myRole === 'ADMIN') && navLink(`${wsBase}/admin`, <Settings className="h-4 w-4" />, 'Admin')}
         </nav>
       )}

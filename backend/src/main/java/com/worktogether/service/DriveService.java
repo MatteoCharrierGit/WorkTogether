@@ -69,6 +69,49 @@ public class DriveService {
     }
 
     @Transactional
+    public FolderResponse moveFolder(UUID workspaceId, UUID folderId, UUID targetParentId, User user) {
+        WorkspaceRole role = workspaceService.getUserRole(workspaceId, user);
+        if (role == WorkspaceRole.GUEST) throw new AccessDeniedException("I guest non possono spostare le cartelle");
+        Folder folder = validateFolder(workspaceId, folderId);
+        boolean isOwner = folder.getCreatedBy().equals(user.getId());
+        if (role != WorkspaceRole.ADMIN && !isOwner) {
+            throw new AccessDeniedException("Puoi spostare solo le cartelle che hai creato");
+        }
+        if (targetParentId != null) {
+            if (targetParentId.equals(folderId)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Impossibile spostare una cartella dentro se stessa");
+            }
+            validateFolder(workspaceId, targetParentId);
+            // Previene i cicli: il target non può essere un discendente della cartella spostata.
+            UUID cursor = targetParentId;
+            while (cursor != null) {
+                if (cursor.equals(folderId)) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Impossibile spostare una cartella in una sua sottocartella");
+                }
+                cursor = folderRepository.findById(cursor).map(Folder::getParentId).orElse(null);
+            }
+        }
+        folder.setParentId(targetParentId);
+        return FolderResponse.from(folderRepository.save(folder));
+    }
+
+    @Transactional
+    public FolderResponse renameFolder(UUID workspaceId, UUID folderId, String newName, User user) {
+        WorkspaceRole role = workspaceService.getUserRole(workspaceId, user);
+        if (role == WorkspaceRole.GUEST) throw new AccessDeniedException("I guest non possono rinominare le cartelle");
+        Folder folder = validateFolder(workspaceId, folderId);
+        boolean isOwner = folder.getCreatedBy().equals(user.getId());
+        if (role != WorkspaceRole.ADMIN && !isOwner) {
+            throw new AccessDeniedException("Puoi rinominare solo le cartelle che hai creato");
+        }
+        if (newName == null || newName.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nome non valido");
+        }
+        folder.setName(newName.trim());
+        return FolderResponse.from(folderRepository.save(folder));
+    }
+
+    @Transactional
     public void deleteFolder(UUID workspaceId, UUID folderId, User user) {
         WorkspaceRole role = workspaceService.getUserRole(workspaceId, user);
         Folder folder = validateFolder(workspaceId, folderId);
@@ -121,6 +164,71 @@ public class DriveService {
         } catch (IOException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Errore nel salvataggio del file");
         }
+    }
+
+    @Transactional
+    public DriveFileResponse moveFile(UUID workspaceId, UUID fileId, UUID targetFolderId, User user) {
+        WorkspaceRole role = workspaceService.getUserRole(workspaceId, user);
+        if (role == WorkspaceRole.GUEST) throw new AccessDeniedException("I guest non possono spostare i file");
+        DriveFile df = getFileInWorkspace(workspaceId, fileId);
+        boolean isOwner = df.getUploadedBy().equals(user.getId());
+        if (role != WorkspaceRole.ADMIN && !isOwner) {
+            throw new AccessDeniedException("Puoi spostare solo i file che hai caricato");
+        }
+        if (targetFolderId != null) validateFolder(workspaceId, targetFolderId);
+        df.setFolderId(targetFolderId);
+        return DriveFileResponse.from(driveFileRepository.save(df));
+    }
+
+    @Transactional
+    public DriveFileResponse renameFile(UUID workspaceId, UUID fileId, String newName, User user) {
+        WorkspaceRole role = workspaceService.getUserRole(workspaceId, user);
+        if (role == WorkspaceRole.GUEST) throw new AccessDeniedException("I guest non possono rinominare i file");
+        DriveFile df = getFileInWorkspace(workspaceId, fileId);
+        boolean isOwner = df.getUploadedBy().equals(user.getId());
+        if (role != WorkspaceRole.ADMIN && !isOwner) {
+            throw new AccessDeniedException("Puoi rinominare solo i file che hai caricato");
+        }
+        if (newName == null || newName.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nome non valido");
+        }
+        df.setFilename(newName.trim());
+        return DriveFileResponse.from(driveFileRepository.save(df));
+    }
+
+    @Transactional
+    public DriveFileResponse copyFile(UUID workspaceId, UUID fileId, User user) {
+        WorkspaceRole role = workspaceService.getUserRole(workspaceId, user);
+        if (role == WorkspaceRole.GUEST) throw new AccessDeniedException("I guest non possono copiare i file");
+        DriveFile src = getFileInWorkspace(workspaceId, fileId);
+        try {
+            Path dir = Path.of(uploadDir, workspaceId.toString(), "drive");
+            Files.createDirectories(dir);
+            Path srcPath = dir.resolve(src.getStoredName());
+            String copyName = copyFilename(src.getFilename());
+            String storedName = UUID.randomUUID() + "_" + sanitize(copyName);
+            Path dstPath = dir.resolve(storedName);
+            Files.copy(srcPath, dstPath, StandardCopyOption.REPLACE_EXISTING);
+            DriveFile copy = DriveFile.builder()
+                    .workspaceId(workspaceId)
+                    .folderId(src.getFolderId())
+                    .filename(copyName)
+                    .storedName(storedName)
+                    .contentType(src.getContentType())
+                    .sizeBytes(src.getSizeBytes())
+                    .uploadedBy(user.getId())
+                    .build();
+            return DriveFileResponse.from(driveFileRepository.save(copy));
+        } catch (IOException e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Errore nella copia del file");
+        }
+    }
+
+    // Inserisce " (copia)" prima dell'estensione del file.
+    private String copyFilename(String name) {
+        int dot = name.lastIndexOf('.');
+        if (dot > 0) return name.substring(0, dot) + " (copia)" + name.substring(dot);
+        return name + " (copia)";
     }
 
     public DownloadFile download(UUID workspaceId, UUID fileId, User user) {
@@ -208,6 +316,53 @@ public class DriveService {
             return DriveFileResponse.from(driveFileRepository.save(df));
         } catch (IOException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Errore nel salvataggio del file");
+        }
+    }
+
+    // ---- Helpers per l'agente AI ----
+
+    /** Crea un file di testo dal contenuto fornito (usato dai tool dell'agente). */
+    @Transactional
+    public DriveFileResponse createTextFile(UUID workspaceId, UUID folderId, String filename, String content, User user) {
+        WorkspaceRole role = workspaceService.getUserRole(workspaceId, user);
+        if (role == WorkspaceRole.GUEST) throw new AccessDeniedException("I guest non possono creare file");
+        if (folderId != null) validateFolder(workspaceId, folderId);
+        if (filename == null || filename.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nome file mancante");
+        }
+        try {
+            Path dir = Path.of(uploadDir, workspaceId.toString(), "drive");
+            Files.createDirectories(dir);
+            String original = sanitize(filename);
+            String storedName = UUID.randomUUID() + "_" + original;
+            byte[] bytes = content != null ? content.getBytes(StandardCharsets.UTF_8) : new byte[0];
+            Files.write(dir.resolve(storedName), bytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+            DriveFile df = DriveFile.builder()
+                    .workspaceId(workspaceId)
+                    .folderId(folderId)
+                    .filename(original)
+                    .storedName(storedName)
+                    .contentType("text/plain")
+                    .sizeBytes(bytes.length)
+                    .uploadedBy(user.getId())
+                    .build();
+            return DriveFileResponse.from(driveFileRepository.save(df));
+        } catch (IOException e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Errore nella creazione del file");
+        }
+    }
+
+    /** Legge il contenuto testuale di un file (troncato a maxChars). */
+    public String readText(UUID workspaceId, UUID fileId, User user, int maxChars) {
+        workspaceService.assertMember(workspaceId, user);
+        DriveFile df = getFileInWorkspace(workspaceId, fileId);
+        try {
+            byte[] bytes = Files.readAllBytes(Path.of(uploadDir, workspaceId.toString(), "drive", df.getStoredName()));
+            String text = new String(bytes, StandardCharsets.UTF_8);
+            if (text.length() > maxChars) return text.substring(0, maxChars) + "\n…[troncato]";
+            return text;
+        } catch (IOException e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Impossibile leggere il file");
         }
     }
 

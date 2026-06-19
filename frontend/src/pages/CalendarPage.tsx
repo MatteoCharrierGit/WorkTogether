@@ -11,6 +11,7 @@ import { elementsApi } from '@/lib/api'
 import { Element } from '@/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { CreateEventDialog } from '@/components/CreateEventDialog'
@@ -168,7 +169,30 @@ export default function CalendarPage() {
                     <EventPill key={item.id} element={item} />
                   ))}
                   {items.length > 3 && (
-                    <div className="text-xs text-muted-foreground px-1">+{items.length - 3} altri</div>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          onClick={e => e.stopPropagation()}
+                          className="w-full text-left text-xs text-muted-foreground px-1 rounded hover:bg-accent hover:text-foreground transition-colors"
+                        >
+                          +{items.length - 3} altri
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        className="w-64 p-2"
+                        onClick={e => e.stopPropagation()}
+                      >
+                        <div className="text-xs font-semibold capitalize mb-1.5 px-1">
+                          {format(day, 'EEEE d MMMM', { locale: it })}
+                        </div>
+                        <div className="space-y-0.5 max-h-72 overflow-auto">
+                          {items.map(item => (
+                            <EventPill key={item.id} element={item} />
+                          ))}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
                   )}
                 </div>
               </div>
