@@ -22,7 +22,7 @@ export default function LoginPage() {
     try {
       const data = await authApi.login(email, password)
       setAuth(
-        { id: data.userId, email: data.email, displayName: data.displayName, mustResetPassword: data.mustResetPassword, systemAdmin: data.systemAdmin, avatar: data.avatar },
+        { id: data.userId, email: data.email, displayName: data.displayName, mustResetPassword: data.mustResetPassword, systemAdmin: data.systemAdmin, onboardingCompleted: data.onboardingCompleted, avatar: data.avatar },
         data.accessToken,
         data.refreshToken
       )

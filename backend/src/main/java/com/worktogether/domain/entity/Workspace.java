@@ -40,6 +40,23 @@ public class Workspace {
     @Column(name = "card_show_due_date", nullable = false)
     private boolean cardShowDueDate = true;
 
+    // Automazioni email
+    @Builder.Default
+    @Column(name = "reminder_days_before", nullable = false)
+    private int reminderDaysBefore = 1;
+
+    @Builder.Default
+    @Column(name = "event_reminders_enabled", nullable = false)
+    private boolean eventRemindersEnabled = true;
+
+    @Builder.Default
+    @Column(name = "weekly_recap_enabled", nullable = false)
+    private boolean weeklyRecapEnabled = false;
+
+    @Builder.Default
+    @Column(name = "monday_digest_enabled", nullable = false)
+    private boolean mondayDigestEnabled = false;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by", nullable = false)
     private User createdBy;

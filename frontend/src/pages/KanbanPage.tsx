@@ -2,13 +2,15 @@ import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
-import { Plus, ChevronDown, ChevronRight, Search, X, Filter } from 'lucide-react'
+import { Plus, ChevronDown, ChevronRight, Search, X, Filter, Trash2 } from 'lucide-react'
 import { elementsApi, tagsApi, workspacesApi } from '@/lib/api'
+import { useElementDelete } from '@/lib/useElementDelete'
 import { Element, ElementStatus, Tag, Member, Workspace } from '@/types'
-import { cn, STATUS_LABELS, TYPE_ICONS, formatDate } from '@/lib/utils'
+import { cn, STATUS_LABELS, TYPE_ICONS, TYPE_LABELS, formatDate } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { UserAvatar } from '@/components/UserAvatar'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
@@ -30,6 +32,7 @@ interface CardConfig { tags: boolean; assignees: boolean; dueDate: boolean }
 
 function TaskCard({ task, index, cardConfig }: { task: Element; index: number; cardConfig: CardConfig }) {
   const wsId = useParams().wsId!
+  const { canDelete, remove } = useElementDelete(wsId)
   const showTags = cardConfig.tags && task.tags.length > 0
   const showAssignees = cardConfig.assignees && task.assignees.length > 0
   const showDue = cardConfig.dueDate && !!task.endDate
@@ -48,13 +51,24 @@ function TaskCard({ task, index, cardConfig }: { task: Element; index: number; c
             snapshot.isDragging && 'shadow-lg ring-1 ring-ring'
           )}
         >
-          <a
-            href={`/workspace/${wsId}/element/${task.id}`}
-            onClick={e => e.stopPropagation()}
-            className="text-sm font-medium leading-snug hover:text-primary transition-colors line-clamp-2"
-          >
-            {task.title}
-          </a>
+          <div className="flex items-start gap-1.5">
+            <a
+              href={`/workspace/${wsId}/element/${task.id}`}
+              onClick={e => e.stopPropagation()}
+              className="flex-1 text-sm font-medium leading-snug hover:text-primary transition-colors line-clamp-2"
+            >
+              {task.title}
+            </a>
+            {canDelete(task) && (
+              <button
+                onClick={e => { e.stopPropagation(); e.preventDefault(); remove(task) }}
+                className="shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition"
+                title="Elimina"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
 
           {/* Tags */}
           {showTags && (
@@ -95,12 +109,14 @@ function TaskCard({ task, index, cardConfig }: { task: Element; index: number; c
 
 function SwimLane({
   story,
+  epic,
   tasks,
   collapsed,
   onToggle,
   cardConfig,
 }: {
   story: Element
+  epic?: Element
   tasks: Element[]
   collapsed: boolean
   onToggle: () => void
@@ -119,9 +135,25 @@ function SwimLane({
         <button className="shrink-0 text-muted-foreground">
           {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </button>
+        {epic && (
+          <a
+            href={`/workspace/${wsId}/element/${epic.id}`}
+            onClick={e => e.stopPropagation()}
+            className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground hover:text-primary transition-colors max-w-[40%]"
+            title={`Epica: ${epic.title}`}
+          >
+            <span>{TYPE_ICONS['EPICA']}</span>
+            <span className="truncate">{epic.title}</span>
+          </a>
+        )}
         <span className="text-xs">{TYPE_ICONS['STORIA']}</span>
-        <span className="text-sm font-medium">{story.title}</span>
+        <span className={cn('text-sm font-medium', story.status === 'COMPLETATO' && 'text-muted-foreground line-through')}>{story.title}</span>
         <span className="text-xs text-muted-foreground ml-1">({tasks.length})</span>
+        {story.status === 'COMPLETATO' && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-green-500/10 text-green-600 px-2 py-0.5 text-[11px] font-medium">
+            ✓ Conclusa
+          </span>
+        )}
         {!collapsed && (
           <Button
             size="sm"
@@ -213,8 +245,12 @@ export default function KanbanPage() {
     dueDate: currentWs?.cardShowDueDate ?? true,
   }
 
-  const stories = elements.filter(e => e.type === 'STORIA')
+  // Le storie concluse vanno in fondo (e collassate di default): il focus è sulle cose da fare.
+  const stories = elements
+    .filter(e => e.type === 'STORIA')
+    .sort((a, b) => (a.status === 'COMPLETATO' ? 1 : 0) - (b.status === 'COMPLETATO' ? 1 : 0))
   const allTasks = elements.filter(e => e.type === 'TASK')
+  const epicById = new Map(elements.filter(e => e.type === 'EPICA').map(e => [e.id, e]))
 
   const hasFilters = search.trim() !== '' || assigneeFilter.length > 0 || tagFilter.length > 0
   const tasks = allTasks.filter(t => {
@@ -229,6 +265,47 @@ export default function KanbanPage() {
 
   const clearFilters = () => { setSearch(''); setAssigneeFilter([]); setTagFilter([]) }
 
+  // --- Chiusura automatica al 100% (solo admin) ---
+  const isAdmin = workspace?.myRole === 'ADMIN'
+  const [pendingClose, setPendingClose] = useState<Element | null>(null)
+  const [closing, setClosing] = useState(false)
+
+  // Una storia è "conclusa" se ha task e sono tutti completati.
+  const storyComplete = (storyId: string, list: Element[]) => {
+    const ts = list.filter(e => e.type === 'TASK' && e.parentId === storyId)
+    return ts.length > 0 && ts.every(t => t.status === 'COMPLETATO')
+  }
+  // Un'epica è "conclusa" se tutti i task sotto le sue storie sono completati.
+  const epicComplete = (epicId: string, list: Element[]) => {
+    const storyIds = list.filter(e => e.type === 'STORIA' && e.parentId === epicId).map(s => s.id)
+    const ts = list.filter(e => e.type === 'TASK' && e.parentId && storyIds.includes(e.parentId))
+    return ts.length > 0 && ts.every(t => t.status === 'COMPLETATO')
+  }
+
+  const confirmClose = async () => {
+    if (!pendingClose || !wsId) return
+    setClosing(true)
+    const el = pendingClose
+    try {
+      await elementsApi.update(wsId, el.id, { ...el, status: 'COMPLETATO' })
+      queryClient.invalidateQueries({ queryKey: ['elements', wsId] })
+      queryClient.invalidateQueries({ queryKey: ['my-tasks'] })
+      // Dopo aver chiuso una storia, se anche l'epica è completa, proponi di chiuderla.
+      const list = queryClient.getQueryData<Element[]>(['elements', wsId]) ?? elements
+      const updated = list.map(e => e.id === el.id ? { ...e, status: 'COMPLETATO' as ElementStatus } : e)
+      let next: Element | null = null
+      if (el.type === 'STORIA' && el.parentId) {
+        const epic = updated.find(e => e.id === el.parentId && e.type === 'EPICA')
+        if (epic && epic.status !== 'COMPLETATO' && epicComplete(epic.id, updated)) next = epic
+      }
+      setPendingClose(next)
+    } catch {
+      setPendingClose(null)
+    } finally {
+      setClosing(false)
+    }
+  }
+
   const onDragEnd = async (result: DropResult) => {
     if (!result.destination || !wsId) return
     const taskId = result.draggableId
@@ -237,13 +314,19 @@ export default function KanbanPage() {
     if (!task || task.status === newStatus) return
 
     // Optimistic update
-    queryClient.setQueryData<Element[]>(['elements', wsId], old =>
-      old?.map(e => e.id === taskId ? { ...e, status: newStatus } : e) ?? []
-    )
+    const updatedList = elements.map(e => e.id === taskId ? { ...e, status: newStatus } : e)
+    queryClient.setQueryData<Element[]>(['elements', wsId], updatedList)
 
     try {
       await elementsApi.update(wsId, taskId, { ...task, status: newStatus })
       queryClient.invalidateQueries({ queryKey: ['my-tasks'] })
+      // Se spostando il task la storia si completa, proponi all'admin di chiuderla.
+      if (isAdmin && newStatus === 'COMPLETATO' && task.parentId) {
+        const story = updatedList.find(e => e.id === task.parentId && e.type === 'STORIA')
+        if (story && story.status !== 'COMPLETATO' && storyComplete(story.id, updatedList)) {
+          setPendingClose(story)
+        }
+      }
     } catch {
       queryClient.invalidateQueries({ queryKey: ['elements', wsId] })
     }
@@ -345,9 +428,13 @@ export default function KanbanPage() {
               <SwimLane
                 key={story.id}
                 story={story}
+                epic={story.parentId ? epicById.get(story.parentId) : undefined}
                 tasks={storyTasks}
-                collapsed={!!collapsed[story.id]}
-                onToggle={() => setCollapsed(c => ({ ...c, [story.id]: !c[story.id] }))}
+                collapsed={collapsed[story.id] ?? story.status === 'COMPLETATO'}
+                onToggle={() => setCollapsed(c => ({
+                  ...c,
+                  [story.id]: !(c[story.id] ?? story.status === 'COMPLETATO'),
+                }))}
                 cardConfig={cardConfig}
               />
             )
@@ -372,6 +459,35 @@ export default function KanbanPage() {
         workspaceId={wsId!}
         defaultType="TASK"
       />
+
+      {/* Conferma chiusura storia/epica al 100% (solo admin) */}
+      <Dialog open={!!pendingClose} onOpenChange={v => { if (!v && !closing) setPendingClose(null) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {pendingClose ? `${TYPE_LABELS[pendingClose.type]} completata` : 'Completata'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {pendingClose && (
+                <>
+                  Tutti i task di <span className="font-medium text-foreground">«{pendingClose.title}»</span> sono completati.
+                  Vuoi considerare conclusa questa {TYPE_LABELS[pendingClose.type].toLowerCase()} e segnarla come completata?
+                </>
+              )}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setPendingClose(null)} disabled={closing}>
+                Non ora
+              </Button>
+              <Button onClick={confirmClose} disabled={closing}>
+                {closing ? 'Chiusura...' : 'Sì, concludi'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

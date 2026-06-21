@@ -9,10 +9,11 @@ public record UserResponse(
         String displayName,
         boolean mustResetPassword,
         boolean systemAdmin,
+        boolean onboardingCompleted,
         String avatar
 ) {
     public static UserResponse from(User u) {
         return new UserResponse(u.getId(), u.getEmail(), u.getDisplayName(),
-                u.isMustResetPassword(), u.isSystemAdmin(), u.getAvatar());
+                u.isMustResetPassword(), u.isSystemAdmin(), u.isOnboardingCompleted(), u.getAvatar());
     }
 }

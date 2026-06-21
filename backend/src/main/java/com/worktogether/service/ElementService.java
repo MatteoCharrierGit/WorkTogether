@@ -31,6 +31,7 @@ public class ElementService {
     private final WorkspaceEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
 
+    @Transactional
     public List<ElementResponse> getElements(UUID workspaceId, User user) {
         workspaceService.assertMember(workspaceId, user);
         return elementRepository.findByWorkspaceId(workspaceId)
@@ -101,6 +102,7 @@ public class ElementService {
         return response;
     }
 
+    @Transactional
     public ElementResponse getElement(UUID workspaceId, UUID elementId, User user) {
         workspaceService.assertMember(workspaceId, user);
         Element element = findInWorkspace(workspaceId, elementId);

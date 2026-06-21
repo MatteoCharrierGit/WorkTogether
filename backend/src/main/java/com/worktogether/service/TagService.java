@@ -26,6 +26,7 @@ public class TagService {
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceService workspaceService;
 
+    @Transactional
     public List<TagResponse> getTags(UUID workspaceId, User user) {
         workspaceService.assertMember(workspaceId, user);
         return tagRepository.findByWorkspaceIdOrderByNameAsc(workspaceId)

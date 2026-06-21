@@ -1,8 +1,10 @@
 # WorkTogether — Guida all'avvio
 
+> Documentazione v1.0 · vedi anche [README](./README.md) e la cartella [docs/](./docs).
+
 ## Requisiti
 - Docker Desktop (o Docker Engine + Compose v2)
-- Porta 80, 8080, 5432 libere sulla VPS
+- Porte 80, 8080, 5432 libere sulla VPS (per la voce anche 7880/7881/5349 e UDP 50000-50100)
 
 ## Avvio rapido (produzione)
 
@@ -22,6 +24,18 @@ docker compose logs -f
 ```
 
 L'app sarà disponibile su **http://TUO_IP** (porta 80).
+
+### Profili opzionali
+
+`docker compose up` avvia solo **postgres + backend**. Per il resto usa i profili:
+
+```bash
+docker compose --profile frontend up -d --build   # serve il frontend con nginx (porta 80)
+docker compose --profile media up -d --build       # media server LiveKit (voce/screen share)
+```
+
+Per la **voce** servono inoltre le variabili `LIVEKIT_*` in `.env` e il provisioning ops (TLS, DNS,
+firewall): vedi [docs/REALTIME_VOCE.md](./docs/REALTIME_VOCE.md).
 
 ## Credenziali iniziali
 
@@ -44,7 +58,7 @@ Al primo avvio viene creato automaticamente l'account admin:
 ```bash
 # Backend
 cd backend
-./mvnw spring-boot:run
+mvn spring-boot:run
 
 # Frontend (in un altro terminale)
 cd frontend
@@ -68,11 +82,20 @@ I dati PostgreSQL sono persistiti nel volume `postgres_data`.
 worktogether/
 ├── docker-compose.yml
 ├── .env.example
-├── backend/          ← Spring Boot 3 + Java 21
+├── livekit/livekit.yaml   ← config media server (profilo "media")
+├── docs/                  ← documentazione di progetto
+├── backend/               ← Spring Boot 3 + Java 21
 │   ├── Dockerfile
 │   └── src/
-└── frontend/         ← React + Vite + shadcn/ui
+└── frontend/              ← React + Vite + shadcn/ui
     ├── Dockerfile
     ├── nginx.conf
     └── src/
 ```
+
+## Documentazione
+
+Vedi [README.md](./README.md) per l'indice completo. In breve: [docs/ARCHITETTURA.md](./docs/ARCHITETTURA.md),
+[docs/BACKEND.md](./docs/BACKEND.md), [docs/FRONTEND.md](./docs/FRONTEND.md),
+[docs/DATABASE.md](./docs/DATABASE.md), [docs/REALTIME_VOCE.md](./docs/REALTIME_VOCE.md),
+[API.md](./API.md).

@@ -8,6 +8,7 @@ export interface User {
   displayName: string
   mustResetPassword: boolean
   systemAdmin: boolean
+  onboardingCompleted?: boolean
   avatar?: string
 }
 
@@ -47,6 +48,10 @@ export interface Workspace {
   cardShowTags?: boolean
   cardShowAssignees?: boolean
   cardShowDueDate?: boolean
+  reminderDaysBefore?: number
+  eventRemindersEnabled?: boolean
+  weeklyRecapEnabled?: boolean
+  mondayDigestEnabled?: boolean
 }
 
 export interface Tag {
@@ -159,8 +164,50 @@ export interface AiMessage {
   createdAt: string
 }
 
+export type WsEventType =
+  | 'ELEMENT_CREATED' | 'ELEMENT_UPDATED' | 'ELEMENT_DELETED'
+  | 'MESSAGE_CREATED' | 'CHANNEL_CREATED' | 'CHANNEL_UPDATED' | 'CHANNEL_DELETED'
+  | 'CHANNEL_READ' | 'TYPING' | 'PRESENCE'
+
 export interface WsEvent {
-  type: 'ELEMENT_CREATED' | 'ELEMENT_UPDATED' | 'ELEMENT_DELETED'
-  payload: Element | { id: string }
+  type: WsEventType
+  payload: any
   timestamp: string
+}
+
+// --- Chat / Stanze (funzioni Discord-like) ---
+
+export type ChannelType = 'DM' | 'GROUP' | 'ROOM'
+
+export interface ChannelMemberDto {
+  userId: string
+  displayName: string
+  email: string
+  avatar?: string
+}
+
+export interface ChatMessage {
+  id: string
+  channelId: string
+  authorId: string
+  authorName: string
+  authorAvatar?: string
+  content: string
+  createdAt: string
+  editedAt?: string
+}
+
+export interface Channel {
+  id: string
+  type: ChannelType
+  name: string
+  description?: string
+  isPrivate: boolean
+  voiceEnabled: boolean
+  screenShareEnabled: boolean
+  members: ChannelMemberDto[]
+  lastMessage?: ChatMessage
+  unreadCount: number
+  createdAt: string
+  updatedAt: string
 }

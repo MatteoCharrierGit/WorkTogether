@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { elementsApi, tagsApi, workspacesApi, attachmentsApi } from '@/lib/api'
 import { Element, ElementStatus, Attachment } from '@/types'
@@ -15,14 +15,17 @@ import { Separator } from '@/components/ui/separator'
 import { cn, STATUS_LABELS, TYPE_ICONS, formatDate, getInitials, STATUS_COLORS, formatBytes } from '@/lib/utils'
 import { toast } from '@/components/ui/toast'
 import { useWorkspaceStore } from '@/store/workspaceStore'
+import { useElementDelete } from '@/lib/useElementDelete'
 import { UserAvatar } from '@/components/UserAvatar'
 import { Calendar, User, Tag, Save, Paperclip, Download, Trash2, Upload } from 'lucide-react'
 
 export default function ElementDetailPage() {
   const { wsId, elementId } = useParams<{ wsId: string; elementId: string }>()
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const workspace = useWorkspaceStore(s => s.current)
   const isGuest = workspace?.myRole === 'GUEST'
+  const { canDelete, remove } = useElementDelete(wsId)
 
   const { data: element, isLoading } = useQuery<Element>({
     queryKey: ['element', wsId, elementId],
@@ -193,12 +196,24 @@ export default function ElementDetailPage() {
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-3 border-b shrink-0">
         <Breadcrumbs items={crumbs} />
-        {!isGuest && dirty && (
-          <Button size="sm" onClick={save} disabled={saving}>
-            <Save className="h-3.5 w-3.5 mr-1.5" />
-            {saving ? 'Salvataggio...' : 'Salva'}
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {!isGuest && dirty && (
+            <Button size="sm" onClick={save} disabled={saving}>
+              <Save className="h-3.5 w-3.5 mr-1.5" />
+              {saving ? 'Salvataggio...' : 'Salva'}
+            </Button>
+          )}
+          {canDelete(element) && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-destructive hover:text-destructive"
+              onClick={() => remove(element, { onDeleted: () => navigate(-1) })}
+            >
+              <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Elimina
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden">

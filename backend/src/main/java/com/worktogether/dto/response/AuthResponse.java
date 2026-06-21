@@ -10,5 +10,6 @@ public record AuthResponse(
         String displayName,
         boolean mustResetPassword,
         boolean systemAdmin,
+        boolean onboardingCompleted,
         String avatar
 ) {}

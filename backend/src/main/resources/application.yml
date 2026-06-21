@@ -19,6 +19,21 @@ spring:
     multipart:
       max-file-size: 25MB
       max-request-size: 25MB
+  mail:
+    # Default su Gmail; username/password vanno forniti via env (app password Google).
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
 
 app:
   jwt:
@@ -34,6 +49,17 @@ app:
     # Segreto per cifrare la chiave OpenRouter a riposo (fallback: JWT secret).
     secret: ${AI_SECRET:${JWT_SECRET:please-change-this-secret-key-in-production}}
     base-url: ${OPENROUTER_BASE_URL:https://openrouter.ai/api/v1}
+  livekit:
+    # Media server SFU per voce/screen share (Fase 2). Credenziali d'infra: se vuote la voce è disattivata.
+    # url = URL pubblico WSS che il browser usa per connettersi (es. wss://livekit.example.com).
+    url: ${LIVEKIT_URL:}
+    api-key: ${LIVEKIT_API_KEY:}
+    api-secret: ${LIVEKIT_API_SECRET:}
+    # Durata del token d'accesso emesso da Spring (secondi).
+    token-ttl-seconds: ${LIVEKIT_TOKEN_TTL:3600}
+  mail:
+    # Mittente delle email inviate dall'app (default: account SMTP configurato).
+    from: ${MAIL_FROM:${MAIL_USERNAME:}}
 
 server:
   port: 8080

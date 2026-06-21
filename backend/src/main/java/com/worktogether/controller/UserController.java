@@ -39,6 +39,12 @@ public class UserController {
         return ResponseEntity.ok(UserResponse.from(userRepository.save(user)));
     }
 
+    @PostMapping("/me/complete-onboarding")
+    public ResponseEntity<UserResponse> completeOnboarding(@AuthenticationPrincipal User user) {
+        user.setOnboardingCompleted(true);
+        return ResponseEntity.ok(UserResponse.from(userRepository.save(user)));
+    }
+
     @GetMapping("/me/tasks")
     public ResponseEntity<List<ElementResponse>> myTasks(@AuthenticationPrincipal User user) {
         return ResponseEntity.ok(elementService.getAssignedToUser(user));

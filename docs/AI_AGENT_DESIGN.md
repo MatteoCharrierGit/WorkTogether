@@ -320,10 +320,11 @@ riusare lo STOMP/WebSocket già presente. **Da decidere in implementazione** (ve
       ai servizi, loop di tool calling con streaming, render azioni in chat. (Distruttivi rinviati a F4.)
 - [x] **F4 — Conferme distruttive** ✅ FATTO: `ai_pending_actions`, tool `delete_*`, pausa/ripresa
       del turno, card di conferma in chat, gate `autonomy`.
-- [~] **F5 — Memoria & compacting** (PARZIALE): ✅ memoria auto-evolutiva (tool `remember`) +
-      `memory.md` editabile; ⏳ **compacting/summary progressivo da fare** (parte lunga, rinviata).
-- [ ] **F6 — Rifiniture**: placeholder personalità, policy da `tools.md`, test connessione/modelli,
-      gestione errori, limiti/costi, polish UI.
+- [x] **F5 — Memoria & compacting** ✅ FATTO: memoria auto-evolutiva (tool `remember`) +
+      `memory.md` editabile; **compacting/summary progressivo** via `AiMemoryService` agganciato in `AiChatService`.
+- [x] **F6 — Rifiniture** ✅ FATTO: placeholder personalità (già in `buildContext`), policy da `tools.md`
+      (iniettata), **endpoint `/models`** con dropdown in Admin, **parsing errori OpenRouter**, polish UI.
+      Restano fuori scope perché *open question* (§14.7): parsing enable/disable della sezione "Abilitati" di `tools.md`.
 
 ## 13b. Stato implementazione
 
@@ -423,25 +424,70 @@ Decisioni applicate in F4:
 - Rebuild backend (Flyway applica `V8`). In chat: "elimina il task X" → compare la card di conferma.
 - Per disattivare le conferme: Admin → Agente AI → Autonomia = "Pieno controllo".
 
-### Fase 5 — PARZIALE
-Fatto ora (memoria auto-evolutiva):
+### Fase 5 — FATTA
+Memoria auto-evolutiva:
 - Backend: `AiSettingsService.appendMemory` (append a `memory.md`, solo in `AUTO_AND_ADMIN`);
-  tool `remember` nel registry (esposto solo se `AUTO_AND_ADMIN`), `specs(autonomy, memoryMode)`;
-  chiamata aggiornata in `AiChatService`.
+  tool `remember` nel registry (esposto solo se `AUTO_AND_ADMIN`), `specs(autonomy, memoryMode)`.
 - Frontend: etichetta "Aggiorno la memoria" per il tool.
-- Prova: "ricorda che le release vanno taggate 'release'" → l'agente usa `remember`, e la voce
-  compare in Admin → Agente AI → memory.md.
 
-**Da fare (compacting — rinviato perché lungo e delicato):**
-- `AiMemoryService.maybeCompact(conv, settings, apiKey)`: stima i token dei messaggi non archiviati
-  (somma `token_count`); se supera `contextWindowTokens * compactThresholdPct/100`, archivia i
-  messaggi più vecchi **tagliando solo a un confine di turno** (prima di un messaggio USER, per non
-  spezzare le sequenze tool), li riassume estendendo `ai_conversations.summary` (chiamata non-stream
-  a `openRouter.streamChat(..., tools=null, ...)`), salva `summary` + `summarized_through` e marca
-  `archived=true`. Da invocare in `runLoop`/`buildContext`.
-- Attenzione: il replay esclude già gli `archived`; il `summary` è già iniettato nel system prompt.
+Compacting (fatto ora):
+- Backend: nuovo `AiMemoryService.maybeCompact(conv, settings, apiKey)`, invocato a **inizio turno**
+  in `AiChatService.runLoop`. Stima i token dei messaggi non archiviati (somma `token_count`) +
+  summary + un overhead di system; se supera `contextWindowTokens * compactThresholdPct/100`,
+  archivia interi turni dal più vecchio **tagliando solo a un confine USER** (l'ultimo turno non
+  viene mai archiviato), fino a riportare il contesto attivo a ~metà finestra. I turni archiviati
+  vengono trascritti e dati a una chiamata **non-stream** (`openRouter.streamChat(..., tools=null, ...)`)
+  che **estende** `ai_conversations.summary`; poi si salva `summary` + `summarized_through` e si
+  marcano i messaggi `archived=true`.
+- Robustezza: è best-effort e in `try/catch` — se la chiamata di riassunto fallisce, il turno
+  prosegue senza perdere messaggi (niente viene archiviato finché il nuovo summary non è salvato).
+- Il replay in `buildContext` esclude già gli `archived` e il `summary` è già iniettato nel system prompt.
 
-### Prossimo: completare il compacting (sopra) e poi F6 rifiniture
+Decisioni applicate in F5 (compacting):
+- Taglio a **confine di turno** (mai a metà di una sequenza `assistant tool_calls → tool`).
+- Target post-compacting: contesto attivo ≈ `contextWindowTokens / 2` (sotto la soglia, evita di
+  ri-scattare ad ogni messaggio).
+- Stima token: euristica `chars/4` (come per i messaggi), invariata rispetto al design (§7).
+
+### Fase 6 — FATTA
+File creati/modificati:
+- Backend: `OpenRouterClient.listModels` (GET `/models`, chiave opzionale) + record `Model`;
+  `extractError` per messaggi d'errore leggibili (parse `{error:{message}}`); `AiSettingsService.listModels`
+  (solo ADMIN); endpoint `GET /ai/models` in `AiController`.
+- Frontend: `aiApi.listModels`; campo **Modello** in Admin con `<datalist>` popolato dai modelli
+  OpenRouter (resta a testo libero, decisione §14.6); stato vuoto Assistente aggiornato (i tool
+  esistono già) ed etichette per i tool `delete_*`.
+- Placeholder personalità (`{{workspaceName}}`/`{{userName}}`/`{{today}}`) e policy da `tools.md`
+  erano **già** implementati in `AiChatService.buildContext` (F2/F3): nessuna modifica necessaria.
+
+### Da fare prima di provare F5/F6
+- Rebuild backend (nessuna nuova migration: `AiMemoryService` usa colonne `summary`/`summarized_through`
+  già create in `V7`). In una chat lunga, superata la soglia, i turni vecchi vengono riassunti.
+- In Admin → Agente AI: il campo Modello mostra ora i suggerimenti da OpenRouter.
+
+### Comandi slash in chat (extra)
+Comandi digitabili nell'input dell'Assistente (intercettati prima dell'invio al modello):
+- `/help`, `/new [titolo]` — gestiti lato **frontend** (nessuna chiamata al modello).
+- `/context`, `/compact`, `/memory`, `/model [slug]`, `/clear` — passano dall'endpoint
+  `POST /ai/conversations/{convId}/command` → `AiCommandService`.
+
+Permessi: `/model <slug>` (cambio modello = impostazione chiave) è **solo ADMIN**; `/clear` su una
+conversazione **condivisa** è solo ADMIN (privata: il proprietario). Gli altri sono per tutti i membri.
+File: backend `AiCommandService`, `AiMemoryService.compactNow`, `AiConversationService.clear`,
+`deleteByConversationId` nei repository messaggi/pending; frontend `aiApi.command` + parsing in
+`AssistantPage` con resa del risultato come nota (non persistita).
+
+### Fix post-F6 (giugno 2026)
+- **Log `AccessDenied` spuri allo stream SSE**: `SecurityConfig` ora permette i dispatch
+  `ASYNC`/`FORWARD`/`ERROR` (`dispatcherTypeMatchers(...).permitAll()`). Il completamento dello
+  stream SSE genera un dispatch ASYNC che l'`AuthorizationFilter` (Spring Security 6) rivalutava
+  senza `SecurityContext`, loggando un errore su risposta già committata. La richiesta originale
+  resta autenticata: i dispatch interni non vanno ri-autorizzati.
+- **Agente che sbaglia le date (es. eventi non visibili in Calendario)**: `AiChatService.buildContext`
+  inietta ora "CONTESTO TEMPORALE" con data/ora correnti `Europe/Rome` e un esempio di formato ISO
+  con offset; `{{today}}` usa lo stesso fuso; gli hint `startDate`/`endDate` dei tool mostrano l'offset.
+- **Identità "Akari"**: frontend mostra nome `Akari` e avatar 🌸 (chat + sidebar); `DEFAULT_PERSONALITY`
+  aggiornata e migration `V9` che applica la persona ai workspace non personalizzati.
 
 ## 14. Domande aperte / da decidere in implementazione
 

@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Plus } from 'lucide-react'
+import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react'
 import { elementsApi } from '@/lib/api'
+import { useElementDelete } from '@/lib/useElementDelete'
 import { Element } from '@/types'
 import { cn, formatDate, TYPE_ICONS } from '@/lib/utils'
 import { Progress } from '@/components/ui/progress'
@@ -47,6 +48,7 @@ function EpicRow({ epic, stories, allElements, minDate, maxDate, totalDays }: {
   totalDays: number
 }) {
   const [open, setOpen] = useState(true)
+  const { canDelete, remove } = useElementDelete(epic.workspaceId)
 
   return (
     <>
@@ -59,10 +61,19 @@ function EpicRow({ epic, stories, allElements, minDate, maxDate, totalDays }: {
           <span className="text-xs">{TYPE_ICONS['EPICA']}</span>
           <a
             href={`/workspace/${epic.workspaceId}/element/${epic.id}`}
-            className="text-sm font-semibold truncate hover:text-primary transition-colors"
+            className="flex-1 text-sm font-semibold truncate hover:text-primary transition-colors"
           >
             {epic.title}
           </a>
+          {canDelete(epic) && (
+            <button
+              onClick={() => remove(epic)}
+              className="shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition"
+              title="Elimina"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
         <div className="w-28 shrink-0 px-3 py-2.5 border-r">
           <div className="flex items-center gap-2">
@@ -77,15 +88,24 @@ function EpicRow({ epic, stories, allElements, minDate, maxDate, totalDays }: {
 
       {/* Story rows */}
       {open && stories.map(story => (
-        <div key={story.id} className="flex items-center border-b bg-muted/10 hover:bg-muted/30 transition-colors">
+        <div key={story.id} className="flex items-center border-b bg-muted/10 hover:bg-muted/30 transition-colors group">
           <div className="w-64 shrink-0 flex items-center gap-1.5 px-3 py-2 border-r pl-9">
             <span className="text-xs">{TYPE_ICONS['STORIA']}</span>
             <a
               href={`/workspace/${story.workspaceId}/element/${story.id}`}
-              className="text-sm truncate hover:text-primary transition-colors text-muted-foreground"
+              className="flex-1 text-sm truncate hover:text-primary transition-colors text-muted-foreground"
             >
               {story.title}
             </a>
+            {canDelete(story) && (
+              <button
+                onClick={() => remove(story)}
+                className="shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition"
+                title="Elimina"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
           <div className="w-28 shrink-0 border-r" />
           <div className="flex-1 relative h-9">

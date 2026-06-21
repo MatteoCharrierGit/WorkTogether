@@ -5,8 +5,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.worktogether.domain.entity.*;
 import com.worktogether.domain.enums.AiAutonomy;
+import com.worktogether.domain.enums.AiConversationScope;
 import com.worktogether.domain.enums.AiMessageRole;
 import com.worktogether.domain.enums.AiPendingActionStatus;
+import com.worktogether.domain.enums.WorkspaceRole;
 import com.worktogether.repository.*;
 import com.worktogether.service.OpenRouterClient.ChatMsg;
 import com.worktogether.service.OpenRouterClient.StreamResult;
@@ -37,8 +39,11 @@ public class AiChatService {
     private final AiMessageRepository messageRepository;
     private final AiPendingActionRepository pendingRepository;
     private final WorkspaceRepository workspaceRepository;
+    private final UserRepository userRepository;
     private final OpenRouterClient openRouter;
     private final AgentToolRegistry toolRegistry;
+    private final WorkspaceService workspaceService;
+    private final AiMemoryService memoryService;
     private final AiKeyCipher cipher;
     private final ObjectMapper objectMapper;
 
@@ -109,7 +114,11 @@ public class AiChatService {
     }
 
     private void runLoop(UUID workspaceId, AiConversation conv, AiSettings settings, String apiKey, User user, SseEmitter emitter) {
-        JsonNode tools = toolRegistry.specs(settings.getAutonomy(), settings.getMemoryMode());
+        // Compacting a inizio turno: se il contesto attivo supera la soglia, riassume i turni vecchi.
+        memoryService.maybeCompact(conv, settings, apiKey);
+
+        boolean isAdmin = workspaceService.getUserRole(workspaceId, user) == WorkspaceRole.ADMIN;
+        JsonNode tools = toolRegistry.specs(settings.getAutonomy(), settings.getMemoryMode(), isAdmin);
         String model = settings.getModel();
         double temperature = settings.getTemperature();
         int maxTokens = settings.getMaxTokens();
@@ -185,6 +194,29 @@ public class AiChatService {
         StringBuilder system = new StringBuilder();
         String persona = resolvePlaceholders(settings.getPersonalityMd(), wsName, user);
         if (persona != null && !persona.isBlank()) system.append(persona.trim()).append("\n\n");
+
+        // Contesto temporale: senza questo l'agente non sa che giorno è e sbaglia "oggi"/"domani"
+        // (es. crea eventi su date errate). Fuso fisso Europe/Rome.
+        java.time.ZonedDateTime now = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Rome"));
+        java.time.format.DateTimeFormatter human = java.time.format.DateTimeFormatter
+                .ofPattern("EEEE d MMMM yyyy, HH:mm", java.util.Locale.ITALIAN);
+        system.append("CONTESTO TEMPORALE: adesso è ").append(now.format(human))
+                .append(" (fuso Europe/Rome). Interpreta 'oggi', 'domani' ecc. rispetto a questa data. ")
+                .append("Gli EVENTI del calendario sono a GIORNATA INTERA: per crearli/modificarli basta la DATA in ")
+                .append("startDate nel formato YYYY-MM-DD (es. ").append(now.toLocalDate())
+                .append("), NON chiedere né indicare l'ora. Per le scadenze dei task usa endDate (YYYY-MM-DD).\n\n");
+
+        // Chi sta scrivendo: utile soprattutto nelle chat condivise dove scrivono più persone.
+        boolean shared = conv.getScope() == AiConversationScope.SHARED;
+        system.append("INTERLOCUTORE: stai parlando con ").append(user.getDisplayName())
+                .append(" (id utente: ").append(user.getId()).append("). ")
+                .append("Quando l'utente dice 'me'/'a me'/'mio' (es. \"assegnami questo task\"), usa questo id utente.");
+        if (shared) {
+            system.append(" Questa è una chat condivisa del workspace: i messaggi degli utenti sono "
+                    + "etichettati con [Nome] per indicare chi li ha scritti; in tal caso 'me' si riferisce "
+                    + "all'autore del messaggio corrente.");
+        }
+        system.append("\n\n");
         if (settings.getToolsMd() != null && !settings.getToolsMd().isBlank()) {
             system.append("POLICY SUI TOOL:\n").append(settings.getToolsMd().trim()).append("\n\n");
         }
@@ -198,10 +230,27 @@ public class AiChatService {
         List<ChatMsg> out = new ArrayList<>();
         if (system.length() > 0) out.add(ChatMsg.of("system", system.toString().trim()));
 
-        for (AiMessage m : messageRepository.findByConversationIdAndArchivedFalseOrderByCreatedAtAsc(conv.getId())) {
+        List<AiMessage> history = messageRepository.findByConversationIdAndArchivedFalseOrderByCreatedAtAsc(conv.getId());
+
+        // Nelle chat condivise risolvo i nomi degli autori per etichettare i messaggi.
+        Map<UUID, String> authorNames = new HashMap<>();
+        if (shared) {
+            Set<UUID> ids = new HashSet<>();
+            for (AiMessage m : history) if (m.getAuthorUserId() != null) ids.add(m.getAuthorUserId());
+            userRepository.findAllById(ids).forEach(u -> authorNames.put(u.getId(), u.getDisplayName()));
+        }
+
+        for (AiMessage m : history) {
             switch (m.getRole()) {
                 case USER -> {
-                    if (notBlank(m.getContent())) out.add(ChatMsg.of("user", m.getContent()));
+                    if (notBlank(m.getContent())) {
+                        String text = m.getContent();
+                        if (shared) {
+                            String author = authorNames.getOrDefault(m.getAuthorUserId(), "Utente");
+                            text = "[" + author + "] " + text;
+                        }
+                        out.add(ChatMsg.of("user", text));
+                    }
                 }
                 case ASSISTANT -> {
                     if (m.getToolCalls() != null && !m.getToolCalls().isBlank()) {
@@ -242,7 +291,7 @@ public class AiChatService {
         return template
                 .replace("{{workspaceName}}", wsName != null ? wsName : "")
                 .replace("{{userName}}", user.getDisplayName() != null ? user.getDisplayName() : "")
-                .replace("{{today}}", LocalDate.now().toString());
+                .replace("{{today}}", LocalDate.now(java.time.ZoneId.of("Europe/Rome")).toString());
     }
 
     private String serialize(List<ToolCall> calls) {

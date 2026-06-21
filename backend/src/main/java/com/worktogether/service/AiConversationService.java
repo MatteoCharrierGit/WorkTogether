@@ -9,6 +9,7 @@ import com.worktogether.dto.response.AiConversationResponse;
 import com.worktogether.dto.response.AiMessageResponse;
 import com.worktogether.repository.AiConversationRepository;
 import com.worktogether.repository.AiMessageRepository;
+import com.worktogether.repository.AiPendingActionRepository;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,7 @@ public class AiConversationService {
 
     private final AiConversationRepository conversationRepository;
     private final AiMessageRepository messageRepository;
+    private final AiPendingActionRepository pendingRepository;
     private final WorkspaceService workspaceService;
 
     public List<AiConversationResponse> list(UUID workspaceId, AiConversationScope scope, User user) {
@@ -87,5 +89,26 @@ public class AiConversationService {
             }
         }
         conversationRepository.delete(conv);
+    }
+
+    /**
+     * Svuota la conversazione: elimina messaggi e azioni in attesa e azzera il riassunto,
+     * mantenendo la conversazione stessa. Stessi permessi della delete (condivisa = solo admin).
+     */
+    @Transactional
+    public void clear(UUID workspaceId, UUID conversationId, User user) {
+        AiConversation conv = getAccessible(workspaceId, conversationId, user);
+        if (conv.getScope() == AiConversationScope.SHARED) {
+            WorkspaceRole role = workspaceService.getUserRole(workspaceId, user);
+            if (role != WorkspaceRole.ADMIN) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                        "Solo un admin può svuotare le conversazioni condivise");
+            }
+        }
+        pendingRepository.deleteByConversationId(conversationId);
+        messageRepository.deleteByConversationId(conversationId);
+        conv.setSummary(null);
+        conv.setSummarizedThrough(null);
+        conversationRepository.save(conv);
     }
 }

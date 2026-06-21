@@ -15,11 +15,17 @@ public record WorkspaceResponse(
         String avatar,
         boolean cardShowTags,
         boolean cardShowAssignees,
-        boolean cardShowDueDate
+        boolean cardShowDueDate,
+        int reminderDaysBefore,
+        boolean eventRemindersEnabled,
+        boolean weeklyRecapEnabled,
+        boolean mondayDigestEnabled
 ) {
     public static WorkspaceResponse from(Workspace w, WorkspaceRole role) {
         return new WorkspaceResponse(
                 w.getId(), w.getName(), w.getDescription(), role, w.getCreatedAt(),
-                w.getAvatar(), w.isCardShowTags(), w.isCardShowAssignees(), w.isCardShowDueDate());
+                w.getAvatar(), w.isCardShowTags(), w.isCardShowAssignees(), w.isCardShowDueDate(),
+                w.getReminderDaysBefore(), w.isEventRemindersEnabled(),
+                w.isWeeklyRecapEnabled(), w.isMondayDigestEnabled());
     }
 }

@@ -9,4 +9,5 @@ import java.util.UUID;
 
 public interface AiPendingActionRepository extends JpaRepository<AiPendingAction, UUID> {
     List<AiPendingAction> findByConversationIdAndStatusOrderByCreatedAtAsc(UUID conversationId, AiPendingActionStatus status);
+    void deleteByConversationId(UUID conversationId);
 }

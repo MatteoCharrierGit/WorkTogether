@@ -2,9 +2,13 @@ import { Client, StompSubscription } from '@stomp/stompjs'
 import SockJS from 'sockjs-client'
 import { WsEvent } from '@/types'
 
+type WsHandler = (event: WsEvent) => void
+
 let client: Client | null = null
-// Desired subscriptions (workspaceId -> handler) and the live STOMP subscriptions.
-const handlers = new Map<string, (event: WsEvent) => void>()
+// Desired subscribers (workspaceId -> set of handlers) and the live STOMP subscriptions.
+// Più componenti (es. Layout + ChatPage) possono ascoltare lo stesso workspace:
+// una sola subscription STOMP per workspace inoltra l'evento a tutti gli handler.
+const handlers = new Map<string, Set<WsHandler>>()
 const active = new Map<string, StompSubscription>()
 
 function doSubscribe(workspaceId: string) {
@@ -12,14 +16,22 @@ function doSubscribe(workspaceId: string) {
   // otherwise @stomp/stompjs throws ("no underlying STOMP connection").
   if (!client || !client.connected) return
   if (active.has(workspaceId)) return
-  const handler = handlers.get(workspaceId)
-  if (!handler) return
+  const set = handlers.get(workspaceId)
+  if (!set || set.size === 0) return
   const sub = client.subscribe(`/topic/workspace/${workspaceId}`, msg => {
+    let event: WsEvent
     try {
-      handler(JSON.parse(msg.body) as WsEvent)
+      event = JSON.parse(msg.body) as WsEvent
     } catch {
-      /* ignore malformed frames */
+      return /* ignore malformed frames */
     }
+    handlers.get(workspaceId)?.forEach(h => {
+      try {
+        h(event)
+      } catch {
+        /* un handler che fallisce non deve bloccare gli altri */
+      }
+    })
   })
   active.set(workspaceId, sub)
 }
@@ -50,20 +62,30 @@ export function subscribeWorkspace(
   workspaceId: string,
   onEvent: (event: WsEvent) => void
 ): () => void {
-  handlers.set(workspaceId, onEvent)
+  let set = handlers.get(workspaceId)
+  if (!set) {
+    set = new Set()
+    handlers.set(workspaceId, set)
+  }
+  set.add(onEvent)
   // Subscribe immediately if already connected; otherwise onConnect handles it.
   doSubscribe(workspaceId)
 
   return () => {
-    handlers.delete(workspaceId)
-    const sub = active.get(workspaceId)
-    if (sub) {
-      try {
-        sub.unsubscribe()
-      } catch {
-        /* connection may already be gone */
+    const s = handlers.get(workspaceId)
+    s?.delete(onEvent)
+    // Solo quando nessuno ascolta più il workspace chiudiamo la subscription STOMP.
+    if (!s || s.size === 0) {
+      handlers.delete(workspaceId)
+      const sub = active.get(workspaceId)
+      if (sub) {
+        try {
+          sub.unsubscribe()
+        } catch {
+          /* connection may already be gone */
+        }
+        active.delete(workspaceId)
       }
-      active.delete(workspaceId)
     }
   }
 }

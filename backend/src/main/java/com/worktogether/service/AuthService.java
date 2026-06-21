@@ -79,7 +79,19 @@ public class AuthService {
             refreshTokenRepository.delete(token);
             throw new BadCredentialsException("Refresh token expired");
         }
-        return buildAuthResponse(token.getUser());
+        // Refresh non distruttivo: manteniamo lo stesso refresh token (sliding
+        // expiry) e rilasciamo solo un nuovo access token. Evita che richieste di
+        // refresh concorrenti o da più tab/dispositivi invalidino la sessione,
+        // causa dei logout casuali.
+        User user = token.getUser();
+        token.setExpiresAt(OffsetDateTime.now().plusNanos(refreshExpiryMs * 1_000_000L));
+        refreshTokenRepository.save(token);
+        String accessToken = jwtUtil.generateToken(user.getId(), user.getEmail());
+        return new AuthResponse(
+                accessToken, token.getToken(),
+                user.getId(), user.getEmail(), user.getDisplayName(),
+                user.isMustResetPassword(), user.isSystemAdmin(), user.isOnboardingCompleted(), user.getAvatar()
+        );
     }
 
     @Transactional
@@ -100,7 +112,7 @@ public class AuthService {
         return new AuthResponse(
                 accessToken, refreshToken,
                 user.getId(), user.getEmail(), user.getDisplayName(),
-                user.isMustResetPassword(), user.isSystemAdmin(), user.getAvatar()
+                user.isMustResetPassword(), user.isSystemAdmin(), user.isOnboardingCompleted(), user.getAvatar()
         );
     }
 }

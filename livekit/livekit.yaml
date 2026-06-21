@@ -1,0 +1,30 @@
+# Configurazione LiveKit (Fase 2 — voce/screen share di WorkTogether).
+# Le chiavi NON stanno qui: vengono passate via env LIVEKIT_KEYS dal docker-compose
+# ("chiave: segreto"), così il segreto non finisce nel repo.
+
+port: 7880          # signaling HTTP/WebSocket (in prod esposto come WSS dietro nginx)
+log_level: info
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  # IN LOCALE (Docker su Windows): il browser gira sull'host e raggiunge LiveKit tramite le porte
+  # pubblicate su localhost. Quindi i candidati ICE devono puntare a 127.0.0.1, NON all'IP pubblico.
+  use_external_ip: false
+  node_ip: 127.0.0.1
+  # IN PROD su VPS con IP pubblico: rimuovi node_ip e metti use_external_ip: true, così LiveKit
+  # annuncia l'IP esterno reale nei candidati ICE.
+
+# TURN integrato: fallback su TCP/TLS quando la rete del client blocca UDP.
+# In locale resta disattivato: il TURN/TLS richiede un dominio pubblico + certificato valido,
+# che non esistono in sviluppo. In prod (dietro nginx) riattivare impostando domain/cert qui sotto.
+turn:
+  enabled: false
+  # Porta TURN/TLS. Richiede un certificato valido per il dominio del media server.
+  # tls_port: 5349
+  # domain: livekit.example.com
+  # cert_file: /etc/livekit/cert.pem
+  # key_file: /etc/livekit/key.pem
+
+# Per 6 persone basta un singolo nodo: nessun Redis/clustering.

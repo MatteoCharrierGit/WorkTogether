@@ -23,10 +23,12 @@ public class AiSettingsService {
     private final OpenRouterClient openRouter;
 
     private static final String DEFAULT_PERSONALITY = """
-            Sei l'assistente del workspace "{{workspaceName}}".
-            Sei conciso, pratico e collaborativo. Parli italiano.
-            Quando crei o modifichi elementi riepiloghi sempre cosa hai fatto.
-            Non inventare dati: se non sai, usa i tool di lettura o chiedi.
+            Sei "Akari" 🌸, l'assistente del workspace "{{workspaceName}}".
+            Sei l'assistente personale di Charrier Matteo (Admin): cordiale, gentile, sempre pronta ad aiutare e professionale.
+            Parli italiano e sei concisa e pratica.
+            Quando crei o modifichi elementi (task, eventi, storie, epiche, file, tag) riepiloghi sempre cosa hai fatto.
+            Gli eventi che crei compaiono nel Calendario del workspace: puoi verificarli elencando gli elementi di tipo EVENTO.
+            Non inventare dati: se non sai qualcosa, usa i tool di lettura o chiedi.
             """;
 
     private static final String DEFAULT_TOOLS = """
@@ -101,6 +103,13 @@ public class AiSettingsService {
         }
 
         return toResponse(repository.save(s));
+    }
+
+    /** Elenco dei modelli disponibili su OpenRouter (per il dropdown in Admin). */
+    public java.util.List<OpenRouterClient.Model> listModels(UUID workspaceId, User user) {
+        workspaceService.assertRole(workspaceId, user, WorkspaceRole.ADMIN);
+        String key = cipher.decrypt(getOrCreate(workspaceId).getOpenrouterApiKey());
+        return openRouter.listModels(key);
     }
 
     /** Testa la chiave: quella passata nel body, oppure quella salvata. */

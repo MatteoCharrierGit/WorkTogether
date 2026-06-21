@@ -8,7 +8,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { toast } from '@/components/ui/toast'
-import { Camera, Check, Trash2, Palette, UserCircle, Lock } from 'lucide-react'
+import {
+  notificationsSupported, notificationsEnabled, setNotificationsEnabled,
+  notificationPermission, requestNotificationPermission,
+} from '@/lib/notifications'
+import { Camera, Check, Trash2, Palette, UserCircle, Lock, Bell } from 'lucide-react'
 
 // Ridimensiona un'immagine lato client e la restituisce come data URI JPEG.
 function fileToResizedDataUrl(file: File, max = 256): Promise<string> {
@@ -44,6 +48,9 @@ export default function SettingsPage() {
   const [displayName, setDisplayName] = useState(user?.displayName ?? '')
   const [savingName, setSavingName] = useState(false)
   const [avatarBusy, setAvatarBusy] = useState(false)
+
+  const [notifyOn, setNotifyOn] = useState(notificationsEnabled())
+  const [perm, setPerm] = useState(notificationPermission())
 
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
@@ -93,6 +100,16 @@ export default function SettingsPage() {
       toast('Errore', 'destructive')
     } finally {
       setSavingName(false)
+    }
+  }
+
+  const handleToggleNotifications = async (on: boolean) => {
+    setNotifyOn(on)
+    setNotificationsEnabled(on)
+    if (on && notificationPermission() === 'default') {
+      const p = await requestNotificationPermission()
+      setPerm(p)
+      if (p === 'denied') toast('Notifiche bloccate dal browser', 'destructive')
     }
   }
 
@@ -197,6 +214,46 @@ export default function SettingsPage() {
                 </button>
               ))}
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Notifiche */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Bell className="h-4 w-4" /> Notifiche
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <label className="flex items-center justify-between gap-4 cursor-pointer select-none">
+              <span className="space-y-0.5">
+                <span className="block text-sm font-medium">Notifiche dei nuovi messaggi</span>
+                <span className="block text-xs text-muted-foreground">
+                  Avviso quando ricevi un messaggio mentre l'app non è in primo piano.
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={notifyOn}
+                onChange={e => handleToggleNotifications(e.target.checked)}
+                className="h-5 w-5 rounded border-input shrink-0"
+              />
+            </label>
+            {!notificationsSupported() && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Questo browser non supporta le notifiche desktop.
+              </p>
+            )}
+            {notificationsSupported() && notifyOn && perm === 'denied' && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Le notifiche sono bloccate nelle impostazioni del browser per questo sito: sbloccale per riceverle.
+              </p>
+            )}
+            {notificationsSupported() && notifyOn && perm === 'default' && (
+              <Button size="sm" variant="outline" onClick={() => requestNotificationPermission().then(setPerm)}>
+                Consenti le notifiche
+              </Button>
+            )}
           </CardContent>
         </Card>
 

@@ -8,6 +8,7 @@ import com.worktogether.dto.response.AiConversationResponse;
 import com.worktogether.dto.response.AiMessageResponse;
 import com.worktogether.dto.response.AiSettingsResponse;
 import com.worktogether.service.AiChatService;
+import com.worktogether.service.AiCommandService;
 import com.worktogether.service.AiConversationService;
 import com.worktogether.service.AiSettingsService;
 import com.worktogether.service.OpenRouterClient;
@@ -30,6 +31,7 @@ public class AiController {
     private final AiSettingsService aiSettingsService;
     private final AiConversationService conversationService;
     private final AiChatService chatService;
+    private final AiCommandService commandService;
 
     // ---- Stato & impostazioni ----
 
@@ -62,6 +64,13 @@ public class AiController {
             @AuthenticationPrincipal User user) {
         String apiKey = body != null ? body.get("apiKey") : null;
         return ResponseEntity.ok(aiSettingsService.testConnection(wsId, apiKey, user));
+    }
+
+    @GetMapping("/models")
+    public ResponseEntity<List<OpenRouterClient.Model>> listModels(
+            @PathVariable UUID wsId,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(aiSettingsService.listModels(wsId, user));
     }
 
     // ---- Conversazioni ----
@@ -97,6 +106,17 @@ public class AiController {
             @RequestBody Map<String, String> body,
             @AuthenticationPrincipal User user) {
         return chatService.sendMessage(wsId, convId, body.get("text"), user);
+    }
+
+    @PostMapping("/conversations/{convId}/command")
+    public ResponseEntity<AiCommandService.CommandResult> runCommand(
+            @PathVariable UUID wsId,
+            @PathVariable UUID convId,
+            @RequestBody Map<String, String> body,
+            @AuthenticationPrincipal User user) {
+        String command = body.get("command");
+        String arg = body.get("arg");
+        return ResponseEntity.ok(commandService.execute(wsId, convId, command, arg, user));
     }
 
     @PostMapping("/conversations/{convId}/confirm")

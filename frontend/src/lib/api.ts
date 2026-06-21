@@ -11,17 +11,35 @@ api.interceptors.request.use(config => {
   return config
 })
 
+// Refresh condiviso: tutte le richieste che ricevono 401 contemporaneamente
+// (tipico al caricamento pagina) riusano un'unica chiamata a /auth/refresh.
+// Senza questa deduplica, ogni richiesta chiamerebbe il refresh con lo stesso
+// token; il backend ruota il refresh token, quindi solo la prima andrebbe a
+// buon fine e le altre verrebbero disconnesse → logout casuali.
+let refreshPromise: Promise<string> | null = null
+
+async function refreshAccessToken(): Promise<string> {
+  const refreshToken = useAuthStore.getState().refreshToken
+  if (!refreshToken) throw new Error('no refresh token')
+  const res = await axios.post('/api/auth/refresh', { refreshToken })
+  useAuthStore.getState().setTokens(res.data.accessToken, res.data.refreshToken)
+  return res.data.accessToken as string
+}
+
 api.interceptors.response.use(
   res => res,
   async err => {
     const original = err.config
-    if (err.response?.status === 401 && !original._retry) {
+    const isRefreshCall = original?.url?.includes('/auth/refresh')
+    if (err.response?.status === 401 && original && !original._retry && !isRefreshCall) {
       original._retry = true
       try {
-        const refreshToken = useAuthStore.getState().refreshToken
-        const res = await axios.post('/api/auth/refresh', { refreshToken })
-        useAuthStore.getState().setTokens(res.data.accessToken, res.data.refreshToken)
-        original.headers.Authorization = `Bearer ${res.data.accessToken}`
+        // Avvia il refresh solo se non ce n'è già uno in corso.
+        if (!refreshPromise) {
+          refreshPromise = refreshAccessToken().finally(() => { refreshPromise = null })
+        }
+        const newAccessToken = await refreshPromise
+        original.headers.Authorization = `Bearer ${newAccessToken}`
         return api(original)
       } catch {
         useAuthStore.getState().logout()
@@ -57,8 +75,13 @@ export const workspacesApi = {
     api.delete(`/workspaces/${wsId}/members/${userId}`),
   createUser: (wsId: string, data: { email: string; displayName: string; temporaryPassword: string; role?: string }) =>
     api.post(`/workspaces/${wsId}/users`, data).then(r => r.data),
-  updateSettings: (wsId: string, data: { avatar?: string; cardShowTags?: boolean; cardShowAssignees?: boolean; cardShowDueDate?: boolean }) =>
+  updateSettings: (wsId: string, data: { avatar?: string; cardShowTags?: boolean; cardShowAssignees?: boolean; cardShowDueDate?: boolean; reminderDaysBefore?: number; eventRemindersEnabled?: boolean; weeklyRecapEnabled?: boolean; mondayDigestEnabled?: boolean }) =>
     api.patch(`/workspaces/${wsId}/settings`, data).then(r => r.data),
+  // Backup / trasporto: export delle sezioni selezionate → JSON; import → nuova workspace.
+  exportWorkspace: (wsId: string, sections: { settings?: boolean; members?: boolean; tags?: boolean; elements?: boolean; chat?: boolean; ai?: boolean }) =>
+    api.post(`/workspaces/${wsId}/export`, sections).then(r => r.data),
+  importWorkspace: (data: unknown, newName?: string) =>
+    api.post(`/workspaces/import`, { data, newName }).then(r => r.data),
 }
 
 // Elements
@@ -89,6 +112,7 @@ export const usersApi = {
   myTasks: () => api.get('/users/me/tasks').then(r => r.data),
   updateProfile: (data: { displayName?: string; avatar?: string }) =>
     api.patch('/users/me', data).then(r => r.data),
+  completeOnboarding: () => api.post('/users/me/complete-onboarding').then(r => r.data),
 }
 
 // Drive (file condivisi)
@@ -225,6 +249,8 @@ export const aiApi = {
     api.put(`/workspaces/${wsId}/ai/settings`, data).then(r => r.data),
   testConnection: (wsId: string, apiKey?: string) =>
     api.post(`/workspaces/${wsId}/ai/test`, apiKey ? { apiKey } : {}).then(r => r.data),
+  listModels: (wsId: string): Promise<{ id: string; name: string }[]> =>
+    api.get(`/workspaces/${wsId}/ai/models`).then(r => r.data),
   status: (wsId: string) => api.get(`/workspaces/${wsId}/ai/status`).then(r => r.data),
 
   listConversations: (wsId: string, scope: string) =>
@@ -243,6 +269,60 @@ export const aiApi = {
   // Conferma/annulla le azioni in attesa e riprende lo stream.
   confirmActions: (wsId: string, convId: string, confirm: boolean, handlers: AiStreamHandlers) =>
     aiStreamSse(`/workspaces/${wsId}/ai/conversations/${convId}/confirm`, { confirm }, handlers),
+
+  // Comandi slash (es. /context, /compact, /model).
+  command: (wsId: string, convId: string, command: string, arg?: string): Promise<{ message: string; refreshMessages: boolean; refreshConversations: boolean }> =>
+    api.post(`/workspaces/${wsId}/ai/conversations/${convId}/command`, { command, arg }).then(r => r.data),
+}
+
+// Email (invio per ruoli, admin)
+export const emailApi = {
+  send: (wsId: string, data: { roles: string[]; subject: string; body: string }): Promise<{ recipientCount: number }> =>
+    api.post(`/workspaces/${wsId}/emails/send`, data).then(r => r.data),
+  draft: (wsId: string, data: { prompt: string; roles?: string[] }): Promise<{ subject: string; body: string }> =>
+    api.post(`/workspaces/${wsId}/emails/draft`, data).then(r => r.data),
+}
+
+// Chat / Stanze (funzioni Discord-like)
+export const channelsApi = {
+  list: (wsId: string) => api.get(`/workspaces/${wsId}/channels`).then(r => r.data),
+  listRooms: (wsId: string) => api.get(`/workspaces/${wsId}/channels/rooms`).then(r => r.data),
+  createDm: (wsId: string, userId: string) =>
+    api.post(`/workspaces/${wsId}/channels/dm`, { userId }).then(r => r.data),
+  createGroup: (wsId: string, data: { name: string; memberIds: string[] }) =>
+    api.post(`/workspaces/${wsId}/channels/groups`, data).then(r => r.data),
+  createRoom: (wsId: string, data: { name: string; description?: string; isPrivate: boolean; voiceEnabled: boolean; screenShareEnabled: boolean; memberIds: string[] }) =>
+    api.post(`/workspaces/${wsId}/channels/rooms`, data).then(r => r.data),
+  updateRoom: (wsId: string, roomId: string, data: { name: string; description?: string; isPrivate: boolean; voiceEnabled: boolean; screenShareEnabled: boolean; memberIds: string[] }) =>
+    api.put(`/workspaces/${wsId}/channels/rooms/${roomId}`, data).then(r => r.data),
+  deleteRoom: (wsId: string, roomId: string) =>
+    api.delete(`/workspaces/${wsId}/channels/rooms/${roomId}`),
+  getMessages: (wsId: string, channelId: string, params?: { before?: string; limit?: number }) =>
+    api.get(`/workspaces/${wsId}/channels/${channelId}/messages`, { params }).then(r => r.data),
+  sendMessage: (wsId: string, channelId: string, content: string) =>
+    api.post(`/workspaces/${wsId}/channels/${channelId}/messages`, { content }).then(r => r.data),
+  markRead: (wsId: string, channelId: string) =>
+    api.post(`/workspaces/${wsId}/channels/${channelId}/read`),
+  typing: (wsId: string, channelId: string) =>
+    api.post(`/workspaces/${wsId}/channels/${channelId}/typing`),
+  voiceToken: (wsId: string, channelId: string): Promise<VoiceToken> =>
+    api.post(`/workspaces/${wsId}/channels/${channelId}/voice/token`).then(r => r.data),
+}
+
+export interface VoiceToken {
+  url: string
+  token: string
+  identity: string
+  roomName: string
+}
+
+export interface PresenceEntryDto { userId: string; inCallChannelId: string | null }
+
+export const presenceApi = {
+  heartbeat: (wsId: string, channelId: string | null): Promise<PresenceEntryDto[]> =>
+    api.post(`/workspaces/${wsId}/presence/heartbeat`, { channelId }).then(r => r.data),
+  get: (wsId: string): Promise<PresenceEntryDto[]> =>
+    api.get(`/workspaces/${wsId}/presence`).then(r => r.data),
 }
 
 // Attachments

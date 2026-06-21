@@ -54,6 +54,10 @@ public class WorkspaceService {
         return WorkspaceResponse.from(ws, WorkspaceRole.ADMIN);
     }
 
+    // @Transactional: serve a tenere aperta la sessione anche quando il metodo è
+    // invocato fuori da una richiesta HTTP (es. dal thread di background dell'agente
+    // o dalle automazioni), così il caricamento lazy di member.getUser() non fallisce.
+    @Transactional
     public List<MemberResponse> getMembers(UUID workspaceId, User requester) {
         assertMember(workspaceId, requester);
         return memberRepository.findByWorkspaceId(workspaceId).stream()
@@ -121,6 +125,12 @@ public class WorkspaceService {
         if (req.cardShowTags() != null) ws.setCardShowTags(req.cardShowTags());
         if (req.cardShowAssignees() != null) ws.setCardShowAssignees(req.cardShowAssignees());
         if (req.cardShowDueDate() != null) ws.setCardShowDueDate(req.cardShowDueDate());
+        if (req.reminderDaysBefore() != null) {
+            ws.setReminderDaysBefore(Math.max(0, Math.min(30, req.reminderDaysBefore())));
+        }
+        if (req.eventRemindersEnabled() != null) ws.setEventRemindersEnabled(req.eventRemindersEnabled());
+        if (req.weeklyRecapEnabled() != null) ws.setWeeklyRecapEnabled(req.weeklyRecapEnabled());
+        if (req.mondayDigestEnabled() != null) ws.setMondayDigestEnabled(req.mondayDigestEnabled());
         ws = workspaceRepository.save(ws);
         return WorkspaceResponse.from(ws, getUserRole(workspaceId, requester));
     }

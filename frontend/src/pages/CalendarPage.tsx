@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronLeft, ChevronRight, Calendar, CheckSquare, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Calendar, CheckSquare, Plus, Trash2 } from 'lucide-react'
+import { useElementDelete } from '@/lib/useElementDelete'
 import {
   startOfMonth, endOfMonth, eachDayOfInterval, startOfWeek, endOfWeek,
   isSameMonth, isSameDay, isToday, format, addMonths, subMonths,
@@ -28,20 +29,34 @@ function dayInRange(day: Date, start: Date, end: Date): boolean {
 
 function EventPill({ element }: { element: Element }) {
   const isEvent = element.type === 'EVENTO'
+  const { canDelete, remove } = useElementDelete(element.workspaceId)
   return (
-    <a
-      href={`/workspace/${element.workspaceId}/element/${element.id}`}
-      onClick={e => e.stopPropagation()}
+    <div
       className={cn(
-        'block truncate rounded px-1.5 py-0.5 text-xs leading-tight mb-0.5 transition-colors',
+        'group/pill flex items-center gap-1 rounded px-1.5 py-0.5 text-xs leading-tight mb-0.5 transition-colors',
         isEvent
           ? 'bg-primary text-primary-foreground font-medium'
           : 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200 font-normal'
       )}
-      title={element.title}
     >
-      {element.title}
-    </a>
+      <a
+        href={`/workspace/${element.workspaceId}/element/${element.id}`}
+        onClick={e => e.stopPropagation()}
+        className="flex-1 truncate"
+        title={element.title}
+      >
+        {element.title}
+      </a>
+      {canDelete(element) && (
+        <button
+          onClick={e => { e.stopPropagation(); e.preventDefault(); remove(element) }}
+          className="shrink-0 opacity-0 group-hover/pill:opacity-100 hover:text-destructive transition"
+          title="Elimina"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      )}
+    </div>
   )
 }
 

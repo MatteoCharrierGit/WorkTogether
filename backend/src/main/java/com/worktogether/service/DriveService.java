@@ -45,6 +45,7 @@ public class DriveService {
 
     // ---- Folders ----
 
+    @Transactional
     public List<FolderResponse> listFolders(UUID workspaceId, UUID parentId, User user) {
         workspaceService.assertMember(workspaceId, user);
         if (parentId != null) validateFolder(workspaceId, parentId);
@@ -127,6 +128,7 @@ public class DriveService {
 
     // ---- Files ----
 
+    @Transactional
     public List<DriveFileResponse> listFiles(UUID workspaceId, UUID folderId, User user) {
         workspaceService.assertMember(workspaceId, user);
         if (folderId != null) validateFolder(workspaceId, folderId);
@@ -353,6 +355,7 @@ public class DriveService {
     }
 
     /** Legge il contenuto testuale di un file (troncato a maxChars). */
+    @Transactional
     public String readText(UUID workspaceId, UUID fileId, User user, int maxChars) {
         workspaceService.assertMember(workspaceId, user);
         DriveFile df = getFileInWorkspace(workspaceId, fileId);

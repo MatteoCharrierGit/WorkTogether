@@ -31,6 +31,10 @@ public class User {
     @Column(name = "is_system_admin", nullable = false)
     private boolean systemAdmin = false;
 
+    // Tour di benvenuto già visto: mostrato solo al primo accesso assoluto.
+    @Column(name = "onboarding_completed", nullable = false)
+    private boolean onboardingCompleted = false;
+
     // Foto profilo come data URI (es. "data:image/jpeg;base64,...")
     @Column(columnDefinition = "text")
     private String avatar;

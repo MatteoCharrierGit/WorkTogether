@@ -5,5 +5,9 @@ public record UpdateWorkspaceSettingsRequest(
         String avatar,
         Boolean cardShowTags,
         Boolean cardShowAssignees,
-        Boolean cardShowDueDate
+        Boolean cardShowDueDate,
+        Integer reminderDaysBefore,
+        Boolean eventRemindersEnabled,
+        Boolean weeklyRecapEnabled,
+        Boolean mondayDigestEnabled
 ) {}

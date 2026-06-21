@@ -1,20 +1,26 @@
+import { Suspense, lazy } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from '@/components/layout/ThemeProvider'
 import { Layout } from '@/components/layout/Layout'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
-import LoginPage from '@/pages/LoginPage'
-import ForceResetPage from '@/pages/ForceResetPage'
-import WorkspaceHomePage from '@/pages/WorkspaceHomePage'
-import KanbanPage from '@/pages/KanbanPage'
-import RoadmapPage from '@/pages/RoadmapPage'
-import CalendarPage from '@/pages/CalendarPage'
-import ElementDetailPage from '@/pages/ElementDetailPage'
-import AdminPage from '@/pages/AdminPage'
-import MyTasksPage from '@/pages/MyTasksPage'
-import SettingsPage from '@/pages/SettingsPage'
-import DrivePage from '@/pages/DrivePage'
-import AssistantPage from '@/pages/AssistantPage'
+
+// Pagine caricate on-demand (code-splitting): ogni route diventa un chunk separato,
+// così l'avvio non scarica tutto il codice di tutte le pagine in un colpo solo.
+const LoginPage = lazy(() => import('@/pages/LoginPage'))
+const ForceResetPage = lazy(() => import('@/pages/ForceResetPage'))
+const WorkspaceHomePage = lazy(() => import('@/pages/WorkspaceHomePage'))
+const KanbanPage = lazy(() => import('@/pages/KanbanPage'))
+const RoadmapPage = lazy(() => import('@/pages/RoadmapPage'))
+const CalendarPage = lazy(() => import('@/pages/CalendarPage'))
+const ElementDetailPage = lazy(() => import('@/pages/ElementDetailPage'))
+const AdminPage = lazy(() => import('@/pages/AdminPage'))
+const MyTasksPage = lazy(() => import('@/pages/MyTasksPage'))
+const SettingsPage = lazy(() => import('@/pages/SettingsPage'))
+const DrivePage = lazy(() => import('@/pages/DrivePage'))
+const AssistantPage = lazy(() => import('@/pages/AssistantPage'))
+const ChatPage = lazy(() => import('@/pages/ChatPage'))
+const MailPage = lazy(() => import('@/pages/MailPage'))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,6 +36,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <BrowserRouter>
+          <Suspense fallback={<RouteFallback />}>
           <Routes>
             {/* Public */}
             <Route path="/login" element={<LoginPage />} />
@@ -43,19 +50,31 @@ export default function App() {
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/workspace/:wsId/drive" element={<DrivePage />} />
                 <Route path="/workspace/:wsId/assistant" element={<AssistantPage />} />
+                <Route path="/workspace/:wsId/chat" element={<ChatPage />} />
                 <Route path="/workspace/:wsId" element={<WorkspaceHomePage />} />
                 <Route path="/workspace/:wsId/kanban" element={<KanbanPage />} />
                 <Route path="/workspace/:wsId/roadmap" element={<RoadmapPage />} />
                 <Route path="/workspace/:wsId/calendar" element={<CalendarPage />} />
                 <Route path="/workspace/:wsId/element/:elementId" element={<ElementDetailPage />} />
+                <Route path="/workspace/:wsId/mail" element={<MailPage />} />
                 <Route path="/workspace/:wsId/admin" element={<AdminPage />} />
               </Route>
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </Suspense>
         </BrowserRouter>
       </ThemeProvider>
     </QueryClientProvider>
+  )
+}
+
+// Fallback mostrato mentre il chunk della pagina viene scaricato.
+function RouteFallback() {
+  return (
+    <div className="flex h-screen items-center justify-center bg-background">
+      <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+    </div>
   )
 }

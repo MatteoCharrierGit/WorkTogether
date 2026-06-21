@@ -34,6 +34,16 @@ services:
       ADMIN_INIT_EMAIL: ${ADMIN_INIT_EMAIL:-admin@example.com}
       ADMIN_INIT_PASSWORD: ${ADMIN_INIT_PASSWORD:-Admin1234!}
       UPLOAD_DIR: /app/uploads
+      MAIL_HOST: ${MAIL_HOST:-smtp.gmail.com}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      # Media server LiveKit (Fase 2 — voce). Se vuoti, la voce resta disattivata.
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      LIVEKIT_TOKEN_TTL: ${LIVEKIT_TOKEN_TTL:-3600}
     volumes:
       - backend_uploads:/app/uploads
     depends_on:
@@ -41,6 +51,28 @@ services:
         condition: service_healthy
     ports:
       - "8080:8080"
+    restart: unless-stopped
+
+  # Media server SFU per voce/screen share (Fase 2). Avviato solo col profilo "media":
+  #   docker compose --profile media up
+  # In produzione va dietro nginx con TLS (WSS sul signaling) e range UDP aperto sul firewall.
+  # TURN integrato attivo (fallback TCP/TLS per reti che bloccano UDP).
+  livekit:
+    profiles: ["media"]
+    # Allineato al client livekit-client 2.x del frontend: serve >= v1.8 per l'endpoint /rtc/v1.
+    image: livekit/livekit-server:v1.9
+    container_name: wt_livekit
+    command: --config /etc/livekit.yaml
+    environment:
+      # Formato "chiave: segreto". Devono combaciare con LIVEKIT_API_KEY/SECRET passati al backend.
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-devsecret_change_me_min_32_chars_long}"
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880"                       # signaling HTTP/WS (dietro nginx → WSS)
+      - "7881:7881"                       # ICE/TCP fallback
+      - "5349:5349"                       # TURN/TLS (fallback per reti senza UDP)
+      - "50000-50100:50000-50100/udp"     # media RTP/RTCP
     restart: unless-stopped
 
   # Frontend scollegato dall'avvio di default: su Windows gira fuori da Docker (npm run dev).

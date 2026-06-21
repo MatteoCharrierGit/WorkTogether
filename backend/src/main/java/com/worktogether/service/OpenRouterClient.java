@@ -39,6 +39,7 @@ public class OpenRouterClient {
     public record TestResult(boolean ok, String message) {}
     public record ToolCall(String id, String name, String arguments) {}
     public record StreamResult(String content, List<ToolCall> toolCalls) {}
+    public record Model(String id, String name) {}
 
     /** Messaggio nel formato OpenAI. Usa i factory per i vari ruoli. */
     public record ChatMsg(String role, String content, List<ToolCall> toolCalls, String toolCallId) {
@@ -62,6 +63,43 @@ public class OpenRouterClient {
             return new TestResult(false, "OpenRouter ha risposto " + res.statusCode());
         } catch (Exception e) {
             return new TestResult(false, "Errore di connessione: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Elenco modelli disponibili su OpenRouter (endpoint pubblico /models). La chiave è opzionale.
+     * Ritorna id + nome leggibile, ordinati per id.
+     */
+    public List<Model> listModels(String apiKey) {
+        try {
+            HttpRequest.Builder b = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/models"))
+                    .timeout(Duration.ofSeconds(20))
+                    .header("Accept", "application/json")
+                    .GET();
+            if (apiKey != null && !apiKey.isBlank()) b.header("Authorization", "Bearer " + apiKey);
+            HttpResponse<String> res = http.send(b.build(), HttpResponse.BodyHandlers.ofString());
+            if (res.statusCode() != 200) {
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                        "OpenRouter /models ha risposto " + res.statusCode());
+            }
+            JsonNode data = objectMapper.readTree(res.body()).path("data");
+            List<Model> models = new ArrayList<>();
+            if (data.isArray()) {
+                for (JsonNode m : data) {
+                    String id = m.path("id").asText(null);
+                    if (id == null || id.isBlank()) continue;
+                    String name = m.path("name").asText(id);
+                    models.add(new Model(id, name));
+                }
+            }
+            models.sort(Comparator.comparing(Model::id));
+            return models;
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "Impossibile recuperare i modelli: " + e.getMessage());
         }
     }
 
@@ -114,9 +152,9 @@ public class OpenRouterClient {
 
             HttpResponse<Stream<String>> res = http.send(req, HttpResponse.BodyHandlers.ofLines());
             if (res.statusCode() != 200) {
-                String err = res.body().collect(Collectors.joining("\n"));
+                String raw = res.body().collect(Collectors.joining("\n"));
                 throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
-                        "OpenRouter " + res.statusCode() + ": " + truncate(err, 300));
+                        "OpenRouter " + res.statusCode() + ": " + extractError(raw));
             }
 
             StringBuilder full = new StringBuilder();
@@ -173,6 +211,21 @@ public class OpenRouterClient {
         String id;
         String name;
         final StringBuilder args = new StringBuilder();
+    }
+
+    /** Estrae un messaggio d'errore leggibile dal corpo della risposta (JSON {error:{message}}) o lo tronca. */
+    private String extractError(String raw) {
+        if (raw == null || raw.isBlank()) return "errore sconosciuto";
+        try {
+            JsonNode node = objectMapper.readTree(raw);
+            JsonNode err = node.path("error");
+            String msg = err.path("message").asText(null);
+            if (msg == null || msg.isBlank()) msg = node.path("message").asText(null);
+            if (msg != null && !msg.isBlank()) return truncate(msg, 300);
+        } catch (Exception ignored) {
+            // corpo non-JSON: lo tronchiamo così com'è
+        }
+        return truncate(raw, 300);
     }
 
     private String truncate(String s, int max) {

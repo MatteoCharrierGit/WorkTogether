@@ -19,6 +19,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.http.HttpStatus;
 import org.springframework.web.cors.*;
 
+import jakarta.servlet.DispatcherType;
 import java.util.List;
 
 @Configuration
@@ -36,6 +37,11 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // I dispatch interni (continuazione async dello streaming SSE, forward, pagina di
+                        // errore) non vanno ri-autorizzati: la richiesta originale è già stata autenticata.
+                        // Senza questo, al termine di uno stream SSE l'AuthorizationFilter rivaluta il
+                        // dispatch ASYNC senza SecurityContext e logga un AccessDeniedException spurio.
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.FORWARD, DispatcherType.ERROR).permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/ws/**").permitAll()
                         .requestMatchers("/actuator/health").permitAll()

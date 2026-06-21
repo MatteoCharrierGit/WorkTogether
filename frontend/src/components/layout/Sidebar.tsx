@@ -3,13 +3,13 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   ChevronDown, ChevronRight, KanbanSquare, GanttChartSquare, Calendar,
-  Settings, LogOut, Plus, Building2, CheckSquare, Check, Palette, Folder, UserCog, Bot
+  Settings, LogOut, Plus, Building2, CheckSquare, Check, Palette, Folder, UserCog, Bot, Mail, MessagesSquare
 } from 'lucide-react'
 import { cn, TYPE_ICONS } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
-import { elementsApi, workspacesApi, aiApi } from '@/lib/api'
-import { Element, Workspace } from '@/types'
+import { elementsApi, workspacesApi, aiApi, channelsApi } from '@/lib/api'
+import { Channel, Element, Workspace } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
@@ -90,6 +90,13 @@ export function Sidebar() {
     enabled: !!workspace?.id,
   })
 
+  const { data: channels = [] } = useQuery<Channel[]>({
+    queryKey: ['channels', workspace?.id],
+    queryFn: () => channelsApi.list(workspace!.id),
+    enabled: !!workspace?.id,
+  })
+  const totalUnread = channels.reduce((sum, c) => sum + (c.unreadCount || 0), 0)
+
   const epics = elements.filter(e => e.type === 'EPICA')
   const currentWsAvatar = workspaces.find(w => w.id === workspace?.id)?.avatar
 
@@ -101,18 +108,24 @@ export function Sidebar() {
     navigate('/login')
   }
 
-  const navLink = (to: string, icon: React.ReactNode, label: string) => {
+  const navLink = (to: string, icon: React.ReactNode, label: string, tourId?: string, badge?: number) => {
     const active = location.pathname === to
     return (
       <Link
         to={to}
+        data-tour={tourId}
         className={cn(
           'flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors',
           active ? 'bg-accent text-accent-foreground font-medium' : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
         )}
       >
         {icon}
-        {label}
+        <span className="flex-1">{label}</span>
+        {badge != null && badge > 0 && (
+          <span className="shrink-0 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold min-w-[18px] h-[18px] px-1 flex items-center justify-center">
+            {badge > 99 ? '99+' : badge}
+          </span>
+        )}
       </Link>
     )
   }
@@ -125,7 +138,7 @@ export function Sidebar() {
       <div className="p-3 border-b border-sidebar-border">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="flex w-full items-center gap-2 rounded-lg p-2 hover:bg-accent/60 transition-colors">
+            <button data-tour="workspace" className="flex w-full items-center gap-2 rounded-lg p-2 hover:bg-accent/60 transition-colors">
               {currentWsAvatar ? (
                 <img src={currentWsAvatar} alt="" className="h-7 w-7 shrink-0 rounded-md object-cover" />
               ) : (
@@ -169,17 +182,19 @@ export function Sidebar() {
 
       {/* Cross-workspace */}
       <nav className="flex flex-col gap-0.5 p-2 border-b border-sidebar-border">
-        {navLink('/my-tasks', <CheckSquare className="h-4 w-4" />, 'Le mie task')}
+        {navLink('/my-tasks', <CheckSquare className="h-4 w-4" />, 'Le mie task', 'mytasks')}
       </nav>
 
       {/* Main nav */}
       {workspace && (
         <nav className="flex flex-col gap-0.5 p-2 border-b border-sidebar-border">
-          {navLink(`${wsBase}/kanban`, <KanbanSquare className="h-4 w-4" />, 'Kanban')}
-          {navLink(`${wsBase}/roadmap`, <GanttChartSquare className="h-4 w-4" />, 'Roadmap')}
-          {navLink(`${wsBase}/calendar`, <Calendar className="h-4 w-4" />, 'Calendario')}
-          {navLink(`${wsBase}/drive`, <Folder className="h-4 w-4" />, 'File')}
-          {aiStatus?.enabled && navLink(`${wsBase}/assistant`, <Bot className="h-4 w-4" />, 'Assistente AI')}
+          {navLink(`${wsBase}/kanban`, <KanbanSquare className="h-4 w-4" />, 'Kanban', 'kanban')}
+          {navLink(`${wsBase}/roadmap`, <GanttChartSquare className="h-4 w-4" />, 'Roadmap', 'roadmap')}
+          {navLink(`${wsBase}/calendar`, <Calendar className="h-4 w-4" />, 'Calendario', 'calendar')}
+          {navLink(`${wsBase}/drive`, <Folder className="h-4 w-4" />, 'File', 'files')}
+          {navLink(`${wsBase}/chat`, <MessagesSquare className="h-4 w-4" />, 'Chat', 'chat', totalUnread)}
+          {aiStatus?.enabled && navLink(`${wsBase}/assistant`, <Bot className="h-4 w-4" />, 'Akari', 'akari')}
+          {(workspace.myRole === 'ADMIN') && navLink(`${wsBase}/mail`, <Mail className="h-4 w-4" />, 'Mail')}
           {(workspace.myRole === 'ADMIN') && navLink(`${wsBase}/admin`, <Settings className="h-4 w-4" />, 'Admin')}
         </nav>
       )}
@@ -203,7 +218,7 @@ export function Sidebar() {
       <div className="border-t border-sidebar-border p-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="flex w-full items-center gap-2 rounded-md p-2 hover:bg-accent/60 transition-colors">
+            <button data-tour="settings" className="flex w-full items-center gap-2 rounded-md p-2 hover:bg-accent/60 transition-colors">
               <UserAvatar name={user?.displayName} avatar={user?.avatar} className="h-7 w-7" />
               <div className="flex-1 text-left min-w-0">
                 <p className="text-xs font-medium truncate">{user?.displayName}</p>
