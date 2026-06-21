@@ -70,6 +70,7 @@ membri, impostazioni, utenti, altre chiavi, AI, chat/voce, presenza, email, né 
 | DELETE | `/{wsId}/members/{userId}` | 🛡️ | Rimuove un membro |
 | POST | `/{wsId}/users` | 🛡️ | Crea un nuovo utente nel workspace |
 | PATCH | `/{wsId}/settings` | 🛡️ | Impostazioni (avatar, card Kanban, automazioni email) |
+| DELETE | `/{wsId}` | 🛡️ | Elimina il workspace e tutti i suoi dati (irreversibile) |
 
 `role` ∈ `ADMIN | COLLABORATORE | GUEST`.
 

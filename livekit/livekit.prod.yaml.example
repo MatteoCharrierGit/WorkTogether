@@ -1,0 +1,29 @@
+# Configurazione LiveKit per la VPS (produzione). Copia in livekit/livekit.prod.yaml
+# (gitignorato) e sostituisci <livekit-domain> col tuo sottodominio. Le chiavi NON stanno
+# qui: arrivano via env LIVEKIT_KEYS dal docker-compose ("chiave: segreto"), vedi .env.
+#
+#   cp livekit/livekit.prod.yaml.example livekit/livekit.prod.yaml
+
+port: 7880          # signaling HTTP/WebSocket (esposto come WSS dietro nginx)
+log_level: info
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  # VPS con IP pubblico: LiveKit annuncia l'IP esterno reale nei candidati ICE.
+  use_external_ip: true
+
+# TURN integrato: fallback su TCP/TLS quando la rete del client blocca UDP.
+# relay_range riusa lo stesso range UDP di rtc.port_range, già pubblicato su Docker:
+# evita di dover aprire/pubblicare un secondo range di porte (default 30000-40000).
+turn:
+  enabled: true
+  tls_port: 5349
+  domain: <livekit-domain>
+  cert_file: /etc/livekit/cert.pem
+  key_file: /etc/livekit/key.pem
+  relay_range_start: 50000
+  relay_range_end: 50100
+
+# Per pochi utenti basta un singolo nodo: nessun Redis/clustering.

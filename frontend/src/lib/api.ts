@@ -82,6 +82,8 @@ export const workspacesApi = {
     api.post(`/workspaces/${wsId}/export`, sections).then(r => r.data),
   importWorkspace: (data: unknown, newName?: string) =>
     api.post(`/workspaces/import`, { data, newName }).then(r => r.data),
+  deleteWorkspace: (wsId: string) =>
+    api.delete(`/workspaces/${wsId}`),
 }
 
 // Elements

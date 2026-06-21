@@ -8,22 +8,34 @@ import com.worktogether.repository.*;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
+import java.util.stream.Stream;
 
 @Service
 @RequiredArgsConstructor
 public class WorkspaceService {
 
+    private static final Logger log = LoggerFactory.getLogger(WorkspaceService.class);
+
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceMemberRepository memberRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+
+    @Value("${app.upload.dir}")
+    private String uploadDir;
 
     public List<WorkspaceResponse> getUserWorkspaces(User user) {
         return workspaceRepository.findByMemberUserId(user.getId()).stream()
@@ -133,6 +145,36 @@ public class WorkspaceService {
         if (req.mondayDigestEnabled() != null) ws.setMondayDigestEnabled(req.mondayDigestEnabled());
         ws = workspaceRepository.save(ws);
         return WorkspaceResponse.from(ws, getUserRole(workspaceId, requester));
+    }
+
+    // Cancellazione irreversibile: tutte le righe figlie (membri, canali, elementi, tag,
+    // allegati, drive, api key, impostazioni AI...) hanno ON DELETE CASCADE sul DB
+    // (vedi migration V1-V12), quindi basta cancellare la riga workspace. I file fisici
+    // (allegati/drive) invece NON sono coperti dal cascade SQL: vivono sul filesystem
+    // sotto uploadDir/{workspaceId}/ e vanno rimossi esplicitamente qui.
+    @Transactional
+    public void deleteWorkspace(UUID workspaceId, User requester) {
+        assertRole(workspaceId, requester, WorkspaceRole.ADMIN);
+        Workspace ws = workspaceRepository.findById(workspaceId)
+                .orElseThrow(() -> new EntityNotFoundException("Workspace not found"));
+        deleteUploadDir(workspaceId);
+        workspaceRepository.delete(ws);
+    }
+
+    private void deleteUploadDir(UUID workspaceId) {
+        Path dir = Path.of(uploadDir, workspaceId.toString());
+        if (!Files.exists(dir)) return;
+        try (Stream<Path> paths = Files.walk(dir)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.delete(p);
+                } catch (IOException e) {
+                    log.warn("Impossibile cancellare {} durante la rimozione del workspace {}", p, workspaceId, e);
+                }
+            });
+        } catch (IOException e) {
+            log.warn("Impossibile attraversare la cartella upload {} per il workspace {}", dir, workspaceId, e);
+        }
     }
 
     public WorkspaceRole getUserRole(UUID workspaceId, User user) {

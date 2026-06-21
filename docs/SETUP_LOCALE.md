@@ -25,9 +25,21 @@ permanente**: va tenuto sia in locale sia in produzione.
 
 ## 2. Modifiche SOLO-LOCALE da ripristinare per la VPS
 
-### 2.1 `livekit/livekit.yaml`
+### 2.1 `livekit/livekit.yaml` vs `livekit/livekit.prod.yaml`
 
-Valori attuali (locale):
+`livekit/livekit.yaml` è tracciato da git e resta sempre con i valori di **sviluppo locale**
+(sotto). Per la VPS **non modificarlo**: crea invece `livekit/livekit.prod.yaml` (gitignorato,
+specifico della macchina) a partire dal template:
+
+```bash
+cp livekit/livekit.prod.yaml.example livekit/livekit.prod.yaml
+```
+
+e nel `docker-compose.override.yml` della VPS monta quel file al posto di quello di default
+(vedi `docker-compose.override.yml.example`). Così un `git pull` futuro non sovrascrive mai la
+configurazione di produzione né rompe il setup locale di chi clona il repo da zero.
+
+Valori locale (in `livekit/livekit.yaml`, da NON toccare):
 
 ```yaml
 rtc:
@@ -38,12 +50,12 @@ turn:
   enabled: false            # ← solo locale
 ```
 
-**Per la VPS** riportarli a:
+Valori produzione (in `livekit/livekit.prod.yaml`, creato da te sulla VPS):
 
 ```yaml
 rtc:
   use_external_ip: true     # LiveKit annuncia l'IP pubblico nei candidati ICE
-  # node_ip: 127.0.0.1      # ← RIMUOVERE questa riga
+  # niente node_ip
 
 turn:
   enabled: true
@@ -51,6 +63,8 @@ turn:
   domain: livekit.tuo-dominio.com
   cert_file: /etc/livekit/cert.pem
   key_file: /etc/livekit/key.pem
+  relay_range_start: 50000  # riusa rtc.port_range: evita di pubblicare un secondo range UDP
+  relay_range_end: 50100
 ```
 
 > **Perché in locale è diverso:** il browser gira sulla stessa macchina del container. Con
@@ -106,7 +120,9 @@ Queste modifiche della sessione vanno **tenute anche in produzione**:
 
 ## 4. Procedura di deploy sulla VPS (sintesi)
 
-1. Ripristina i valori di [§2.1](#21-livekitlivekityaml) e [§2.2](#22-env).
+1. Crea `livekit/livekit.prod.yaml` e `docker-compose.override.yml` dai rispettivi `.example`
+   (vedi [§2.1](#21-livekitlivekityaml-vs-livekitlivekitprodyaml)) e `.env` da `.env.example`
+   ([§2.2](#22-env)).
 2. DNS + certificato TLS per il media server (`livekit.tuo-dominio.com`).
 3. nginx reverse proxy: signaling `7880 → wss`; se usi TURN/TLS termina il TLS lì o passa i certificati
    a LiveKit.

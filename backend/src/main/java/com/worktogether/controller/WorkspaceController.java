@@ -84,4 +84,12 @@ public class WorkspaceController {
             @AuthenticationPrincipal User user) {
         return ResponseEntity.ok(workspaceService.updateSettings(wsId, req, user));
     }
+
+    @DeleteMapping("/{wsId}")
+    public ResponseEntity<Void> delete(
+            @PathVariable UUID wsId,
+            @AuthenticationPrincipal User user) {
+        workspaceService.deleteWorkspace(wsId, user);
+        return ResponseEntity.noContent().build();
+    }
 }

@@ -1,0 +1,36 @@
+# Override per deploy dietro un reverse proxy globale (es. nginx-proxy condiviso sulla VPS).
+# Copia in docker-compose.override.yml (gitignorato, è specifico della macchina) e adatta
+# i path ai certificati / al nome della rete Docker condivisa.
+#
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#
+# Richiede una rete Docker esterna già creata, condivisa col reverse proxy globale:
+#   docker network create proxy_net
+#
+# Vedi anche livekit/livekit.prod.yaml.example per i valori di produzione di LiveKit.
+
+services:
+  postgres:
+    ports: !override []
+
+  backend:
+    ports: !override []
+
+  frontend:
+    ports: !override []
+    networks:
+      - default
+      - proxy_net
+
+  livekit:
+    networks:
+      - default
+      - proxy_net
+    volumes:
+      - ./livekit/livekit.prod.yaml:/etc/livekit.yaml:ro
+      - /path/to/nginx-proxy/certbot/conf/live/<livekit-domain>/fullchain.pem:/etc/livekit/cert.pem:ro
+      - /path/to/nginx-proxy/certbot/conf/live/<livekit-domain>/privkey.pem:/etc/livekit/key.pem:ro
+
+networks:
+  proxy_net:
+    external: true

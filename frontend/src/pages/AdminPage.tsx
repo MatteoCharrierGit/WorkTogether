@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Navigate, useParams } from 'react-router-dom'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { workspacesApi, tagsApi, usersApi, apiKeysApi, aiApi, channelsApi } from '@/lib/api'
 import { Member, Tag, Workspace, WorkspaceRole, ApiKey, CreatedApiKey, ApiScope, AiSettings, AiAutonomy, AiMemoryMode, AiTestResult, Channel } from '@/types'
@@ -792,6 +792,64 @@ function BackupTab({ wsId, wsName }: { wsId: string; wsName: string }) {
   )
 }
 
+// ─── Delete Workspace Dialog ───────────────────────────────────────────────────
+function DeleteWorkspaceDialog({ wsId, wsName, open, onClose }: { wsId: string; wsName: string; open: boolean; onClose: () => void }) {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const setCurrentStore = useWorkspaceStore(s => s.setCurrent)
+  const [confirmText, setConfirmText] = useState('')
+  const [deleting, setDeleting] = useState(false)
+
+  const close = () => { setConfirmText(''); onClose() }
+
+  const doDelete = async () => {
+    setDeleting(true)
+    try {
+      await workspacesApi.deleteWorkspace(wsId)
+      setCurrentStore(null)
+      queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+      toast(`Workspace "${wsName}" eliminata`)
+      navigate('/', { replace: true })
+    } catch (err: any) {
+      toast(err.response?.data?.error ?? 'Errore durante l\'eliminazione', 'destructive')
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && close()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Eliminare il workspace?</DialogTitle></DialogHeader>
+        <div className="space-y-3 text-sm">
+          <p>
+            Questa azione è <strong>irreversibile</strong>: elimina definitivamente membri, canali,
+            messaggi, task, tag, file del Drive e ogni altro dato di <strong>"{wsName}"</strong>.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Per confermare, scrivi il nome del workspace qui sotto.
+          </p>
+          <Input
+            value={confirmText}
+            onChange={e => setConfirmText(e.target.value)}
+            placeholder={wsName}
+            autoFocus
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="ghost" onClick={close} disabled={deleting}>Annulla</Button>
+          <Button
+            variant="destructive"
+            disabled={confirmText !== wsName || deleting}
+            onClick={doDelete}
+          >
+            <Trash2 className="h-3.5 w-3.5 mr-1.5" /> {deleting ? 'Eliminazione…' : 'Elimina definitivamente'}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── Main Admin Page ──────────────────────────────────────────────────────────
 export default function AdminPage() {
   const { wsId } = useParams<{ wsId: string }>()
@@ -801,6 +859,7 @@ export default function AdminPage() {
   const [createUserOpen, setCreateUserOpen] = useState(false)
   const [createTagOpen, setCreateTagOpen] = useState(false)
   const [createKeyOpen, setCreateKeyOpen] = useState(false)
+  const [deleteWsOpen, setDeleteWsOpen] = useState(false)
 
   // Ruolo dell'utente in questo workspace: serve a bloccare l'accesso diretto via URL.
   const { data: workspaces = [], isLoading: wsLoading } = useQuery<Workspace[]>({
@@ -1015,6 +1074,22 @@ export default function AdminPage() {
                 I recap di Akari richiedono l'agente AI attivo e una chiave OpenRouter configurata.
               </p>
             </div>
+
+            <Separator />
+
+            {/* Danger zone */}
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold flex items-center gap-1.5 text-destructive">
+                <AlertTriangle className="h-4 w-4" /> Zona pericolosa
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Elimina definitivamente questo workspace e tutti i suoi dati: membri, canali, messaggi,
+                task, tag e file del Drive. Non è recuperabile.
+              </p>
+              <Button variant="destructive" size="sm" onClick={() => setDeleteWsOpen(true)}>
+                <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Elimina workspace
+              </Button>
+            </div>
           </TabsContent>
 
           {/* Members tab */}
@@ -1166,6 +1241,12 @@ export default function AdminPage() {
       <CreateUserDialog wsId={wsId!} open={createUserOpen} onClose={() => setCreateUserOpen(false)} />
       <CreateTagDialog wsId={wsId!} open={createTagOpen} onClose={() => setCreateTagOpen(false)} />
       <CreateApiKeyDialog wsId={wsId!} open={createKeyOpen} onClose={() => setCreateKeyOpen(false)} />
+      <DeleteWorkspaceDialog
+        wsId={wsId!}
+        wsName={currentWs?.name ?? ''}
+        open={deleteWsOpen}
+        onClose={() => setDeleteWsOpen(false)}
+      />
     </div>
   )
 }
