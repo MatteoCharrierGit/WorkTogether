@@ -5,6 +5,7 @@ import { aiApi, workspacesApi } from '@/lib/api'
 import { AiConversation, AiMessage, AiConversationScope } from '@/types'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { useAuthStore } from '@/store/authStore'
+import { subscribeWorkspace } from '@/lib/websocket'
 import { UserAvatar } from '@/components/UserAvatar'
 import { markdownToHtml } from '@/lib/markdown'
 import { cn } from '@/lib/utils'
@@ -103,6 +104,27 @@ export default function AssistantPage() {
 
   // Quando si cambia ambito, deseleziona la conversazione attiva.
   useEffect(() => { setActiveId(null) }, [scope])
+
+  // Realtime per le chat CONDIVISE: lo streaming SSE arriva solo a chi invia il
+  // messaggio, quindi gli altri partecipanti vengono avvisati via WebSocket
+  // (evento AI_MESSAGE) e ri-fetchano la conversazione. Chi sta inviando (sending)
+  // ignora l'evento per non interferire con lo stream locale in corso.
+  const sendingRef = useRef(sending)
+  const activeIdRef = useRef(activeId)
+  useEffect(() => { sendingRef.current = sending }, [sending])
+  useEffect(() => { activeIdRef.current = activeId }, [activeId])
+  useEffect(() => {
+    if (!wsId) return
+    return subscribeWorkspace(wsId, ev => {
+      if (ev.type !== 'AI_MESSAGE') return
+      // Aggiorna sempre la lista (titolo/ordine) delle conversazioni condivise.
+      queryClient.invalidateQueries({ queryKey: ['ai-conversations', wsId, 'SHARED'] })
+      const convId = ev.payload?.conversationId
+      if (convId && convId === activeIdRef.current && !sendingRef.current) {
+        queryClient.invalidateQueries({ queryKey: ['ai-messages', wsId, convId] })
+      }
+    })
+  }, [wsId, queryClient])
 
   // Scroll automatico in fondo.
   useEffect(() => {

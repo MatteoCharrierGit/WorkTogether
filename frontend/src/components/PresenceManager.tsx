@@ -43,6 +43,23 @@ export function PresenceManager() {
     presenceApi.heartbeat(wsId, inCall).then(setAll).catch(() => {})
   }, [inCall, wsId, setAll])
 
+  // Uscita immediata alla chiusura/refresh della pagina: senza questo il client resterebbe
+  // "online"/"in chiamata" fino alla scadenza dell'heartbeat (~30s), lasciando un fantasma agli
+  // altri utenti. `pagehide` copre chiusura tab, refresh e navigazione (più affidabile di
+  // `beforeunload`, specie su mobile). Chiude anche la room LiveKit così il partecipante viene
+  // rimosso subito lato media.
+  const leaveRef = useRef(voice.leave)
+  leaveRef.current = voice.leave
+  useEffect(() => {
+    if (!wsId) return
+    const onHide = () => {
+      presenceApi.offline(wsId)
+      leaveRef.current?.()
+    }
+    window.addEventListener('pagehide', onHide)
+    return () => window.removeEventListener('pagehide', onHide)
+  }, [wsId])
+
   // Aggiornamenti realtime di presenza.
   useEffect(() => {
     if (!wsId) return

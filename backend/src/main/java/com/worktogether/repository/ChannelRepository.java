@@ -11,6 +11,11 @@ import java.util.UUID;
 
 public interface ChannelRepository extends JpaRepository<Channel, UUID> {
 
+    // Id del workspace di un canale (proiezione: evita il lazy-load della relazione, usata dal
+    // webhook LiveKit che conosce solo room=channelId).
+    @Query("SELECT c.workspace.id FROM Channel c WHERE c.id = :channelId")
+    java.util.Optional<UUID> findWorkspaceIdById(@Param("channelId") UUID channelId);
+
     // ROOM pubbliche del workspace (accessibili a tutti i membri, senza riga in channel_members).
     @Query("""
         SELECT c FROM Channel c

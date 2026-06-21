@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
-  Mic, MicOff, PhoneOff, Settings, Check, MonitorUp, MonitorOff, Monitor, Volume2, Gauge, Gamepad2,
+  Mic, MicOff, PhoneOff, Settings, Check, MonitorUp, MonitorOff, Monitor, Volume2, VolumeX, Gauge, Gamepad2,
 } from 'lucide-react'
 
 /**
@@ -23,7 +23,7 @@ export function VoiceBar() {
   const connecting = s.status === 'connecting'
 
   return (
-    <div className="fixed bottom-3 left-3 z-40 w-72 rounded-xl border bg-card shadow-lg">
+    <div className="fixed bottom-3 left-3 z-50 w-72 rounded-xl border bg-card shadow-lg">
       <div className="flex items-center gap-2 px-3 py-2 border-b">
         <span className={cn('h-2 w-2 rounded-full shrink-0',
           connecting || s.reconnecting ? 'bg-amber-500 animate-pulse' : 'bg-green-500')} />
@@ -38,20 +38,57 @@ export function VoiceBar() {
 
       {s.participants.length > 0 && (
         <div className="flex flex-wrap gap-1 px-3 py-2">
-          {s.participants.map(p => (
-            <div
-              key={p.identity}
-              className={cn('relative rounded-full', p.speaking && 'ring-2 ring-green-500')}
-              title={p.isLocal ? `${p.name} (tu)` : p.name}
-            >
-              <UserAvatar name={p.name} avatar={p.avatar} className="h-7 w-7" />
-              {p.muted && (
-                <span className="absolute -bottom-0.5 -right-0.5 rounded-full bg-card p-0.5">
-                  <MicOff className="h-2.5 w-2.5 text-muted-foreground" />
-                </span>
-              )}
-            </div>
-          ))}
+          {s.participants.map(p => {
+            const vol = s.participantVolumes[p.identity] ?? 1
+            const locallyMuted = !p.isLocal && vol === 0
+            const avatar = (
+              <div className={cn('relative rounded-full', p.speaking && 'ring-2 ring-green-500')}>
+                <UserAvatar name={p.name} avatar={p.avatar} className="h-7 w-7" />
+                {p.muted && (
+                  <span className="absolute -bottom-0.5 -right-0.5 rounded-full bg-card p-0.5">
+                    <MicOff className="h-2.5 w-2.5 text-muted-foreground" />
+                  </span>
+                )}
+                {locallyMuted && (
+                  <span className="absolute -top-0.5 -right-0.5 rounded-full bg-card p-0.5">
+                    <VolumeX className="h-2.5 w-2.5 text-destructive" />
+                  </span>
+                )}
+              </div>
+            )
+            // Il proprio avatar non ha controlli volume; per gli altri un menu con muta + slider.
+            if (p.isLocal) {
+              return <div key={p.identity} title={`${p.name} (tu)`}>{avatar}</div>
+            }
+            return (
+              <DropdownMenu key={p.identity}>
+                <DropdownMenuTrigger asChild>
+                  <button title={`${p.name} — regola volume`} className="rounded-full">{avatar}</button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="top" align="start" className="w-56 p-2">
+                  <div className="px-1 pb-1.5 text-xs font-medium truncate">{p.name}</div>
+                  <div className="flex items-center gap-2 px-1">
+                    <button
+                      onClick={() => s.setParticipantVolume(p.identity, vol === 0 ? 1 : 0)}
+                      title={vol === 0 ? 'Riattiva l\'audio' : 'Muta per me'}
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                    >
+                      {vol === 0 ? <VolumeX className="h-4 w-4 text-destructive" /> : <Volume2 className="h-4 w-4" />}
+                    </button>
+                    <input
+                      type="range" min={0} max={1} step={0.05} value={vol}
+                      onChange={e => s.setParticipantVolume(p.identity, parseFloat(e.target.value))}
+                      className="flex-1 accent-primary cursor-pointer"
+                    />
+                    <span className="w-8 text-right text-xs tabular-nums text-muted-foreground">
+                      {Math.round(vol * 100)}
+                    </span>
+                  </div>
+                  <p className="px-1 pt-1.5 text-[10px] text-muted-foreground">Solo per te, non per gli altri.</p>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )
+          })}
         </div>
       )}
 

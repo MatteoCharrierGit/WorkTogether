@@ -19,8 +19,8 @@ import { fileKind } from '@/lib/markdown'
 import { UserAvatar } from '@/components/UserAvatar'
 import { FileViewerDialog } from '@/components/FileViewerDialog'
 import {
-  Folder as FolderIcon, FolderPlus, Upload, Download, Trash2,
-  ChevronRight, File as FileIcon, Home, Lock, GripVertical,
+  Folder as FolderIcon, FolderPlus, FolderUp, Upload, Download, Trash2,
+  ChevronRight, File as FileIcon, Home, Lock, LockOpen, GripVertical,
   MoreVertical, Pencil, Copy,
 } from 'lucide-react'
 
@@ -40,9 +40,13 @@ export default function DrivePage() {
   const myUserId = useAuthStore(s => s.user?.id)
   const canEdit = workspace?.myRole !== 'GUEST'
   const isAdmin = workspace?.myRole === 'ADMIN'
-  // Spostare/eliminare è permesso solo a chi possiede l'elemento o all'admin.
-  const canMoveFile = (f: DriveFile) => canEdit && (isAdmin || f.uploadedBy === myUserId)
+  // Permesso per-file: un file marcato "modificabile da tutti" (default) è gestibile da ogni membro
+  // non guest; altrimenti solo dal proprietario o dall'admin. (Il backend applica comunque la regola.)
+  const canMoveFile = (f: DriveFile) => canEdit && (isAdmin || f.uploadedBy === myUserId || f.editableByAll !== false)
   const canMoveFolder = (f: FolderType) => canEdit && (isAdmin || f.createdBy === myUserId)
+  // Solo il proprietario o l'admin può cambiare il flag "sola lettura" di un file/cartella.
+  const canSetFilePermission = (f: DriveFile) => isAdmin || f.uploadedBy === myUserId
+  const canSetFolderPermission = (f: FolderType) => isAdmin || f.createdBy === myUserId
 
   const [path, setPath] = useState<Crumb[]>([])
   const currentFolderId = path.length ? path[path.length - 1].id : undefined
@@ -53,6 +57,7 @@ export default function DrivePage() {
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState<{ index: number; total: number; percent: number; name: string } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const folderRef = useRef<HTMLInputElement>(null)
   const [viewerFile, setViewerFile] = useState<DriveFile | null>(null)
   const [renameTarget, setRenameTarget] = useState<{ kind: 'file' | 'folder'; id: string; name: string } | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -157,6 +162,105 @@ export default function DrivePage() {
     if (fileRef.current) fileRef.current.value = ''
   }
 
+  // Carica un'intera cartella ricreandone l'alberatura nel Drive. Il browser fornisce un FileList
+  // piatto dove ogni file ha `webkitRelativePath` (es. "Progetto/img/logo.png"): si creano le
+  // cartelle mancanti una volta sola (cache per path) e poi si carica ogni file nella sua cartella.
+  // Un file da caricare con il suo path relativo (es. "Progetto/img/logo.png"): la cartella è tutto
+  // tranne l'ultimo segmento. Usato sia dall'input "Carica cartella" sia dal drag & drop di cartelle.
+  type UploadEntry = { file: File; relPath: string }
+
+  const uploadEntries = async (entries: UploadEntry[], baseFolderId = currentFolderId) => {
+    if (!entries.length || !wsId) return
+    setUploading(true)
+    // path relativo della cartella -> id creato. '' = cartella di destinazione (radice dell'upload).
+    const folderIdByPath = new Map<string, string | undefined>([['', baseFolderId]])
+
+    const ensureFolder = async (dirPath: string): Promise<string | undefined> => {
+      if (folderIdByPath.has(dirPath)) return folderIdByPath.get(dirPath)
+      const parts = dirPath.split('/')
+      const name = parts[parts.length - 1]
+      const parentId = await ensureFolder(parts.slice(0, -1).join('/'))
+      const folder = await driveApi.createFolder(wsId, name, parentId)
+      folderIdByPath.set(dirPath, folder.id)
+      return folder.id
+    }
+
+    let ok = 0
+    try {
+      for (let i = 0; i < entries.length; i++) {
+        const { file, relPath } = entries[i]
+        const dirPath = relPath.split('/').slice(0, -1).join('/')
+        setProgress({ index: i + 1, total: entries.length, percent: 0, name: relPath })
+        try {
+          const folderId = await ensureFolder(dirPath)
+          await driveApi.upload(wsId, file, folderId, p =>
+            setProgress(prev => prev && { ...prev, percent: p }))
+          ok++
+        } catch (err: any) {
+          toast(`Errore con "${relPath}": ${err.response?.data?.error ?? 'caricamento fallito'}`, 'destructive')
+        }
+      }
+      if (ok > 0) {
+        refreshAll()
+        toast(ok === 1 ? 'File caricato' : `${ok} file caricati`)
+      }
+    } finally {
+      setUploading(false)
+      setProgress(null)
+    }
+  }
+
+  const handleUploadFolderInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files?.length) {
+      const entries = Array.from(e.target.files).map(f => ({ file: f, relPath: (f as any).webkitRelativePath || f.name }))
+      await uploadEntries(entries)
+    }
+    if (folderRef.current) folderRef.current.value = ''
+  }
+
+  // ---- Drag & drop di cartelle (oltre ai singoli file) ----
+  // Il DataTransfer è valido SOLO durante l'handler: catturiamo gli "entry" in modo sincrono qui,
+  // poi li espandiamo (ricorsione cartelle) in modo asincrono.
+  const snapshotDrop = (dt: DataTransfer): { roots: any[]; files: File[] } => {
+    const roots = Array.from(dt.items || [])
+      .filter(it => it.kind === 'file')
+      .map(it => (it as any).webkitGetAsEntry?.())
+      .filter(Boolean)
+    return { roots, files: Array.from(dt.files) }
+  }
+
+  // Visita ricorsivamente un FileSystemEntry (file o directory) accumulando gli UploadEntry.
+  const walkEntry = async (entry: any, prefix: string, out: UploadEntry[]): Promise<void> => {
+    if (entry.isFile) {
+      const file: File = await new Promise((res, rej) => entry.file(res, rej))
+      out.push({ file, relPath: prefix + entry.name })
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader()
+      // readEntries restituisce a lotti: va richiamato finché non torna vuoto.
+      const children: any[] = await new Promise((res, rej) => {
+        const all: any[] = []
+        const read = () => reader.readEntries((batch: any[]) => {
+          if (!batch.length) return res(all)
+          all.push(...batch); read()
+        }, rej)
+        read()
+      })
+      for (const child of children) await walkEntry(child, prefix + entry.name + '/', out)
+    }
+  }
+
+  // Carica il contenuto di un drop (file e/o cartelle) nella cartella indicata.
+  const uploadDrop = async (snap: { roots: any[]; files: File[] }, baseFolderId = currentFolderId) => {
+    const entries: UploadEntry[] = []
+    if (snap.roots.length > 0) {
+      for (const root of snap.roots) await walkEntry(root, '', entries)
+    } else {
+      // Browser senza API entry: ripiego sui file piatti.
+      for (const f of snap.files) entries.push({ file: f, relPath: f.name })
+    }
+    await uploadEntries(entries, baseFolderId)
+  }
+
   const openRename = (kind: 'file' | 'folder', id: string, name: string) => {
     setRenameTarget({ kind, id, name })
     setRenameValue(name)
@@ -189,6 +293,32 @@ export default function DrivePage() {
       toast('File copiato')
     } catch (err: any) {
       toast(err.response?.data?.error ?? 'Errore nella copia', 'destructive')
+    }
+  }
+
+  // Alterna fra "modificabile da tutti" e "sola lettura" (solo proprietario/admin).
+  const handleToggleFilePermission = async (f: DriveFile) => {
+    if (!wsId) return
+    const next = f.editableByAll === false // attualmente sola lettura → rendi modificabile
+    try {
+      await driveApi.setFilePermission(wsId, f.id, next)
+      refresh()
+      toast(next ? 'File ora modificabile da tutti' : 'File ora in sola lettura')
+    } catch (err: any) {
+      toast(err.response?.data?.error ?? 'Errore', 'destructive')
+    }
+  }
+
+  // Come sopra ma per una cartella: il flag viene propagato in cascata a file e sottocartelle.
+  const handleToggleFolderPermission = async (f: FolderType) => {
+    if (!wsId) return
+    const next = f.editableByAll === false
+    try {
+      await driveApi.setFolderPermission(wsId, f.id, next)
+      refreshAll()
+      toast(next ? 'Cartella e contenuti ora modificabili da tutti' : 'Cartella e contenuti ora in sola lettura')
+    } catch (err: any) {
+      toast(err.response?.data?.error ?? 'Errore', 'destructive')
     }
   }
 
@@ -254,7 +384,7 @@ export default function DrivePage() {
   const handleDropOnFolder = async (e: React.DragEvent, folder: FolderType) => {
     e.preventDefault(); e.stopPropagation()
     setDropTarget(null)
-    if (isExternalDrag(e)) { await uploadFiles(e.dataTransfer.files, folder.id); return }
+    if (isExternalDrag(e)) { const snap = snapshotDrop(e.dataTransfer); await uploadDrop(snap, folder.id); return }
     await moveTo(folder.id)
     endDrag()
   }
@@ -263,7 +393,7 @@ export default function DrivePage() {
   const handleDropOnCrumb = async (e: React.DragEvent, targetId?: string) => {
     e.preventDefault(); e.stopPropagation()
     setDropTarget(null)
-    if (isExternalDrag(e)) { await uploadFiles(e.dataTransfer.files, targetId); return }
+    if (isExternalDrag(e)) { const snap = snapshotDrop(e.dataTransfer); await uploadDrop(snap, targetId); return }
     await moveTo(targetId)
     endDrag()
   }
@@ -289,7 +419,8 @@ export default function DrivePage() {
     if (!canEdit) return
     if (isExternalDrag(e)) {
       e.preventDefault()
-      await uploadFiles(e.dataTransfer.files)
+      const snap = snapshotDrop(e.dataTransfer) // cattura sincrona prima dell'await
+      await uploadDrop(snap)
     }
   }
 
@@ -323,8 +454,19 @@ export default function DrivePage() {
         {canEdit && (
           <div className="flex gap-2">
             <input ref={fileRef} type="file" multiple className="hidden" onChange={handleUploadInput} />
+            {/* webkitdirectory: il browser seleziona un'intera cartella (non tipizzato in React → cast). */}
+            <input
+              ref={folderRef}
+              type="file"
+              className="hidden"
+              onChange={handleUploadFolderInput}
+              {...({ webkitdirectory: '', directory: '', mozdirectory: '' } as any)}
+            />
             <Button size="sm" variant="outline" onClick={() => setNewFolderOpen(true)}>
               <FolderPlus className="h-4 w-4 mr-1.5" /> Nuova cartella
+            </Button>
+            <Button size="sm" variant="outline" disabled={uploading} onClick={() => folderRef.current?.click()}>
+              <FolderUp className="h-4 w-4 mr-1.5" /> Carica cartella
             </Button>
             <Button size="sm" disabled={uploading} onClick={() => fileRef.current?.click()}>
               <Upload className="h-4 w-4 mr-1.5" /> {uploading ? 'Caricamento...' : 'Carica file'}
@@ -413,6 +555,11 @@ export default function DrivePage() {
                 <button onClick={() => openFolder(f)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
                   <FolderIcon className="h-5 w-5 shrink-0 text-primary" />
                   <span className="text-sm font-medium truncate">{f.name}</span>
+                  {f.editableByAll === false && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground shrink-0" title="Sola lettura: la cartella e tutto il suo contenuto sono modificabili solo da proprietario o admin">
+                      <Lock className="h-2.5 w-2.5" /> sola lettura
+                    </span>
+                  )}
                 </button>
                 {canMoveFolder(f) && (
                   <DropdownMenu>
@@ -428,6 +575,13 @@ export default function DrivePage() {
                       <DropdownMenuItem onClick={() => openRename('folder', f.id, f.name)}>
                         <Pencil className="h-4 w-4" /> Rinomina
                       </DropdownMenuItem>
+                      {canSetFolderPermission(f) && (
+                        <DropdownMenuItem onClick={() => handleToggleFolderPermission(f)}>
+                          {f.editableByAll === false
+                            ? <><LockOpen className="h-4 w-4" /> Rendi modificabile (cartella + contenuti)</>
+                            : <><Lock className="h-4 w-4" /> Sola lettura (cartella + contenuti)</>}
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem onClick={() => handleDeleteFolder(f)} className="text-destructive focus:text-destructive">
                         <Trash2 className="h-4 w-4" /> Elimina
@@ -460,6 +614,11 @@ export default function DrivePage() {
                     <p className="text-sm truncate flex items-center gap-1.5">
                       {f.filename}
                       {isLocked(f) && <Lock className="h-3 w-3 text-amber-500 shrink-0" />}
+                      {f.editableByAll === false && (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground shrink-0" title="Sola lettura: solo il proprietario o un admin può modificarlo">
+                          <Lock className="h-2.5 w-2.5" /> sola lettura
+                        </span>
+                      )}
                     </p>
                     <p className="text-xs text-muted-foreground flex items-center gap-1.5">
                       <UserAvatar name={resolveName(f.uploadedBy)} avatar={memberOf(f.uploadedBy)?.avatar} className="h-4 w-4" fallbackClassName="text-[8px]" />
@@ -492,6 +651,13 @@ export default function DrivePage() {
                       {canMoveFile(f) && (
                         <DropdownMenuItem onClick={() => openRename('file', f.id, f.filename)}>
                           <Pencil className="h-4 w-4" /> Rinomina
+                        </DropdownMenuItem>
+                      )}
+                      {canSetFilePermission(f) && (
+                        <DropdownMenuItem onClick={() => handleToggleFilePermission(f)}>
+                          {f.editableByAll === false
+                            ? <><LockOpen className="h-4 w-4" /> Rendi modificabile</>
+                            : <><Lock className="h-4 w-4" /> Imposta sola lettura</>}
                         </DropdownMenuItem>
                       )}
                       {canMoveFile(f) && <DropdownMenuSeparator />}

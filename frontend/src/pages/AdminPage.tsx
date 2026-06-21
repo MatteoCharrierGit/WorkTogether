@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { workspacesApi, tagsApi, usersApi, apiKeysApi, aiApi, channelsApi } from '@/lib/api'
-import { Member, Tag, Workspace, WorkspaceRole, ApiKey, CreatedApiKey, ApiScope, AiSettings, AiAutonomy, AiMemoryMode, AiTestResult, Channel } from '@/types'
+import { workspacesApi, tagsApi, usersApi, apiKeysApi, aiApi, channelsApi, invitationsApi } from '@/lib/api'
+import { Member, Tag, Workspace, WorkspaceRole, ApiKey, CreatedApiKey, ApiScope, AiSettings, AiAutonomy, AiMemoryMode, AiTestResult, Channel, Invitation } from '@/types'
 import { CodeEditor } from '@/components/editor/CodeEditor'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -37,21 +37,35 @@ const ROLE_LABELS: Record<WorkspaceRole, string> = {
 // ─── Create User Dialog ───────────────────────────────────────────────────────
 function CreateUserDialog({ wsId, open, onClose }: { wsId: string; open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient()
-  const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
-  const [password, setPassword] = useState('')
   const [role, setRole] = useState<WorkspaceRole>('COLLABORATORE')
+  // Opzionale: l'admin può preimpostare email + password temporanea. Altrimenti l'utente
+  // le imposta al primo accesso (onboarding con verifica email).
+  const [manualCreds, setManualCreds] = useState(false)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+
+  const reset = () => {
+    setDisplayName(''); setRole('COLLABORATORE'); setManualCreds(false); setEmail(''); setPassword('')
+  }
 
   const handle = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     try {
-      await workspacesApi.createUser(wsId, { email, displayName, temporaryPassword: password, role })
+      await workspacesApi.createUser(wsId, {
+        displayName,
+        role,
+        email: manualCreds && email ? email : undefined,
+        temporaryPassword: manualCreds && password ? password : undefined,
+      })
       queryClient.invalidateQueries({ queryKey: ['members', wsId] })
-      toast('Utente creato. Dovrà cambiare la password al primo accesso.')
+      toast(manualCreds
+        ? 'Utente creato. Dovrà cambiare la password al primo accesso.'
+        : 'Utente creato. Al primo accesso imposterà email e password.')
       onClose()
-      setEmail(''); setDisplayName(''); setPassword(''); setRole('COLLABORATORE')
+      reset()
     } catch (err: any) {
       toast(err.response?.data?.error ?? 'Errore', 'destructive')
     } finally {
@@ -64,19 +78,84 @@ function CreateUserDialog({ wsId, open, onClose }: { wsId: string; open: boolean
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Nuovo utente</DialogTitle></DialogHeader>
         <form onSubmit={handle} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Email</Label>
-              <Input type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="mario@esempio.it" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Nome</Label>
-              <Input value={displayName} onChange={e => setDisplayName(e.target.value)} required placeholder="Mario Rossi" />
-            </div>
+          <div className="space-y-1.5">
+            <Label>Username</Label>
+            <Input value={displayName} onChange={e => setDisplayName(e.target.value)} required placeholder="mario.rossi" />
+            <p className="text-xs text-muted-foreground">
+              È l&apos;identificativo di accesso. L&apos;utente completerà email e password al primo login.
+            </p>
           </div>
           <div className="space-y-1.5">
-            <Label>Password temporanea</Label>
-            <Input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8} placeholder="Min. 8 caratteri" />
+            <Label>Ruolo</Label>
+            <Select value={role} onValueChange={v => setRole(v as WorkspaceRole)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ADMIN">Admin</SelectItem>
+                <SelectItem value="COLLABORATORE">Collaboratore</SelectItem>
+                <SelectItem value="GUEST">Guest (solo lettura)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+            <input type="checkbox" checked={manualCreds} onChange={e => setManualCreds(e.target.checked)} />
+            Imposta manualmente email e password temporanea
+          </label>
+          {manualCreds && (
+            <div className="space-y-3 rounded-md border p-3">
+              <div className="space-y-1.5">
+                <Label>Email</Label>
+                <Input type="email" value={email} onChange={e => setEmail(e.target.value)} required={manualCreds} placeholder="mario@esempio.it" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Password temporanea</Label>
+                <Input type="password" value={password} onChange={e => setPassword(e.target.value)} required={manualCreds} minLength={8} placeholder="Min. 8 caratteri" />
+              </div>
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={onClose}>Annulla</Button>
+            <Button type="submit" disabled={loading}>{loading ? 'Creazione...' : 'Crea utente'}</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ─── Invite Member Dialog ─────────────────────────────────────────────────────
+function InviteMemberDialog({ wsId, open, onClose }: { wsId: string; open: boolean; onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const [identifier, setIdentifier] = useState('')
+  const [role, setRole] = useState<WorkspaceRole>('COLLABORATORE')
+  const [loading, setLoading] = useState(false)
+
+  const handle = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoading(true)
+    try {
+      await invitationsApi.create(wsId, identifier.trim(), role)
+      queryClient.invalidateQueries({ queryKey: ['invitations', wsId] })
+      toast('Invito inviato via email.')
+      onClose()
+      setIdentifier(''); setRole('COLLABORATORE')
+    } catch (err: any) {
+      toast(err.response?.data?.error ?? 'Errore', 'destructive')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Invita un utente</DialogTitle></DialogHeader>
+        <form onSubmit={handle} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Username o email</Label>
+            <Input value={identifier} onChange={e => setIdentifier(e.target.value)} required placeholder="mario.rossi o mario@esempio.it" />
+            <p className="text-xs text-muted-foreground">
+              Riceverà un&apos;email con un link per accettare l&apos;invito.
+            </p>
           </div>
           <div className="space-y-1.5">
             <Label>Ruolo</Label>
@@ -91,7 +170,7 @@ function CreateUserDialog({ wsId, open, onClose }: { wsId: string; open: boolean
           </div>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={onClose}>Annulla</Button>
-            <Button type="submit" disabled={loading}>{loading ? 'Creazione...' : 'Crea utente'}</Button>
+            <Button type="submit" disabled={loading}>{loading ? 'Invio...' : 'Invia invito'}</Button>
           </div>
         </form>
       </DialogContent>
@@ -857,6 +936,7 @@ export default function AdminPage() {
   const { current: currentStore, setCurrent: setCurrentStore } = useWorkspaceStore()
   const wsAvatarRef = useRef<HTMLInputElement>(null)
   const [createUserOpen, setCreateUserOpen] = useState(false)
+  const [inviteOpen, setInviteOpen] = useState(false)
   const [createTagOpen, setCreateTagOpen] = useState(false)
   const [createKeyOpen, setCreateKeyOpen] = useState(false)
   const [deleteWsOpen, setDeleteWsOpen] = useState(false)
@@ -871,6 +951,12 @@ export default function AdminPage() {
   const { data: members = [] } = useQuery<Member[]>({
     queryKey: ['members', wsId],
     queryFn: () => workspacesApi.getMembers(wsId!),
+    enabled: !!wsId,
+  })
+
+  const { data: invitations = [] } = useQuery<Invitation[]>({
+    queryKey: ['invitations', wsId],
+    queryFn: () => invitationsApi.list(wsId!),
     enabled: !!wsId,
   })
 
@@ -898,10 +984,27 @@ export default function AdminPage() {
   }
 
   const removeMember = async (userId: string) => {
-    if (!confirm('Rimuovere il membro dal workspace?')) return
-    await workspacesApi.removeMember(wsId!, userId)
-    queryClient.invalidateQueries({ queryKey: ['members', wsId] })
-    toast('Membro rimosso')
+    if (!confirm('Rimuovere il membro dal workspace? Verrà tolto da task, canali e inviti pendenti.')) return
+    try {
+      await workspacesApi.removeMember(wsId!, userId)
+      queryClient.invalidateQueries({ queryKey: ['members', wsId] })
+      queryClient.invalidateQueries({ queryKey: ['invitations', wsId] })
+      toast('Membro rimosso')
+    } catch (err: any) {
+      // Es. 409 quando si prova a rimuovere l'unico amministratore.
+      toast(err.response?.data?.error ?? 'Impossibile rimuovere il membro', 'destructive')
+    }
+  }
+
+  const revokeInvitation = async (id: string) => {
+    if (!confirm('Revocare questo invito?')) return
+    try {
+      await invitationsApi.revoke(wsId!, id)
+      queryClient.invalidateQueries({ queryKey: ['invitations', wsId] })
+      toast('Invito revocato')
+    } catch (err: any) {
+      toast(err.response?.data?.error ?? 'Errore', 'destructive')
+    }
   }
 
   const deleteTag = async (tagId: string) => {
@@ -1095,10 +1198,15 @@ export default function AdminPage() {
           {/* Members tab */}
           <TabsContent value="members" className="mt-4">
             <div className="flex justify-between items-center mb-4">
-              <p className="text-sm text-muted-foreground">Gestisci ruoli e crea nuovi account.</p>
-              <Button size="sm" onClick={() => setCreateUserOpen(true)}>
-                <UserPlus className="h-4 w-4 mr-1.5" /> Nuovo utente
-              </Button>
+              <p className="text-sm text-muted-foreground">Gestisci ruoli, invita o crea nuovi account.</p>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => setInviteOpen(true)}>
+                  <Mail className="h-4 w-4 mr-1.5" /> Invita
+                </Button>
+                <Button size="sm" onClick={() => setCreateUserOpen(true)}>
+                  <UserPlus className="h-4 w-4 mr-1.5" /> Nuovo utente
+                </Button>
+              </div>
             </div>
             <div className="rounded-xl border overflow-hidden">
               {members.map((m, i) => (
@@ -1132,6 +1240,33 @@ export default function AdminPage() {
                 <div className="px-4 py-8 text-center text-sm text-muted-foreground">Nessun membro</div>
               )}
             </div>
+
+            {invitations.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-sm font-semibold mb-2">Inviti in sospeso ({invitations.length})</h3>
+                <div className="rounded-xl border overflow-hidden">
+                  {invitations.map((inv, i) => (
+                    <div key={inv.id} className={`flex items-center gap-3 px-4 py-3 ${i < invitations.length - 1 ? 'border-b' : ''}`}>
+                      <Mail className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{inv.displayName ?? inv.email}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {inv.email} · {ROLE_LABELS[inv.role]} · scade il {formatDate(inv.expiresAt)}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={() => revokeInvitation(inv.id)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </TabsContent>
 
           {/* Tags tab */}
@@ -1239,6 +1374,7 @@ export default function AdminPage() {
       </div>
 
       <CreateUserDialog wsId={wsId!} open={createUserOpen} onClose={() => setCreateUserOpen(false)} />
+      <InviteMemberDialog wsId={wsId!} open={inviteOpen} onClose={() => setInviteOpen(false)} />
       <CreateTagDialog wsId={wsId!} open={createTagOpen} onClose={() => setCreateTagOpen(false)} />
       <CreateApiKeyDialog wsId={wsId!} open={createKeyOpen} onClose={() => setCreateKeyOpen(false)} />
       <DeleteWorkspaceDialog

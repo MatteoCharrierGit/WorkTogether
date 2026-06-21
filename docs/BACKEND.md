@@ -123,3 +123,31 @@ mvn test                     # test (spring-boot-starter-test, spring-security-t
 
 In assenza di JDK/Maven locale, è possibile compilare in un container usa-e-getta:
 `docker run --rm -v "$PWD:/app" -v wt_m2:/root/.m2 -w /app maven:3.9-eclipse-temurin-21 mvn -q compile`.
+
+## Novità v1.1
+
+- **Eventi realtime estesi**: `DriveService` pubblica `DRIVE_CHANGED` su ogni mutazione del Drive;
+  `AiChatService` pubblica `AI_MESSAGE` per le chat condivise di Akari. (Vedi REALTIME_VOCE §7.)
+- **Webhook LiveKit**: nuovo `LiveKitWebhookController` (`POST /api/livekit/webhook`, `permitAll` ma
+  verificato per firma in `LiveKitService.verifyWebhook`). Su `participant_left` mappa
+  `room=channelId → workspaceId` (`ChannelRepository.findWorkspaceIdById`) e chiama
+  `PresenceService.clearCall`. È la fonte autorevole della disconnessione dalle call.
+- **Presenza**: `PresenceService.goOffline` (rimozione immediata) + `clearCall` (solo stato chiamata);
+  endpoint `POST …/presence/offline` per il beacon `pagehide` del client.
+- **Drive per-file**: `drive_files.editable_by_all` (migration V13). `DriveService.setEditableByAll`
+  (solo proprietario/admin) + endpoint `PATCH …/drive/files/{id}/permission`. I file in sola lettura
+  sono modificabili solo da proprietario/admin; gli altri restano modificabili da tutti i membri non guest.
+- **Agente AI**: nuovi/estesi tool in `AgentToolRegistry` — `get_board` (albero gerarchico),
+  `list_elements` con `query`+`parentTitle`, guardrail anti task-orfano in `create_element`.
+
+## Novità v1.2
+
+- **Sessione singola**: `users.token_version` (migration V14) incluso negli access token come claim
+  `sv` (`JwtUtil`). A ogni login `AuthService.buildAuthResponse` incrementa la versione (e cancella i
+  refresh token); `JwtAuthFilter` rifiuta i token con `sv` diverso dalla versione corrente ⇒ le
+  sessioni precedenti su altri dispositivi cadono subito (401 → logout lato client).
+- **Cartelle sola lettura in cascata**: `folders.editable_by_all` (migration V15).
+  `DriveService.setFolderEditableByAll` propaga il flag a tutti i file e sottocartelle discendenti
+  (`cascadeEditable`); upload/creazione ereditano il flag della cartella contenitore (`folderEditable`).
+  Endpoint `PATCH …/drive/folders/{id}/permission` (solo proprietario/admin).
+- **Drag & drop di cartelle**: gestito lato frontend (traversal `webkitGetAsEntry`), nessuna modifica API.

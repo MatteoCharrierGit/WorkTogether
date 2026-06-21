@@ -16,13 +16,17 @@ public class User {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(nullable = false, unique = true)
+    // Nullable: un utente creato dall'admin col solo username non ha email finché non
+    // completa l'onboarding (verifica email + password).
+    @Column(unique = true)
     private String email;
 
-    @Column(name = "display_name", nullable = false)
+    // display_name è anche l'handle di login (univoco, vedi migration V16).
+    @Column(name = "display_name", nullable = false, unique = true)
     private String displayName;
 
-    @Column(name = "password_hash", nullable = false)
+    // Nullable: assente finché l'utente non imposta la password in onboarding.
+    @Column(name = "password_hash")
     private String passwordHash;
 
     @Column(name = "must_reset_password", nullable = false)
@@ -38,6 +42,12 @@ public class User {
     // Foto profilo come data URI (es. "data:image/jpeg;base64,...")
     @Column(columnDefinition = "text")
     private String avatar;
+
+    // Sessione singola: incrementata a ogni login. Gli access token portano questa versione (claim
+    // "sv"); se non combacia con quella corrente il token è di una sessione vecchia ⇒ rifiutato.
+    @Builder.Default
+    @Column(name = "token_version", nullable = false)
+    private int tokenVersion = 0;
 
     @Builder.Default
     @Column(name = "created_at", nullable = false, updatable = false)

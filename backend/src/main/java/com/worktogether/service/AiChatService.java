@@ -10,6 +10,7 @@ import com.worktogether.domain.enums.AiMessageRole;
 import com.worktogether.domain.enums.AiPendingActionStatus;
 import com.worktogether.domain.enums.WorkspaceRole;
 import com.worktogether.repository.*;
+import com.worktogether.websocket.WorkspaceEventPublisher;
 import com.worktogether.service.OpenRouterClient.ChatMsg;
 import com.worktogether.service.OpenRouterClient.StreamResult;
 import com.worktogether.service.OpenRouterClient.ToolCall;
@@ -46,8 +47,19 @@ public class AiChatService {
     private final AiMemoryService memoryService;
     private final AiKeyCipher cipher;
     private final ObjectMapper objectMapper;
+    private final WorkspaceEventPublisher eventPublisher;
 
     private final ExecutorService executor = Executors.newCachedThreadPool();
+
+    // Nelle conversazioni CONDIVISE più utenti vedono lo stesso thread: lo streaming SSE
+    // raggiunge solo chi ha inviato il messaggio, quindi gli altri client devono ri-fetchare
+    // i messaggi quando il turno produce qualcosa di nuovo. Le conversazioni PRIVATE non
+    // emettono nulla (le vede solo il proprietario).
+    private void notifyShared(UUID workspaceId, AiConversation conv) {
+        if (conv.getScope() != AiConversationScope.SHARED) return;
+        eventPublisher.publish(workspaceId, "AI_MESSAGE",
+                Map.of("conversationId", conv.getId().toString()));
+    }
 
     // ---- API pubblica ----
 
@@ -65,6 +77,7 @@ public class AiChatService {
             conv.setTitle(userText.length() > 60 ? userText.substring(0, 60) + "…" : userText);
         }
         conversationRepository.save(conv);
+        notifyShared(workspaceId, conv); // gli altri partecipanti vedono subito il messaggio utente
 
         SseEmitter emitter = new SseEmitter(300_000L);
         executor.submit(() -> runTurn(workspaceId, conv, settings, apiKey, user, emitter));
@@ -134,6 +147,7 @@ public class AiChatService {
                     saveMessage(conv.getId(), AiMessageRole.ASSISTANT, r.content(), null, null, null);
                 }
                 sendEvent(emitter, Map.of("type", "done"));
+                notifyShared(workspaceId, conv);
                 return;
             }
 
@@ -172,6 +186,7 @@ public class AiChatService {
                 ev.put("type", "confirm");
                 ev.put("actions", pendingForEvent);
                 sendEvent(emitter, ev);
+                notifyShared(workspaceId, conv);
                 return; // turno sospeso in attesa di conferma
             }
             // altrimenti: prossima iterazione (il contesto verrà ricostruito con i nuovi risultati tool)
@@ -185,6 +200,7 @@ public class AiChatService {
                 ? "Ho raggiunto il limite di passi consentiti per questa richiesta." : r.content();
         saveMessage(conv.getId(), AiMessageRole.ASSISTANT, content, null, null, null);
         sendEvent(emitter, Map.of("type", "done"));
+        notifyShared(workspaceId, conv);
     }
 
     // ---- Contesto (replay fedele) ----
@@ -194,6 +210,19 @@ public class AiChatService {
         StringBuilder system = new StringBuilder();
         String persona = resolvePlaceholders(settings.getPersonalityMd(), wsName, user);
         if (persona != null && !persona.isBlank()) system.append(persona.trim()).append("\n\n");
+
+        // Regole d'azione anti-allucinazione: i modelli piccoli tendono a "dichiarare" un'azione senza
+        // chiamare davvero il tool. Questo blocco impone di agire tramite i tool e di non affermare mai
+        // di aver fatto qualcosa che non risulta da un tool eseguito con successo.
+        system.append("REGOLE D'AZIONE (OBBLIGATORIE):\n")
+                .append("- Per QUALSIASI creazione/modifica/eliminazione DEVI chiamare il tool corrispondente ")
+                .append("(es. create_element per creare epiche/storie/task/eventi, update_element per modificare). ")
+                .append("Per creare una STORIA sotto un'epica: create_element con type=STORIA e parentId dell'epica.\n")
+                .append("- NON dire MAI di aver creato/aggiornato/eliminato qualcosa se non hai PRIMA chiamato il ")
+                .append("tool e ricevuto un risultato positivo (con un id). Niente conferme inventate.\n")
+                .append("- Se stai per scrivere \"ho creato/aggiornato...\" ma non hai ancora chiamato il tool, ")
+                .append("chiama il tool ORA invece di rispondere. Conferma l'azione solo dopo l'esito del tool.\n")
+                .append("- Se un tool restituisce un errore, spiega cosa è andato storto: non fingere che sia riuscito.\n\n");
 
         // Contesto temporale: senza questo l'agente non sa che giorno è e sbaglia "oggi"/"domani"
         // (es. crea eventi su date errate). Fuso fisso Europe/Rome.

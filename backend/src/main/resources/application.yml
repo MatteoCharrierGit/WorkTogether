@@ -60,6 +60,9 @@ app:
   mail:
     # Mittente delle email inviate dall'app (default: account SMTP configurato).
     from: ${MAIL_FROM:${MAIL_USERNAME:}}
+  frontend:
+    # URL pubblico del frontend, usato per costruire i link (es. accettazione inviti).
+    base-url: ${FRONTEND_BASE_URL:http://localhost:5173}
 
 server:
   port: 8080

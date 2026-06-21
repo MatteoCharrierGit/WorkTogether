@@ -10,9 +10,11 @@ public record FolderResponse(
         UUID parentId,
         String name,
         UUID createdBy,
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+        boolean editableByAll
 ) {
     public static FolderResponse from(Folder f) {
-        return new FolderResponse(f.getId(), f.getParentId(), f.getName(), f.getCreatedBy(), f.getCreatedAt());
+        return new FolderResponse(f.getId(), f.getParentId(), f.getName(), f.getCreatedBy(),
+                f.getCreatedAt(), f.isEditableByAll());
     }
 }

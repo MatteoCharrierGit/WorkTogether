@@ -49,6 +49,31 @@ public class PresenceService {
         }
     }
 
+    /**
+     * Rimuove subito un utente dalla presenza del workspace (online + in chiamata) e notifica.
+     * Chiamato quando il client chiude/abbandona la pagina (beacon): così non resta un "fantasma"
+     * online/in chiamata per i ~30s del TTL dell'heartbeat.
+     */
+    public void goOffline(UUID workspaceId, UUID userId) {
+        Map<UUID, UserPresence> ws = presence.get(workspaceId);
+        if (ws == null) return;
+        if (ws.remove(userId) != null) broadcast(workspaceId);
+    }
+
+    /**
+     * Azzera lo stato "in chiamata" di un utente mantenendolo online (usato dal webhook LiveKit
+     * quando il partecipante lascia la room ma può restare nell'app).
+     */
+    public void clearCall(UUID workspaceId, UUID userId) {
+        Map<UUID, UserPresence> ws = presence.get(workspaceId);
+        if (ws == null) return;
+        UserPresence p = ws.get(userId);
+        if (p != null && p.inCallChannelId != null) {
+            p.inCallChannelId = null;
+            broadcast(workspaceId);
+        }
+    }
+
     /** Snapshot degli utenti online del workspace. */
     public List<PresenceDto> snapshot(UUID workspaceId) {
         Map<UUID, UserPresence> ws = presence.get(workspaceId);

@@ -9,6 +9,9 @@ import { ProtectedRoute } from '@/components/ProtectedRoute'
 // così l'avvio non scarica tutto il codice di tutte le pagine in un colpo solo.
 const LoginPage = lazy(() => import('@/pages/LoginPage'))
 const ForceResetPage = lazy(() => import('@/pages/ForceResetPage'))
+const OnboardingPage = lazy(() => import('@/pages/OnboardingPage'))
+const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage'))
+const AcceptInvitePage = lazy(() => import('@/pages/AcceptInvitePage'))
 const WorkspaceHomePage = lazy(() => import('@/pages/WorkspaceHomePage'))
 const KanbanPage = lazy(() => import('@/pages/KanbanPage'))
 const RoadmapPage = lazy(() => import('@/pages/RoadmapPage'))
@@ -41,6 +44,9 @@ export default function App() {
             {/* Public */}
             <Route path="/login" element={<LoginPage />} />
             <Route path="/force-reset" element={<ForceResetPage />} />
+            <Route path="/onboarding" element={<OnboardingPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/invite/:token" element={<AcceptInvitePage />} />
 
             {/* Protected */}
             <Route element={<ProtectedRoute />}>

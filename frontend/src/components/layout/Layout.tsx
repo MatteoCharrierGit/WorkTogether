@@ -1,8 +1,10 @@
-import { useEffect } from 'react'
-import { Outlet, useNavigate } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { Outlet, useNavigate, useLocation } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Menu } from 'lucide-react'
 import { Sidebar } from './Sidebar'
-import { Channel } from '@/types'
+import { Channel, Workspace } from '@/types'
+import { workspacesApi } from '@/lib/api'
 import {
   notificationsEnabled, requestNotificationPermission, notificationPermission,
   appIsForeground, getActiveChatChannel, showChatNotification,
@@ -39,8 +41,31 @@ export function Layout() {
   const token = useAuthStore(s => s.accessToken)
   const meId = useAuthStore(s => s.user?.id)
   const workspaceId = useWorkspaceStore(s => s.current?.id)
+  const setCurrentWorkspace = useWorkspaceStore(s => s.setCurrent)
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const location = useLocation()
+
+  // Lista autorevole dei workspace dell'utente. Serve a non mostrare info di un workspace
+  // di cui non si fa (più) parte: se il "current" persistito non è tra i propri (login
+  // nuovo, workspace eliminato o utente rimosso), lo si azzera e si torna alla home.
+  const { data: myWorkspaces } = useQuery<Workspace[]>({
+    queryKey: ['workspaces'],
+    queryFn: workspacesApi.list,
+    enabled: !!token,
+  })
+  useEffect(() => {
+    if (!myWorkspaces || !workspaceId) return
+    if (!myWorkspaces.some(w => w.id === workspaceId)) {
+      setCurrentWorkspace(null)
+      navigate('/', { replace: true })
+    }
+  }, [myWorkspaces, workspaceId, setCurrentWorkspace, navigate])
+
+  // Drawer della sidebar su mobile (< md). Su desktop la sidebar è sempre visibile (statica).
+  const [navOpen, setNavOpen] = useState(false)
+  // Chiude il drawer a ogni cambio pagina: navigando da un link la sidebar si richiude da sola.
+  useEffect(() => { setNavOpen(false) }, [location.pathname])
 
   useEffect(() => {
     if (token) connectWS(token)
@@ -84,14 +109,52 @@ export function Layout() {
     }
 
     const unsub = subscribeWorkspace(workspaceId, ev => {
+      // Rimuove subito un workspace dalla cache (dropdown aggiornato all'istante, senza
+      // attendere il refetch) e poi invalida per riconciliare con il server.
+      const dropWorkspace = (wsId?: string) => {
+        const id = wsId ?? workspaceId
+        queryClient.setQueryData<Workspace[]>(['workspaces'], old =>
+          old ? old.filter(w => w.id !== id) : old)
+        queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+      }
+      // Workspace eliminato: chi è dentro esce subito (niente attesa di un refresh).
+      if (ev.type === 'WORKSPACE_DELETED') {
+        setCurrentWorkspace(null)
+        dropWorkspace(ev.payload?.workspaceId)
+        toast('Questo workspace è stato eliminato')
+        navigate('/', { replace: true })
+        return
+      }
+      // Membro rimosso: se sono io, vengo espulso dall'area del workspace.
+      if (ev.type === 'MEMBER_REMOVED') {
+        if (ev.payload?.userId === meId) {
+          setCurrentWorkspace(null)
+          dropWorkspace()
+          toast('Sei stato rimosso da questo workspace')
+          navigate('/', { replace: true })
+        } else {
+          queryClient.invalidateQueries({ queryKey: ['members'] })
+        }
+        return
+      }
       // Presenza: gestita da PresenceManager, non tocca le query dei dati.
       if (ev.type === 'PRESENCE') return
+      // Messaggi dell'assistente AI (chat condivise): li gestisce AssistantPage,
+      // non riguardano elementi/drive/canali.
+      if (ev.type === 'AI_MESSAGE') return
       // Eventi chat: aggiornano solo la lista canali (badge non-letti in sidebar).
       if (ev.type === 'MESSAGE_CREATED' || ev.type.startsWith('CHANNEL_') || ev.type === 'TYPING') {
         if (ev.type !== 'TYPING') {
           queryClient.invalidateQueries({ queryKey: ['channels'] })
         }
         if (ev.type === 'MESSAGE_CREATED') notifyMessage(ev.payload)
+        return
+      }
+      // Tag creati/modificati/eliminati (anche dall'agente AI): aggiorna la lista tag e gli elementi
+      // (le card mostrano i tag).
+      if (ev.type === 'TAG_CHANGED') {
+        queryClient.invalidateQueries({ queryKey: ['tags'] })
+        queryClient.invalidateQueries({ queryKey: ['elements'] })
         return
       }
       queryClient.invalidateQueries({ queryKey: ['elements'] })
@@ -106,8 +169,26 @@ export function Layout() {
   return (
     <VoiceSessionProvider>
       <div className="flex h-screen overflow-hidden bg-background">
-        <Sidebar />
-        <main className="flex-1 overflow-hidden flex flex-col">
+        <Sidebar mobileOpen={navOpen} />
+        {/* Backdrop del drawer su mobile. */}
+        {navOpen && (
+          <div
+            className="fixed inset-0 z-40 bg-black/50 md:hidden"
+            onClick={() => setNavOpen(false)}
+            aria-hidden
+          />
+        )}
+        <main className="flex-1 overflow-hidden flex flex-col min-w-0">
+          {/* Header mobile con hamburger: la sidebar è nascosta sotto md. */}
+          <header className="flex items-center gap-2 border-b px-3 py-2 md:hidden">
+            <button
+              onClick={() => setNavOpen(o => !o)}
+              className="rounded-md p-1.5 hover:bg-accent/60"
+              aria-label="Apri menu"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+          </header>
           <Outlet />
         </main>
         <QuickCapture />

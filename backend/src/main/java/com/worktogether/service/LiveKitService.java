@@ -1,5 +1,6 @@
 package com.worktogether.service;
 
+import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -7,7 +8,9 @@ import org.springframework.stereotype.Service;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.Date;
 import java.util.Map;
 
@@ -79,5 +82,32 @@ public class LiveKitService {
                 .expiration(Date.from(now.plusSeconds(ttlSeconds)))
                 .signWith(key, Jwts.SIG.HS256)
                 .compact();
+    }
+
+    /**
+     * Verifica un webhook LiveKit. LiveKit firma ogni POST con un JWT (HS256 con l'API secret) nello
+     * header Authorization, il cui claim {@code sha256} è l'hash SHA-256 del corpo (base64). Validare
+     * la firma E l'hash garantisce autenticità e integrità del payload.
+     *
+     * @param authHeader valore dello header Authorization (il JWT grezzo, senza prefisso "Bearer")
+     * @param body       corpo grezzo della richiesta
+     * @return true se firma e hash del corpo sono validi
+     */
+    public boolean verifyWebhook(String authHeader, byte[] body) {
+        if (!isConfigured() || authHeader == null || authHeader.isBlank() || body == null) return false;
+        String token = authHeader.startsWith("Bearer ") ? authHeader.substring(7).trim() : authHeader.trim();
+        try {
+            SecretKey key = new SecretKeySpec(apiSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+            Claims claims = Jwts.parser().verifyWith(key).build()
+                    .parseSignedClaims(token).getPayload();
+            String expected = claims.get("sha256", String.class);
+            if (expected == null || expected.isBlank()) return false;
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(body);
+            String actual = Base64.getEncoder().encodeToString(digest);
+            return MessageDigest.isEqual(
+                    expected.getBytes(StandardCharsets.UTF_8), actual.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            return false; // firma non valida, token scaduto, hash non combaciante
+        }
     }
 }

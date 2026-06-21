@@ -44,6 +44,12 @@ public class DriveFile {
     @Column(name = "locked_at")
     private OffsetDateTime lockedAt;
 
+    // Se true (default), il file è modificabile/spostabile/eliminabile da tutti i membri non guest;
+    // se false è in sola lettura per chi non è il proprietario o un admin.
+    @Builder.Default
+    @Column(name = "editable_by_all", nullable = false)
+    private boolean editableByAll = true;
+
     @Builder.Default
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();

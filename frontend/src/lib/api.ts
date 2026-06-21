@@ -54,11 +54,33 @@ export default api
 
 // Auth
 export const authApi = {
-  login: (email: string, password: string) =>
-    api.post('/auth/login', { email, password }).then(r => r.data),
+  // identifier = username (display name) oppure email
+  login: (identifier: string, password: string) =>
+    api.post('/auth/login', { identifier, password }).then(r => r.data),
   resetPassword: (currentPassword: string, newPassword: string) =>
     api.post('/auth/reset-password', { currentPassword, newPassword }).then(r => r.data),
   logout: () => api.post('/auth/logout'),
+  // Onboarding primo accesso (account creato col solo username)
+  onboardingStart: (onboardingToken: string, email: string, password: string) =>
+    api.post('/auth/onboarding/start', { onboardingToken, email, password }),
+  onboardingVerify: (onboardingToken: string, code: string) =>
+    api.post('/auth/onboarding/verify', { onboardingToken, code }).then(r => r.data),
+  // Reset password via OTP email
+  passwordResetRequest: (identifier: string) =>
+    api.post('/auth/password-reset/request', { identifier }),
+  passwordResetVerify: (identifier: string, code: string, newPassword: string) =>
+    api.post('/auth/password-reset/verify', { identifier, code, newPassword }).then(r => r.data),
+}
+
+// Inviti al workspace
+export const invitationsApi = {
+  list: (wsId: string) => api.get(`/workspaces/${wsId}/invitations`).then(r => r.data),
+  create: (wsId: string, identifier: string, role: string) =>
+    api.post(`/workspaces/${wsId}/invitations`, { identifier, role }).then(r => r.data),
+  revoke: (wsId: string, id: string) =>
+    api.delete(`/workspaces/${wsId}/invitations/${id}`),
+  preview: (token: string) => api.get(`/auth/invitations/${token}`).then(r => r.data),
+  accept: (token: string) => api.post(`/invitations/${token}/accept`).then(r => r.data),
 }
 
 // Workspaces
@@ -73,7 +95,7 @@ export const workspacesApi = {
     api.patch(`/workspaces/${wsId}/members/${userId}/role?role=${role}`),
   removeMember: (wsId: string, userId: string) =>
     api.delete(`/workspaces/${wsId}/members/${userId}`),
-  createUser: (wsId: string, data: { email: string; displayName: string; temporaryPassword: string; role?: string }) =>
+  createUser: (wsId: string, data: { email?: string; displayName: string; temporaryPassword?: string; role?: string }) =>
     api.post(`/workspaces/${wsId}/users`, data).then(r => r.data),
   updateSettings: (wsId: string, data: { avatar?: string; cardShowTags?: boolean; cardShowAssignees?: boolean; cardShowDueDate?: boolean; reminderDaysBefore?: number; eventRemindersEnabled?: boolean; weeklyRecapEnabled?: boolean; mondayDigestEnabled?: boolean }) =>
     api.patch(`/workspaces/${wsId}/settings`, data).then(r => r.data),
@@ -149,6 +171,10 @@ export const driveApi = {
     api.patch(`/workspaces/${wsId}/drive/files/${fileId}/move`, { targetFolderId: targetFolderId ?? null }).then(r => r.data),
   renameFile: (wsId: string, fileId: string, name: string) =>
     api.patch(`/workspaces/${wsId}/drive/files/${fileId}/rename`, { name }).then(r => r.data),
+  setFilePermission: (wsId: string, fileId: string, editableByAll: boolean) =>
+    api.patch(`/workspaces/${wsId}/drive/files/${fileId}/permission`, { editableByAll }).then(r => r.data),
+  setFolderPermission: (wsId: string, folderId: string, editableByAll: boolean) =>
+    api.patch(`/workspaces/${wsId}/drive/folders/${folderId}/permission`, { editableByAll }).then(r => r.data),
   copyFile: (wsId: string, fileId: string) =>
     api.post(`/workspaces/${wsId}/drive/files/${fileId}/copy`).then(r => r.data),
   download: async (wsId: string, fileId: string, filename: string) => {
@@ -325,6 +351,22 @@ export const presenceApi = {
     api.post(`/workspaces/${wsId}/presence/heartbeat`, { channelId }).then(r => r.data),
   get: (wsId: string): Promise<PresenceEntryDto[]> =>
     api.get(`/workspaces/${wsId}/presence`).then(r => r.data),
+  // Segnala l'uscita dall'app durante la chiusura/refresh della pagina. Usa fetch con
+  // `keepalive` (non axios): la richiesta sopravvive all'unload e può portare l'header
+  // Authorization (cosa impossibile con navigator.sendBeacon, che non imposta header).
+  offline: (wsId: string): void => {
+    const token = useAuthStore.getState().accessToken
+    const base = (import.meta.env.VITE_API_URL as string) || '/api'
+    try {
+      fetch(`${base}/workspaces/${wsId}/presence/offline`, {
+        method: 'POST',
+        keepalive: true,
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      }).catch(() => {})
+    } catch {
+      /* il browser potrebbe rifiutare durante l'unload: best-effort */
+    }
+  },
 }
 
 // Attachments

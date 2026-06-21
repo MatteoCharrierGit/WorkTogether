@@ -27,4 +27,15 @@ turn:
   # cert_file: /etc/livekit/cert.pem
   # key_file: /etc/livekit/key.pem
 
+# Webhook: LiveKit notifica il backend quando un partecipante entra/esce da una room. Serve per
+# rimuovere subito lo stato "in chiamata" quando un client crasha o perde la rete (casi in cui il
+# beacon pagehide del browser non parte). LiveKit NON sostituisce le variabili d'ambiente dentro
+# questo file, quindi `api_key` va scritto in chiaro: è l'IDENTIFICATORE della chiave (non il
+# segreto) e DEVE combaciare con LIVEKIT_API_KEY in .env. LiveKit firma il POST con il segreto
+# corrispondente e il backend ne verifica la firma (LiveKitService.verifyWebhook).
+webhook:
+  api_key: 6886b48e643a4828
+  urls:
+    - http://backend:8080/api/livekit/webhook
+
 # Per 6 persone basta un singolo nodo: nessun Redis/clustering.

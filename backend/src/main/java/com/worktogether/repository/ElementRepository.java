@@ -4,11 +4,20 @@ import com.worktogether.domain.entity.Element;
 import com.worktogether.domain.enums.ElementStatus;
 import com.worktogether.domain.enums.ElementType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import java.util.List;
 import java.util.UUID;
 
 public interface ElementRepository extends JpaRepository<Element, UUID> {
+
+    // Cleanup alla rimozione di un membro: stacca l'utente dagli assegnatari di tutti gli
+    // elementi del workspace (la cascade DB scatta solo cancellando l'utente, non la membership).
+    @Modifying
+    @Query(value = "DELETE FROM element_assignees ea USING elements e " +
+            "WHERE ea.element_id = e.id AND e.workspace_id = :workspaceId AND ea.user_id = :userId",
+            nativeQuery = true)
+    void removeAssigneeFromWorkspace(UUID workspaceId, UUID userId);
 
     @Query("SELECT e FROM Element e WHERE e.workspace.id = :workspaceId AND e.type = :type ORDER BY e.position ASC, e.createdAt ASC")
     List<Element> findByWorkspaceIdAndType(UUID workspaceId, ElementType type);

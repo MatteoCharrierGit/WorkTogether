@@ -502,6 +502,28 @@ File: backend `AiCommandService`, `AiMemoryService.compactNow`, `AiConversationS
 
 ---
 
+## 15. Fix tooling autonomia (giugno 2026)
+
+Problema riscontrato in produzione: Akari non sapeva **dove** collocare task e storie. La causa non era
+architetturale (il tool calling su servizi interni è solido) ma di **ergonomia dei tool**: `list_elements`
+restituiva una lista piatta da cui il modello doveva ricostruire a mano la gerarchia, e un `create_element`
+di un TASK senza `parentId` creava un **task orfano** che non compare nella Kanban. Interventi (in
+`AgentToolRegistry`):
+
+- **Nuovo tool `get_board`**: ritorna l'albero `EPICA → STORIA → TASK` con gli id, più `events`,
+  `storiesWithoutEpic` e `tasksWithoutStory` (i task orfani che non si vedono in Kanban). È la "mappa"
+  che il modello consulta prima di creare/spostare elementi.
+- **`list_elements` arricchito**: implementato il filtro `query` (ricerca per titolo, già previsto nel
+  §8 ma mai realizzato) e aggiunto `parentTitle` all'output (più leggibile dell'id nudo).
+- **Guardrail in `create_element`**: un TASK senza `parentId` non viene più creato orfano; il tool
+  risponde con l'elenco delle STORIE disponibili (id+titolo) così l'agente ritenta subito con il
+  `parentId` corretto. Se non esistono storie, indica di crearne prima una.
+
+Conclusione: nessun "replanning" dell'architettura; bastava dare all'agente gli strumenti per
+**vedere la gerarchia** e **auto-correggersi** sulla collocazione.
+
+---
+
 ### Riferimenti nel codice esistente (per l'implementazione)
 - Servizi da richiamare nei tool: `ElementService`, `DriveService`, `TagService`, `WorkspaceService`.
 - Pattern auth/ruoli: `WorkspaceService.assertRole/getUserRole`, enum `WorkspaceRole`.

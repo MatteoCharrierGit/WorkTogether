@@ -1,6 +1,6 @@
 # WorkTogether
 
-> **Versione: v1.0** · release corrente (giugno 2026)
+> **Versione: v1.2** · release corrente (giugno 2026)
 
 Piattaforma self-hosted di **collaborazione e task management** per piccoli team, con:
 
@@ -13,6 +13,56 @@ Piattaforma self-hosted di **collaborazione e task management** per piccoli team
 - **Backup / ripristino / trasporto** della workspace come JSON (Admin → Backup): export selettivo (impostazioni, membri, tag, elementi, chat, AI) e import che ricrea una nuova workspace. Esclusi: chiave AI e file del Drive.
 
 Stack: **Spring Boot 3 / Java 21 / PostgreSQL** (backend) · **React + Vite + TypeScript + Tailwind/shadcn** (frontend) · **LiveKit** (media SFU) · **Docker Compose** (deploy).
+
+---
+
+## Novità v1.2 (giugno 2026)
+
+- **Drag & drop di cartelle**: oltre al pulsante "Carica cartella", si possono trascinare intere
+  cartelle (con sottocartelle) direttamente nel Drive; l'alberatura viene ricreata.
+- **Cartelle in sola lettura (cascata)**: il proprietario o un admin può marcare una cartella come
+  sola lettura; il flag si propaga **in cascata** a tutti i file e sottocartelle contenuti, e i nuovi
+  contenuti aggiunti **ereditano** il permesso della cartella.
+- **Sessione singola**: a ogni login le sessioni preesistenti dello stesso account (su altri
+  dispositivi/browser) vengono **invalidate e disconnesse immediatamente** (versione di sessione nel
+  token, vedi [docs/BACKEND.md](./docs/BACKEND.md)).
+
+## Novità v1.1 (giugno 2026)
+
+Rifiniture post-test in produzione su realtime, voce/video, UI e Akari.
+
+**Realtime (niente più refresh manuale).**
+- Il **Drive** ora trasmette gli eventi: upload (anche di intere cartelle), creazione/rinomina/
+  spostamento/eliminazione di file e cartelle compaiono in tempo reale sugli altri client (evento
+  WS `DRIVE_CHANGED`).
+- Le **chat condivise di Akari** si aggiornano live per tutti i partecipanti (evento `AI_MESSAGE`),
+  non solo per chi ha inviato il messaggio.
+
+**Voce/video — disconnessioni robuste.**
+- Chiusura/refresh della pagina: il client invia subito un *beacon* (`pagehide`) e lascia la stanza,
+  così non resta "online/in chiamata" fantasma.
+- **Webhook LiveKit**: in caso di crash o perdita di rete (dove il beacon non parte) è il media server
+  a notificare il backend, che azzera lo stato "in chiamata". Vedi [REALTIME_VOCE](./docs/REALTIME_VOCE.md).
+- **Controlli audio per-utente**: dalla VoiceBar puoi mutare un singolo partecipante o regolarne il
+  volume (solo per te, non per gli altri).
+
+**UI/UX.**
+- **Welcome flow**: al logout il workspace attivo viene azzerato e il menu è mostrato solo per i
+  workspace di cui sei davvero membro (niente menu "fantasma").
+- **Responsive**: sidebar a *drawer* su mobile/tablet (hamburger); il visualizzatore dello schermo
+  condiviso è a tutta larghezza su mobile; la barra di controllo chiamata non finisce più sotto il video.
+- **Kanban riorganizzata**: le storie sono raggruppate sotto sezioni **Epica** comprimibili con
+  avanzamento (task completati/totali); epiche e storie concluse vanno in fondo e si comprimono; i
+  task completati sono attenuati.
+
+**Drive — permessi per-file.**
+- Ogni file è **modificabile da tutti** i membri per impostazione predefinita; il proprietario o un
+  admin può marcare un singolo file come **sola lettura** dal menu del file.
+
+**Akari (agente AI) — tool più ergonomici.**
+- Nuovo tool `get_board` (albero Epica▸Storia▸Task con id), filtro `query` su `list_elements`, e un
+  *guardrail* che impedisce di creare task "orfani" non visibili in Kanban. Vedi
+  [AI_AGENT_DESIGN §15](./docs/AI_AGENT_DESIGN.md).
 
 ---
 

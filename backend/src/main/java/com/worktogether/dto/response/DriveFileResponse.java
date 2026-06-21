@@ -14,12 +14,13 @@ public record DriveFileResponse(
         UUID uploadedBy,
         OffsetDateTime createdAt,
         UUID lockedBy,
-        OffsetDateTime lockedAt
+        OffsetDateTime lockedAt,
+        boolean editableByAll
 ) {
     public static DriveFileResponse from(DriveFile f) {
         return new DriveFileResponse(
                 f.getId(), f.getFolderId(), f.getFilename(),
                 f.getContentType(), f.getSizeBytes(), f.getUploadedBy(), f.getCreatedAt(),
-                f.getLockedBy(), f.getLockedAt());
+                f.getLockedBy(), f.getLockedAt(), f.isEditableByAll());
     }
 }

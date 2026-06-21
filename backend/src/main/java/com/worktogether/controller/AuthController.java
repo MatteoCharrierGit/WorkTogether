@@ -31,6 +31,32 @@ public class AuthController {
         return ResponseEntity.ok(authService.resetPassword(user, req));
     }
 
+    // ---- Onboarding primo accesso (account creato col solo username) ----
+
+    @PostMapping("/onboarding/start")
+    public ResponseEntity<Void> onboardingStart(@Valid @RequestBody OnboardingStartRequest req) {
+        authService.onboardingStart(req);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/onboarding/verify")
+    public ResponseEntity<AuthResponse> onboardingVerify(@Valid @RequestBody OnboardingVerifyRequest req) {
+        return ResponseEntity.ok(authService.onboardingVerify(req));
+    }
+
+    // ---- Reset password via OTP email ----
+
+    @PostMapping("/password-reset/request")
+    public ResponseEntity<Void> passwordResetRequest(@Valid @RequestBody PasswordResetRequestRequest req) {
+        authService.passwordResetRequest(req);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/password-reset/verify")
+    public ResponseEntity<AuthResponse> passwordResetVerify(@Valid @RequestBody PasswordResetVerifyRequest req) {
+        return ResponseEntity.ok(authService.passwordResetVerify(req));
+    }
+
     @PostMapping("/refresh")
     public ResponseEntity<AuthResponse> refresh(@RequestBody Map<String, String> body) {
         return ResponseEntity.ok(authService.refresh(body.get("refreshToken")));

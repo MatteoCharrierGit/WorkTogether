@@ -4,6 +4,7 @@ import com.worktogether.domain.entity.User;
 import com.worktogether.dto.request.CreateFolderRequest;
 import com.worktogether.dto.request.MoveRequest;
 import com.worktogether.dto.request.RenameRequest;
+import com.worktogether.dto.request.SetFilePermissionRequest;
 import com.worktogether.dto.request.UpdateFileContentRequest;
 import com.worktogether.dto.response.DriveFileResponse;
 import com.worktogether.dto.response.FolderResponse;
@@ -61,6 +62,15 @@ public class DriveController {
             @RequestBody MoveRequest req,
             @AuthenticationPrincipal User user) {
         return ResponseEntity.ok(driveService.moveFolder(wsId, folderId, req.targetFolderId(), user));
+    }
+
+    @PatchMapping("/folders/{folderId}/permission")
+    public ResponseEntity<FolderResponse> setFolderPermission(
+            @PathVariable UUID wsId,
+            @PathVariable UUID folderId,
+            @RequestBody SetFilePermissionRequest req,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(driveService.setFolderEditableByAll(wsId, folderId, req.editableByAll(), user));
     }
 
     @DeleteMapping("/folders/{folderId}")
@@ -139,6 +149,15 @@ public class DriveController {
             @AuthenticationPrincipal User user) {
         driveService.deleteFile(wsId, fileId, user);
         return ResponseEntity.noContent().build();
+    }
+
+    @PatchMapping("/files/{fileId}/permission")
+    public ResponseEntity<DriveFileResponse> setFilePermission(
+            @PathVariable UUID wsId,
+            @PathVariable UUID fileId,
+            @RequestBody SetFilePermissionRequest req,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(driveService.setEditableByAll(wsId, fileId, req.editableByAll(), user));
     }
 
     // ---- Editor & lock ----

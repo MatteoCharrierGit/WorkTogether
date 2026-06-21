@@ -25,14 +25,21 @@ public class JwtUtil {
         this.expiryMs = expiryMs;
     }
 
-    public String generateToken(UUID userId, String email) {
+    public String generateToken(UUID userId, String email, int tokenVersion) {
         return Jwts.builder()
                 .subject(userId.toString())
                 .claim("email", email)
+                .claim("sv", tokenVersion)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + expiryMs))
                 .signWith(key)
                 .compact();
+    }
+
+    /** Versione di sessione contenuta nel token (claim "sv"); 0 se assente (token pre-feature). */
+    public int extractTokenVersion(String token) {
+        Object sv = parseToken(token).get("sv");
+        return sv instanceof Number n ? n.intValue() : 0;
     }
 
     public Claims parseToken(String token) {

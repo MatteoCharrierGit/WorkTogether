@@ -48,7 +48,9 @@ function TaskCard({ task, index, cardConfig }: { task: Element; index: number; c
           style={style as React.CSSProperties}
           className={cn(
             'group bg-card border rounded-xl p-3 space-y-2 cursor-grab active:cursor-grabbing transition-shadow',
-            snapshot.isDragging && 'shadow-lg ring-1 ring-ring'
+            snapshot.isDragging && 'shadow-lg ring-1 ring-ring',
+            // I task completati sono attenuati: restano consultabili ma non rubano l'attenzione.
+            task.status === 'COMPLETATO' && !snapshot.isDragging && 'opacity-65 hover:opacity-100'
           )}
         >
           <div className="flex items-start gap-1.5">
@@ -206,11 +208,61 @@ function SwimLane({
   )
 }
 
+// Intestazione di una sezione Epica: raggruppa le storie di un'epica, con avanzamento e collasso.
+function EpicHeader({ epic, storyCount, done, total, collapsed, onToggle }: {
+  epic: Element
+  storyCount: number
+  done: number
+  total: number
+  collapsed: boolean
+  onToggle: () => void
+}) {
+  const wsId = useParams().wsId!
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0
+  const complete = epic.status === 'COMPLETATO' || (total > 0 && done === total)
+  return (
+    <div
+      className="flex items-center gap-2 py-2 px-3 rounded-lg bg-muted/60 hover:bg-muted cursor-pointer select-none border"
+      onClick={onToggle}
+    >
+      <button className="shrink-0 text-muted-foreground">
+        {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+      </button>
+      <span className="text-sm">{TYPE_ICONS['EPICA']}</span>
+      <a
+        href={`/workspace/${wsId}/element/${epic.id}`}
+        onClick={e => e.stopPropagation()}
+        className={cn('text-sm font-semibold hover:text-primary transition-colors truncate max-w-[40%]',
+          complete && 'text-muted-foreground line-through')}
+        title={epic.title}
+      >
+        {epic.title}
+      </a>
+      <span className="text-xs text-muted-foreground">{storyCount} stor{storyCount === 1 ? 'ia' : 'ie'}</span>
+      {/* Avanzamento task dell'epica */}
+      {total > 0 && (
+        <div className="flex items-center gap-2 ml-auto">
+          <div className="h-1.5 w-24 rounded-full bg-muted overflow-hidden">
+            <div className={cn('h-full rounded-full', complete ? 'bg-green-500' : 'bg-primary')} style={{ width: `${pct}%` }} />
+          </div>
+          <span className="text-xs text-muted-foreground tabular-nums">{done}/{total}</span>
+        </div>
+      )}
+      {complete && (
+        <span className="inline-flex items-center gap-1 rounded-full bg-green-500/10 text-green-600 px-2 py-0.5 text-[11px] font-medium">
+          ✓ Conclusa
+        </span>
+      )}
+    </div>
+  )
+}
+
 export default function KanbanPage() {
   const { wsId } = useParams<{ wsId: string }>()
   const queryClient = useQueryClient()
   const workspace = useWorkspaceStore(s => s.current)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [collapsedEpics, setCollapsedEpics] = useState<Record<string, boolean>>({})
   const [createOpen, setCreateOpen] = useState(false)
 
   // Filtri
@@ -251,6 +303,25 @@ export default function KanbanPage() {
     .sort((a, b) => (a.status === 'COMPLETATO' ? 1 : 0) - (b.status === 'COMPLETATO' ? 1 : 0))
   const allTasks = elements.filter(e => e.type === 'TASK')
   const epicById = new Map(elements.filter(e => e.type === 'EPICA').map(e => [e.id, e]))
+
+  // Avanzamento di un'epica: task completati / totali sotto le sue storie (esclusi gli archiviati).
+  const epicProgress = (epicId: string) => {
+    const storyIds = new Set(stories.filter(s => s.parentId === epicId).map(s => s.id))
+    const ts = allTasks.filter(t => t.parentId && storyIds.has(t.parentId) && t.status !== 'ARCHIVIATO')
+    return { done: ts.filter(t => t.status === 'COMPLETATO').length, total: ts.length }
+  }
+
+  // Raggruppa le storie per epica → sottodivisione chiara Epica ▸ Storia ▸ Task. Le epiche concluse
+  // vanno in fondo; le storie senza epica finiscono in un gruppo "Senza epica".
+  const epicGroups: { epic: Element | null; epicStories: Element[] }[] = [
+    ...elements
+      .filter(e => e.type === 'EPICA')
+      .sort((a, b) => (a.status === 'COMPLETATO' ? 1 : 0) - (b.status === 'COMPLETATO' ? 1 : 0))
+      .map(epic => ({ epic, epicStories: stories.filter(s => s.parentId === epic.id) }))
+      .filter(g => g.epicStories.length > 0),
+  ]
+  const orphanStories = stories.filter(s => !s.parentId || !epicById.has(s.parentId))
+  if (orphanStories.length > 0) epicGroups.push({ epic: null, epicStories: orphanStories })
 
   const hasFilters = search.trim() !== '' || assigneeFilter.length > 0 || tagFilter.length > 0
   const tasks = allTasks.filter(t => {
@@ -420,23 +491,57 @@ export default function KanbanPage() {
       {/* Board */}
       <div className="flex-1 overflow-y-auto px-3 py-3">
         <DragDropContext onDragEnd={onDragEnd}>
-          {stories.map(story => {
-            const storyTasks = tasks.filter(t => t.parentId === story.id && t.status !== 'ARCHIVIATO')
-            // Con i filtri attivi, nascondi le storie senza task corrispondenti.
-            if (hasFilters && storyTasks.length === 0) return null
+          {epicGroups.map(({ epic, epicStories }) => {
+            // Storie visibili nel gruppo: con i filtri attivi mostra solo quelle con task corrispondenti.
+            const visibleStories = epicStories.filter(story =>
+              !hasFilters || tasks.some(t => t.parentId === story.id && t.status !== 'ARCHIVIATO'))
+            if (visibleStories.length === 0) return null
+
+            const epicCollapsed = epic ? (collapsedEpics[epic.id] ?? epic.status === 'COMPLETATO') : false
+            const prog = epic ? epicProgress(epic.id) : { done: 0, total: 0 }
+
             return (
-              <SwimLane
-                key={story.id}
-                story={story}
-                epic={story.parentId ? epicById.get(story.parentId) : undefined}
-                tasks={storyTasks}
-                collapsed={collapsed[story.id] ?? story.status === 'COMPLETATO'}
-                onToggle={() => setCollapsed(c => ({
-                  ...c,
-                  [story.id]: !(c[story.id] ?? story.status === 'COMPLETATO'),
-                }))}
-                cardConfig={cardConfig}
-              />
+              <div key={epic?.id ?? 'no-epic'} className="mb-5">
+                {epic ? (
+                  <EpicHeader
+                    epic={epic}
+                    storyCount={visibleStories.length}
+                    done={prog.done}
+                    total={prog.total}
+                    collapsed={epicCollapsed}
+                    onToggle={() => setCollapsedEpics(c => ({
+                      ...c,
+                      [epic.id]: !(c[epic.id] ?? epic.status === 'COMPLETATO'),
+                    }))}
+                  />
+                ) : (
+                  <div className="flex items-center gap-2 py-2 px-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Senza epica
+                  </div>
+                )}
+
+                {!epicCollapsed && (
+                  <div className="mt-1 md:pl-3">
+                    {visibleStories.map(story => {
+                      const storyTasks = tasks.filter(t => t.parentId === story.id && t.status !== 'ARCHIVIATO')
+                      return (
+                        <SwimLane
+                          key={story.id}
+                          story={story}
+                          epic={undefined /* l'epica è già nell'intestazione del gruppo */}
+                          tasks={storyTasks}
+                          collapsed={collapsed[story.id] ?? story.status === 'COMPLETATO'}
+                          onToggle={() => setCollapsed(c => ({
+                            ...c,
+                            [story.id]: !(c[story.id] ?? story.status === 'COMPLETATO'),
+                          }))}
+                          cardConfig={cardConfig}
+                        />
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
             )
           })}
           {stories.length === 0 && (

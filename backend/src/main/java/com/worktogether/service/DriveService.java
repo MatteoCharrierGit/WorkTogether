@@ -10,6 +10,7 @@ import com.worktogether.dto.response.FolderResponse;
 import com.worktogether.dto.response.LockResponse;
 import com.worktogether.repository.DriveFileRepository;
 import com.worktogether.repository.FolderRepository;
+import com.worktogether.websocket.WorkspaceEventPublisher;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -37,11 +38,27 @@ public class DriveService {
     private final FolderRepository folderRepository;
     private final DriveFileRepository driveFileRepository;
     private final WorkspaceService workspaceService;
+    private final WorkspaceEventPublisher eventPublisher;
 
     @Value("${app.upload.dir}")
     private String uploadDir;
 
     public record DownloadFile(Resource resource, String filename, String contentType) {}
+
+    // Notifica i client del workspace che il Drive è cambiato (upload, cartelle,
+    // spostamenti, rinomine, eliminazioni). Il frontend (Layout) invalida le query
+    // 'drive-folders'/'drive-files' su qualsiasi evento, così il Drive si aggiorna
+    // in tempo reale senza refresh della pagina.
+    private void notifyDriveChanged(UUID workspaceId, UUID folderId) {
+        eventPublisher.publish(workspaceId, "DRIVE_CHANGED",
+                java.util.Collections.singletonMap("folderId", folderId == null ? null : folderId.toString()));
+    }
+
+    // Un membro non proprietario può modificare/spostare/eliminare un FILE altrui solo se il file è
+    // marcato "modificabile da tutti" (default) e non è un guest (i guest restano sempre in sola lettura).
+    private boolean canModifyFile(WorkspaceRole role, DriveFile file) {
+        return role != WorkspaceRole.GUEST && file.isEditableByAll();
+    }
 
     // ---- Folders ----
 
@@ -65,8 +82,11 @@ public class DriveService {
                 .parentId(req.parentId())
                 .name(req.name().trim())
                 .createdBy(user.getId())
+                .editableByAll(folderEditable(workspaceId, req.parentId())) // eredita dalla cartella padre
                 .build();
-        return FolderResponse.from(folderRepository.save(folder));
+        FolderResponse response = FolderResponse.from(folderRepository.save(folder));
+        notifyDriveChanged(workspaceId, req.parentId());
+        return response;
     }
 
     @Transactional
@@ -93,7 +113,9 @@ public class DriveService {
             }
         }
         folder.setParentId(targetParentId);
-        return FolderResponse.from(folderRepository.save(folder));
+        FolderResponse response = FolderResponse.from(folderRepository.save(folder));
+        notifyDriveChanged(workspaceId, targetParentId);
+        return response;
     }
 
     @Transactional
@@ -109,7 +131,9 @@ public class DriveService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nome non valido");
         }
         folder.setName(newName.trim());
-        return FolderResponse.from(folderRepository.save(folder));
+        FolderResponse response = FolderResponse.from(folderRepository.save(folder));
+        notifyDriveChanged(workspaceId, folder.getParentId());
+        return response;
     }
 
     @Transactional
@@ -124,6 +148,7 @@ public class DriveService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "La cartella non è vuota");
         }
         folderRepository.delete(folder);
+        notifyDriveChanged(workspaceId, folder.getParentId());
     }
 
     // ---- Files ----
@@ -161,8 +186,11 @@ public class DriveService {
                     .contentType(file.getContentType())
                     .sizeBytes(file.getSize())
                     .uploadedBy(user.getId())
+                    .editableByAll(folderEditable(workspaceId, folderId)) // eredita dalla cartella
                     .build();
-            return DriveFileResponse.from(driveFileRepository.save(df));
+            DriveFileResponse response = DriveFileResponse.from(driveFileRepository.save(df));
+            notifyDriveChanged(workspaceId, folderId);
+            return response;
         } catch (IOException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Errore nel salvataggio del file");
         }
@@ -174,12 +202,14 @@ public class DriveService {
         if (role == WorkspaceRole.GUEST) throw new AccessDeniedException("I guest non possono spostare i file");
         DriveFile df = getFileInWorkspace(workspaceId, fileId);
         boolean isOwner = df.getUploadedBy().equals(user.getId());
-        if (role != WorkspaceRole.ADMIN && !isOwner) {
-            throw new AccessDeniedException("Puoi spostare solo i file che hai caricato");
+        if (role != WorkspaceRole.ADMIN && !isOwner && !canModifyFile(role, df)) {
+            throw new AccessDeniedException("Questo file è spostabile solo dal proprietario o da un admin");
         }
         if (targetFolderId != null) validateFolder(workspaceId, targetFolderId);
         df.setFolderId(targetFolderId);
-        return DriveFileResponse.from(driveFileRepository.save(df));
+        DriveFileResponse response = DriveFileResponse.from(driveFileRepository.save(df));
+        notifyDriveChanged(workspaceId, targetFolderId);
+        return response;
     }
 
     @Transactional
@@ -188,14 +218,16 @@ public class DriveService {
         if (role == WorkspaceRole.GUEST) throw new AccessDeniedException("I guest non possono rinominare i file");
         DriveFile df = getFileInWorkspace(workspaceId, fileId);
         boolean isOwner = df.getUploadedBy().equals(user.getId());
-        if (role != WorkspaceRole.ADMIN && !isOwner) {
-            throw new AccessDeniedException("Puoi rinominare solo i file che hai caricato");
+        if (role != WorkspaceRole.ADMIN && !isOwner && !canModifyFile(role, df)) {
+            throw new AccessDeniedException("Questo file è rinominabile solo dal proprietario o da un admin");
         }
         if (newName == null || newName.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nome non valido");
         }
         df.setFilename(newName.trim());
-        return DriveFileResponse.from(driveFileRepository.save(df));
+        DriveFileResponse response = DriveFileResponse.from(driveFileRepository.save(df));
+        notifyDriveChanged(workspaceId, df.getFolderId());
+        return response;
     }
 
     @Transactional
@@ -219,8 +251,11 @@ public class DriveService {
                     .contentType(src.getContentType())
                     .sizeBytes(src.getSizeBytes())
                     .uploadedBy(user.getId())
+                    .editableByAll(folderEditable(workspaceId, src.getFolderId()))
                     .build();
-            return DriveFileResponse.from(driveFileRepository.save(copy));
+            DriveFileResponse response = DriveFileResponse.from(driveFileRepository.save(copy));
+            notifyDriveChanged(workspaceId, src.getFolderId());
+            return response;
         } catch (IOException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Errore nella copia del file");
         }
@@ -253,8 +288,8 @@ public class DriveService {
         WorkspaceRole role = workspaceService.getUserRole(workspaceId, user);
         DriveFile df = getFileInWorkspace(workspaceId, fileId);
         boolean isOwner = df.getUploadedBy().equals(user.getId());
-        if (role != WorkspaceRole.ADMIN && !isOwner) {
-            throw new AccessDeniedException("Puoi eliminare solo i file che hai caricato");
+        if (role != WorkspaceRole.ADMIN && !isOwner && !canModifyFile(role, df)) {
+            throw new AccessDeniedException("Questo file è eliminabile solo dal proprietario o da un admin");
         }
         try {
             Files.deleteIfExists(Path.of(uploadDir, workspaceId.toString(), "drive", df.getStoredName()));
@@ -262,6 +297,58 @@ public class DriveService {
             // file già assente
         }
         driveFileRepository.delete(df);
+        notifyDriveChanged(workspaceId, df.getFolderId());
+    }
+
+    /** Imposta se un file è modificabile da tutti i membri o solo dal proprietario/admin (sola lettura).
+     *  Possono cambiarlo solo il proprietario del file o un admin. */
+    @Transactional
+    public DriveFileResponse setEditableByAll(UUID workspaceId, UUID fileId, boolean editableByAll, User user) {
+        WorkspaceRole role = workspaceService.getUserRole(workspaceId, user);
+        DriveFile df = getFileInWorkspace(workspaceId, fileId);
+        if (role != WorkspaceRole.ADMIN && !df.getUploadedBy().equals(user.getId())) {
+            throw new AccessDeniedException("Solo il proprietario o un admin può cambiare i permessi del file");
+        }
+        df.setEditableByAll(editableByAll);
+        DriveFileResponse response = DriveFileResponse.from(driveFileRepository.save(df));
+        notifyDriveChanged(workspaceId, df.getFolderId());
+        return response;
+    }
+
+    /** Imposta una cartella come modificabile/sola lettura e propaga il flag IN CASCATA a tutti i file
+     *  e le sottocartelle contenute. Solo proprietario della cartella o admin. */
+    @Transactional
+    public FolderResponse setFolderEditableByAll(UUID workspaceId, UUID folderId, boolean editableByAll, User user) {
+        WorkspaceRole role = workspaceService.getUserRole(workspaceId, user);
+        Folder folder = validateFolder(workspaceId, folderId);
+        if (role != WorkspaceRole.ADMIN && !folder.getCreatedBy().equals(user.getId())) {
+            throw new AccessDeniedException("Solo il proprietario o un admin può cambiare i permessi della cartella");
+        }
+        cascadeEditable(workspaceId, folder, editableByAll);
+        notifyDriveChanged(workspaceId, folder.getParentId());
+        return FolderResponse.from(folder);
+    }
+
+    // Applica il flag alla cartella e, ricorsivamente, a tutti i file diretti e alle sottocartelle.
+    private void cascadeEditable(UUID workspaceId, Folder folder, boolean value) {
+        folder.setEditableByAll(value);
+        folderRepository.save(folder);
+        for (DriveFile f : driveFileRepository.findByWorkspaceIdAndFolderIdOrderByFilenameAsc(workspaceId, folder.getId())) {
+            f.setEditableByAll(value);
+            driveFileRepository.save(f);
+        }
+        for (Folder sub : folderRepository.findByWorkspaceIdAndParentIdOrderByNameAsc(workspaceId, folder.getId())) {
+            cascadeEditable(workspaceId, sub, value);
+        }
+    }
+
+    // Permesso da far ereditare ai nuovi contenuti: il flag della cartella che li contiene (radice = true).
+    private boolean folderEditable(UUID workspaceId, UUID folderId) {
+        if (folderId == null) return true;
+        return folderRepository.findById(folderId)
+                .filter(f -> f.getWorkspaceId().equals(workspaceId))
+                .map(Folder::isEditableByAll)
+                .orElse(true);
     }
 
     // ---- Editor & lock ----
@@ -278,6 +365,9 @@ public class DriveService {
         WorkspaceRole role = workspaceService.getUserRole(workspaceId, user);
         if (role == WorkspaceRole.GUEST) throw new AccessDeniedException("I guest non possono modificare i file");
         DriveFile df = getFileInWorkspace(workspaceId, fileId);
+        if (role != WorkspaceRole.ADMIN && !df.getUploadedBy().equals(user.getId()) && !canModifyFile(role, df)) {
+            throw new AccessDeniedException("Questo file è modificabile solo dal proprietario o da un admin");
+        }
         // Lock attivo di qualcun altro: non lo si può rubare.
         if (isLockActive(df) && !df.getLockedBy().equals(user.getId())) {
             return new LockResponse(false, df.getLockedBy(), df.getLockedAt());
@@ -303,6 +393,9 @@ public class DriveService {
         WorkspaceRole role = workspaceService.getUserRole(workspaceId, user);
         if (role == WorkspaceRole.GUEST) throw new AccessDeniedException("I guest non possono modificare i file");
         DriveFile df = getFileInWorkspace(workspaceId, fileId);
+        if (role != WorkspaceRole.ADMIN && !df.getUploadedBy().equals(user.getId()) && !canModifyFile(role, df)) {
+            throw new AccessDeniedException("Questo file è modificabile solo dal proprietario o da un admin");
+        }
         if (isLockActive(df) && !df.getLockedBy().equals(user.getId())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "File in modifica da un altro utente");
         }
@@ -315,7 +408,9 @@ public class DriveService {
             // Rinnova il lock dell'editor mentre salva.
             df.setLockedBy(user.getId());
             df.setLockedAt(OffsetDateTime.now());
-            return DriveFileResponse.from(driveFileRepository.save(df));
+            DriveFileResponse response = DriveFileResponse.from(driveFileRepository.save(df));
+            notifyDriveChanged(workspaceId, df.getFolderId());
+            return response;
         } catch (IOException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Errore nel salvataggio del file");
         }
@@ -347,8 +442,11 @@ public class DriveService {
                     .contentType("text/plain")
                     .sizeBytes(bytes.length)
                     .uploadedBy(user.getId())
+                    .editableByAll(folderEditable(workspaceId, folderId))
                     .build();
-            return DriveFileResponse.from(driveFileRepository.save(df));
+            DriveFileResponse response = DriveFileResponse.from(driveFileRepository.save(df));
+            notifyDriveChanged(workspaceId, folderId);
+            return response;
         } catch (IOException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Errore nella creazione del file");
         }

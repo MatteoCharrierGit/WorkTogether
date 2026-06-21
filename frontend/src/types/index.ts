@@ -18,6 +18,7 @@ export interface Folder {
   name: string
   createdBy: string
   createdAt: string
+  editableByAll?: boolean
 }
 
 export interface DriveFile {
@@ -30,6 +31,7 @@ export interface DriveFile {
   createdAt: string
   lockedBy?: string
   lockedAt?: string
+  editableByAll?: boolean
 }
 
 export interface LockResult {
@@ -86,6 +88,42 @@ export interface Member {
   displayName: string
   role: WorkspaceRole
   avatar?: string
+}
+
+export type InvitationStatus = 'PENDING' | 'ACCEPTED' | 'REVOKED' | 'EXPIRED'
+
+export interface Invitation {
+  id: string
+  workspaceId: string
+  workspaceName: string
+  email: string
+  displayName?: string
+  role: WorkspaceRole
+  status: InvitationStatus
+  expiresAt: string
+  createdAt: string
+}
+
+export interface InvitationPreview {
+  workspaceName: string
+  inviterName: string
+  email: string
+  role: WorkspaceRole
+}
+
+// Risposta del login: o autenticazione completa, o richiesta di onboarding (primo accesso).
+export interface AuthResponse {
+  accessToken: string | null
+  refreshToken: string | null
+  userId: string
+  email: string | null
+  displayName: string
+  mustResetPassword: boolean
+  systemAdmin: boolean
+  onboardingCompleted: boolean
+  avatar?: string
+  onboardingRequired: boolean
+  onboardingToken: string | null
 }
 
 export interface Attachment {
@@ -167,7 +205,8 @@ export interface AiMessage {
 export type WsEventType =
   | 'ELEMENT_CREATED' | 'ELEMENT_UPDATED' | 'ELEMENT_DELETED'
   | 'MESSAGE_CREATED' | 'CHANNEL_CREATED' | 'CHANNEL_UPDATED' | 'CHANNEL_DELETED'
-  | 'CHANNEL_READ' | 'TYPING' | 'PRESENCE'
+  | 'CHANNEL_READ' | 'TYPING' | 'PRESENCE' | 'DRIVE_CHANGED' | 'AI_MESSAGE' | 'TAG_CHANGED'
+  | 'WORKSPACE_DELETED' | 'MEMBER_REMOVED'
 
 export interface WsEvent {
   type: WsEventType

@@ -28,6 +28,12 @@ public class Folder {
     @Column(name = "created_by", nullable = false)
     private UUID createdBy;
 
+    // Sola lettura della cartella: se false, i contenuti (file e sottocartelle, in cascata) sono
+    // modificabili solo da proprietario/admin. Default true = collaborativo.
+    @Builder.Default
+    @Column(name = "editable_by_all", nullable = false)
+    private boolean editableByAll = true;
+
     @Builder.Default
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();

@@ -53,7 +53,7 @@
 
 > La presenza online/in-chiamata **non è su DB**: è un registro in-memory in `PresenceService`.
 
-## 2. Storico migration (V1 → V12)
+## 2. Storico migration (V1 → V15)
 
 | Versione | Contenuto |
 |----------|-----------|
@@ -69,11 +69,14 @@
 | **V10** `workspace_automations` | flag automazioni email (reminder, recap, digest). |
 | **V11** `user_onboarding` | `users.onboarding_completed` (tour di benvenuto). |
 | **V12** `channels` | `channels`, `channel_members`, `messages` (incl. flag voce/screen share). |
+| **V13** `drive_assets_editable` | `drive_files.editable_by_all` (default TRUE): permesso per-file modificabile/sola lettura. |
+| **V14** `user_token_version` | `users.token_version` (default 0): versione di sessione per la policy a sessione singola. |
+| **V15** `folder_editable_by_all` | `folders.editable_by_all` (default TRUE): sola lettura cartella, propagata in cascata. |
 
 ## 3. Note operative
 
 - **Backup**: tutto è in Postgres (volume `postgres_data`); i media voce/screen share **non vengono
   registrati**, quindi non c'è storage extra. I file/allegati stanno nel volume di `UPLOAD_DIR`.
-- **Nuove migration**: la prossima parte da **V13**. Mantenere `ddl-auto: validate` ⇒ ogni cambio di
+- **Nuove migration**: la prossima parte da **V16**. Mantenere `ddl-auto: validate` ⇒ ogni cambio di
   schema passa da una migration Flyway.
 - Verifica all'avvio: nei log del backend Flyway elenca le versioni applicate (utile dopo un deploy).

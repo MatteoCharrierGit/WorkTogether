@@ -15,6 +15,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
@@ -33,6 +35,11 @@ public class WorkspaceService {
     private final WorkspaceMemberRepository memberRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final ElementRepository elementRepository;
+    private final ChannelMemberRepository channelMemberRepository;
+    private final AiConversationRepository aiConversationRepository;
+    private final WorkspaceInvitationRepository invitationRepository;
+    private final com.worktogether.websocket.WorkspaceEventPublisher eventPublisher;
 
     @Value("${app.upload.dir}")
     private String uploadDir;
@@ -99,26 +106,68 @@ public class WorkspaceService {
         memberRepository.save(member);
     }
 
+    /**
+     * Rimozione sicura di un membro dal workspace con detach bidirezionale:
+     * - il workspace perde gli accessi/riferimenti diretti dell'utente (membership, assegnazioni
+     *   sui task, appartenenza ai canali, conversazioni AI personali, inviti pendenti);
+     * - l'utente perde il workspace dalla propria vista (membership cancellata).
+     * I riferimenti storici globali (created_by/uploaded_by/author) restano validi: l'utente
+     * continua a esistere a livello di sistema, quindi nessun record orfano.
+     * Non è consentito rimuovere l'ultimo ADMIN del workspace.
+     */
     @Transactional
     public void removeMember(UUID workspaceId, UUID userId, User requester) {
         assertRole(workspaceId, requester, WorkspaceRole.ADMIN);
-        memberRepository.findByWorkspaceIdAndUserId(workspaceId, userId)
-                .ifPresent(memberRepository::delete);
+        WorkspaceMember member = memberRepository.findByWorkspaceIdAndUserId(workspaceId, userId).orElse(null);
+        if (member == null) return; // idempotente: già non membro
+
+        if (member.getRole() == WorkspaceRole.ADMIN) {
+            long admins = memberRepository.findByWorkspaceId(workspaceId).stream()
+                    .filter(m -> m.getRole() == WorkspaceRole.ADMIN)
+                    .count();
+            if (admins <= 1) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Impossibile rimuovere l'unico amministratore del workspace");
+            }
+        }
+
+        // Pulizia dei riferimenti per-workspace (nessuno di questi cade in cascade rimuovendo la membership).
+        elementRepository.removeAssigneeFromWorkspace(workspaceId, userId);
+        channelMemberRepository.removeUserFromWorkspaceChannels(workspaceId, userId);
+        aiConversationRepository.deleteByWorkspaceIdAndOwnerUserId(workspaceId, userId);
+        invitationRepository.revokePendingForUser(workspaceId, userId);
+
+        memberRepository.delete(member);
+
+        // Notifica realtime DOPO il commit: il client dell'utente rimosso esce subito dal
+        // workspace e, rifacendo la lista, legge lo stato già aggiornato (niente race).
+        publishAfterCommit(workspaceId, "MEMBER_REMOVED", Map.of("userId", userId.toString()));
     }
 
     @Transactional
     public UserResponse createUser(UUID workspaceId, CreateUserRequest req, User requester) {
         assertRole(workspaceId, requester, WorkspaceRole.ADMIN);
-        if (userRepository.existsByEmail(req.email())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already in use");
+
+        String displayName = req.displayName().trim();
+        // display_name è l'handle di login: deve essere univoco.
+        if (userRepository.existsByDisplayName(displayName)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Username già in uso");
+        }
+        String email = (req.email() != null && !req.email().isBlank()) ? req.email().trim().toLowerCase() : null;
+        if (email != null && userRepository.existsByEmail(email)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email già in uso");
         }
         Workspace ws = workspaceRepository.findById(workspaceId)
                 .orElseThrow(() -> new EntityNotFoundException("Workspace not found"));
+
+        // Username-only: email e password restano null finché l'utente non completa l'onboarding
+        // al primo accesso. Se l'admin fornisce una password temporanea, si usa il flusso classico.
+        boolean hasTempPassword = req.temporaryPassword() != null && !req.temporaryPassword().isBlank();
         User newUser = User.builder()
-                .email(req.email())
-                .displayName(req.displayName())
-                .passwordHash(passwordEncoder.encode(req.temporaryPassword()))
-                .mustResetPassword(true)
+                .email(email)
+                .displayName(displayName)
+                .passwordHash(hasTempPassword ? passwordEncoder.encode(req.temporaryPassword()) : null)
+                .mustResetPassword(hasTempPassword)
                 .build();
         newUser = userRepository.save(newUser);
         WorkspaceRole role = req.role() != null ? req.role() : WorkspaceRole.COLLABORATORE;
@@ -159,6 +208,27 @@ public class WorkspaceService {
                 .orElseThrow(() -> new EntityNotFoundException("Workspace not found"));
         deleteUploadDir(workspaceId);
         workspaceRepository.delete(ws);
+        // Notifica realtime DOPO il commit: i client connessi escono subito dall'area e,
+        // rifacendo la lista workspace, leggono lo stato già aggiornato (niente race con
+        // un refetch che legge ancora la riga non ancora committata).
+        publishAfterCommit(workspaceId, "WORKSPACE_DELETED", Map.of("workspaceId", workspaceId.toString()));
+    }
+
+    /**
+     * Pubblica un evento sul topic del workspace solo dopo il commit della transazione corrente,
+     * così i client che reagiscono rifacendo le query leggono dati già persistiti. Se non c'è una
+     * transazione attiva, pubblica subito.
+     */
+    private void publishAfterCommit(UUID workspaceId, String type, Object payload) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() {
+                    eventPublisher.publish(workspaceId, type, payload);
+                }
+            });
+        } else {
+            eventPublisher.publish(workspaceId, type, payload);
+        }
     }
 
     private void deleteUploadDir(UUID workspaceId) {

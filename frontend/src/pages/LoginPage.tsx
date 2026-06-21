@@ -1,16 +1,16 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { authApi } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const setAuth = useAuthStore(s => s.setAuth)
-  const [email, setEmail] = useState('')
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -20,7 +20,14 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
     try {
-      const data = await authApi.login(email, password)
+      const data = await authApi.login(identifier, password)
+      // Primo accesso di un account creato col solo username: niente token, si va all'onboarding.
+      if (data.onboardingRequired) {
+        sessionStorage.setItem('wt-onboarding-token', data.onboardingToken)
+        sessionStorage.setItem('wt-onboarding-name', data.displayName ?? '')
+        navigate('/onboarding')
+        return
+      }
       setAuth(
         { id: data.userId, email: data.email, displayName: data.displayName, mustResetPassword: data.mustResetPassword, systemAdmin: data.systemAdmin, onboardingCompleted: data.onboardingCompleted, avatar: data.avatar },
         data.accessToken,
@@ -49,13 +56,13 @@ export default function LoginPage() {
           <CardContent className="pt-6">
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="identifier">Username o email</Label>
                 <Input
-                  id="email"
-                  type="email"
-                  placeholder="tu@esempio.it"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
+                  id="identifier"
+                  type="text"
+                  placeholder="mario.rossi o tu@esempio.it"
+                  value={identifier}
+                  onChange={e => setIdentifier(e.target.value)}
                   required
                   autoFocus
                 />
@@ -67,8 +74,11 @@ export default function LoginPage() {
                   type="password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  required
+                  placeholder="Lascia vuoto al primo accesso"
                 />
+                <p className="text-xs text-muted-foreground">
+                  Primo accesso? Inserisci solo lo username: imposterai email e password al passo successivo.
+                </p>
               </div>
               {error && (
                 <p className="text-sm text-destructive">{error}</p>
@@ -76,6 +86,11 @@ export default function LoginPage() {
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? 'Accesso in corso...' : 'Accedi'}
               </Button>
+              <div className="text-center">
+                <Link to="/forgot-password" className="text-xs text-muted-foreground hover:text-foreground underline-offset-4 hover:underline">
+                  Password dimenticata?
+                </Link>
+              </div>
             </form>
           </CardContent>
         </Card>

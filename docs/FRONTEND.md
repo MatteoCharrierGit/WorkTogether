@@ -107,3 +107,31 @@ Dettagli su token, qualità (audio Opus; screen share 1080p a ~15 fps), presenza
 - **Responsive**: la ChatPage a due pannelli collassa su mobile (lista ↔ thread con freccia "indietro").
 - **Tema** chiaro/scuro via `ThemeProvider`. **Tour di benvenuto** al primo accesso (`WelcomeTour`,
   flag `onboardingCompleted`). **QuickCapture** per creare velocemente elementi.
+
+## 9. Novità v1.1
+
+- **Welcome flow**: `logout()` azzera anche il `workspaceStore` persistito (così il prossimo utente
+  sullo stesso browser non eredita il workspace del precedente). La `Sidebar` mostra il menu del
+  workspace solo se l'utente ne è davvero membro (`showWorkspaceNav`), ripulendo `current` se obsoleto.
+- **Sidebar responsive**: sotto `md` è un *drawer* fuori schermo con hamburger nell'header e backdrop
+  (`Layout`), statica su desktop. Il `ScreenShareOverlay` massimizzato è a tutta larghezza su mobile
+  (`left-0 md:left-60`); la `VoiceBar` è `z-50` per restare sopra il video condiviso.
+- **Kanban** (`KanbanPage`): le storie sono raggruppate sotto sezioni **Epica** comprimibili
+  (`EpicHeader` con barra di avanzamento task completati/totali); storie senza epica nel gruppo
+  "Senza epica". Epiche/storie concluse vanno in fondo e si comprimono; i task completati sono attenuati.
+- **Drive** (`DrivePage`): upload di **intere cartelle** (`webkitdirectory`, ricrea l'alberatura) e
+  toggle **sola lettura** per-file dal menu del file (solo proprietario/admin), con badge sulla riga.
+  Aggiornamenti realtime via evento `DRIVE_CHANGED`.
+- **Voce**: controlli volume/muta per-partecipante nella `VoiceBar` (vedi REALTIME_VOCE §7).
+- **Akari** (`AssistantPage`): le chat condivise si aggiornano in tempo reale (evento `AI_MESSAGE`).
+
+## 10. Novità v1.2
+
+- **Drive — drag & drop di cartelle** (`DrivePage`): oltre ai file si possono trascinare intere
+  cartelle. Il `DataTransfer` viene "fotografato" in modo sincrono (`snapshotDrop`) e poi i
+  `FileSystemEntry` sono espansi ricorsivamente (`walkEntry`, `webkitGetAsEntry`) in una lista di
+  `{ file, relPath }` caricata da `uploadEntries` (stessa logica dell'upload cartella da input).
+- **Drive — cartelle sola lettura**: toggle nel menu della cartella (solo proprietario/admin) che
+  applica il permesso in cascata; badge "sola lettura" su file e cartelle bloccati.
+- **Sessione singola**: nessuna modifica UI dedicata — quando la sessione viene invalidata altrove,
+  l'interceptor axios (401 → refresh fallito) esegue logout e redirect a `/login`.

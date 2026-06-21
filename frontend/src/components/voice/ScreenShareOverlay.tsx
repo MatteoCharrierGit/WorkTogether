@@ -40,8 +40,9 @@ export function ScreenShareOverlay() {
       className={cn(
         'fixed z-40 flex flex-col overflow-hidden border bg-black shadow-2xl',
         maximized
-          // Riempie l'area principale: parte dopo la sidebar (w-60 = 15rem) fino ai bordi.
-          ? 'left-60 right-0 top-0 bottom-0'
+          // Riempie l'area principale: su mobile a tutta larghezza, su desktop parte dopo la
+          // sidebar (w-60 = 15rem) fino ai bordi.
+          ? 'left-0 md:left-60 right-0 top-0 bottom-0'
           // PiP: riquadro flottante ridimensionabile in basso a destra.
           : 'bottom-3 right-3 w-[min(40vw,560px)] min-w-[280px] resize rounded-xl',
       )}

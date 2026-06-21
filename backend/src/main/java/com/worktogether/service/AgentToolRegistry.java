@@ -42,11 +42,18 @@ public class AgentToolRegistry {
         ArrayNode tools = mapper.createArrayNode();
 
         // --- Lettura (sempre) ---
+        tools.add(tool("get_board",
+                "Restituisce l'albero gerarchico del workspace (EPICA → STORIA → TASK) con gli id, più gli "
+                        + "EVENTI e gli elementi 'orfani'. USALO PRIMA di creare task/storie per sapere dove "
+                        + "collocarli: i TASK vanno sotto una STORIA, le STORIE sotto una EPICA. Il campo "
+                        + "tasksWithoutStory elenca i task che NON compaiono nella Kanban perché privi di storia.",
+                emptyParams()));
         tools.add(tool("list_elements", "Elenca gli elementi del workspace (epiche, storie, task, eventi). Filtri opzionali.",
                 props(p -> {
                     p.set("type", enumProp("Filtra per tipo", "EPICA", "STORIA", "TASK", "EVENTO"));
                     p.set("status", enumProp("Filtra per stato", "DA_FARE", "IN_CORSO", "COMPLETATO", "ARCHIVIATO"));
                     p.set("parentId", strProp("Filtra per id dell'elemento padre"));
+                    p.set("query", strProp("Filtra per testo nel titolo (case-insensitive), utile per trovare l'id di una storia/epica per nome"));
                 }, List.of())));
         tools.add(tool("get_element", "Dettaglio di un elemento dato il suo id.",
                 props(p -> p.set("id", strProp("Id dell'elemento")), List.of("id"))));
@@ -220,6 +227,7 @@ public class AgentToolRegistry {
                 return "ERRORE: argomenti JSON non validi";
             }
             return switch (name) {
+                case "get_board" -> getBoard(wsId, user);
                 case "list_elements" -> listElements(wsId, user, args);
                 case "get_element" -> getElement(wsId, user, args);
                 case "list_files" -> listFiles(wsId, user, args);
@@ -302,21 +310,104 @@ public class AgentToolRegistry {
     // ---- Implementazioni ----
 
     private String listElements(UUID wsId, User user, JsonNode a) {
-        String type = text(a, "type"), status = text(a, "status"), parentId = text(a, "parentId");
+        String type = text(a, "type"), status = text(a, "status"), parentId = text(a, "parentId"), query = text(a, "query");
+        String q = query == null ? null : query.toLowerCase();
+        List<ElementResponse> all = elementService.getElements(wsId, user);
+        // Indice id→titolo per arricchire l'output con il titolo del padre (più leggibile dell'id nudo).
+        Map<String, String> titleById = new HashMap<>();
+        for (ElementResponse e : all) titleById.put(String.valueOf(e.id()), e.title());
+
         List<Map<String, Object>> out = new ArrayList<>();
-        for (ElementResponse e : elementService.getElements(wsId, user)) {
+        for (ElementResponse e : all) {
             if (type != null && !type.equalsIgnoreCase(String.valueOf(e.type()))) continue;
             if (status != null && !status.equalsIgnoreCase(String.valueOf(e.status()))) continue;
             if (parentId != null && (e.parentId() == null || !parentId.equals(e.parentId().toString()))) continue;
+            if (q != null && (e.title() == null || !e.title().toLowerCase().contains(q))) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", e.id());
             m.put("type", e.type());
             m.put("status", e.status());
             m.put("title", e.title());
             m.put("parentId", e.parentId());
+            m.put("parentTitle", e.parentId() == null ? null : titleById.get(e.parentId().toString()));
             out.add(m);
         }
         return json(out);
+    }
+
+    /** Albero Epica→Storia→Task + eventi + orfani: dà all'agente la mappa per collocare correttamente i nuovi elementi. */
+    private String getBoard(UUID wsId, User user) {
+        List<ElementResponse> all = elementService.getElements(wsId, user);
+        // Indicizza i figli per id del padre.
+        Map<String, List<ElementResponse>> childrenOf = new HashMap<>();
+        for (ElementResponse e : all) {
+            String pid = e.parentId() == null ? null : e.parentId().toString();
+            childrenOf.computeIfAbsent(pid, k -> new ArrayList<>()).add(e);
+        }
+        java.util.function.Function<ElementResponse, Map<String, Object>> node = e -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", e.id());
+            m.put("title", e.title());
+            m.put("status", e.status());
+            return m;
+        };
+
+        List<Map<String, Object>> epics = new ArrayList<>();
+        List<Map<String, Object>> storiesWithoutEpic = new ArrayList<>();
+        List<Map<String, Object>> tasksWithoutStory = new ArrayList<>();
+        List<Map<String, Object>> events = new ArrayList<>();
+
+        for (ElementResponse e : all) {
+            String t = String.valueOf(e.type());
+            switch (t) {
+                case "EPICA" -> {
+                    Map<String, Object> epic = node.apply(e);
+                    List<Map<String, Object>> stories = new ArrayList<>();
+                    for (ElementResponse s : childrenOf.getOrDefault(e.id().toString(), List.of())) {
+                        if (!"STORIA".equals(String.valueOf(s.type()))) continue;
+                        Map<String, Object> story = node.apply(s);
+                        List<Map<String, Object>> tasks = new ArrayList<>();
+                        for (ElementResponse tk : childrenOf.getOrDefault(s.id().toString(), List.of())) {
+                            if ("TASK".equals(String.valueOf(tk.type()))) tasks.add(node.apply(tk));
+                        }
+                        story.put("tasks", tasks);
+                        stories.add(story);
+                    }
+                    epic.put("stories", stories);
+                    epics.add(epic);
+                }
+                case "STORIA" -> {
+                    boolean hasEpicParent = e.parentId() != null
+                            && all.stream().anyMatch(p -> p.id().equals(e.parentId()) && "EPICA".equals(String.valueOf(p.type())));
+                    if (!hasEpicParent) {
+                        Map<String, Object> story = node.apply(e);
+                        List<Map<String, Object>> tasks = new ArrayList<>();
+                        for (ElementResponse tk : childrenOf.getOrDefault(e.id().toString(), List.of())) {
+                            if ("TASK".equals(String.valueOf(tk.type()))) tasks.add(node.apply(tk));
+                        }
+                        story.put("tasks", tasks);
+                        storiesWithoutEpic.add(story);
+                    }
+                }
+                case "TASK" -> {
+                    boolean hasStoryParent = e.parentId() != null
+                            && all.stream().anyMatch(p -> p.id().equals(e.parentId()) && "STORIA".equals(String.valueOf(p.type())));
+                    if (!hasStoryParent) tasksWithoutStory.add(node.apply(e));
+                }
+                case "EVENTO" -> {
+                    Map<String, Object> ev = node.apply(e);
+                    ev.put("startDate", e.startDate());
+                    events.add(ev);
+                }
+                default -> { }
+            }
+        }
+        Map<String, Object> board = new LinkedHashMap<>();
+        board.put("epics", epics);
+        board.put("storiesWithoutEpic", storiesWithoutEpic);
+        board.put("tasksWithoutStory", tasksWithoutStory);
+        board.put("events", events);
+        return json(board);
     }
 
     private String getElement(UUID wsId, User user, JsonNode a) {
@@ -347,6 +438,21 @@ public class AgentToolRegistry {
     private String createElement(UUID wsId, User user, JsonNode a) throws Exception {
         if (text(a, "title") == null || text(a, "type") == null) {
             return "ERRORE: 'title' e 'type' sono obbligatori";
+        }
+        // Guardrail di collocazione: un TASK senza STORIA padre diventa orfano e NON compare nella Kanban.
+        // Invece di crearlo orfano, restituiamo le storie disponibili così l'agente ritenta con il parentId giusto.
+        if ("TASK".equalsIgnoreCase(text(a, "type")) && uuid(a, "parentId") == null) {
+            List<Map<String, Object>> stories = elementService.getElements(wsId, user).stream()
+                    .filter(e -> "STORIA".equals(String.valueOf(e.type())))
+                    .map(e -> Map.<String, Object>of("id", e.id(), "title", e.title()))
+                    .toList();
+            if (stories.isEmpty()) {
+                return "ERRORE: un TASK deve stare sotto una STORIA per comparire nella Kanban, ma non esiste "
+                        + "ancora nessuna storia. Crea prima una STORIA (create_element type=STORIA), poi il task "
+                        + "passando il suo id in parentId.";
+            }
+            return "ERRORE: un TASK richiede il parentId di una STORIA per comparire nella Kanban. Riprova "
+                    + "scegliendo parentId tra queste storie: " + json(stories);
         }
         boolean isEvent = "EVENTO".equalsIgnoreCase(text(a, "type"));
         if (isEvent) {

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -67,16 +67,27 @@ function TreeNode({ element, elements, depth = 0 }: {
   )
 }
 
-export function Sidebar() {
+export function Sidebar({ mobileOpen = false }: { mobileOpen?: boolean }) {
   const navigate = useNavigate()
   const location = useLocation()
   const { user, logout } = useAuthStore()
   const { current: workspace, setCurrent } = useWorkspaceStore()
 
-  const { data: workspaces = [] } = useQuery<Workspace[]>({
+  const { data: workspaces = [], isSuccess: workspacesLoaded } = useQuery<Workspace[]>({
     queryKey: ['workspaces'],
     queryFn: workspacesApi.list,
   })
+
+  // Il workspace "attivo" vale solo se l'utente ne è davvero membro. `current` è persistito in
+  // localStorage e potrebbe puntare a un workspace da cui è stato rimosso (o a quello di un altro
+  // utente che ha usato lo stesso browser): in quei casi il menu non va mostrato. Finché la lista
+  // non è caricata ci fidiamo di `current` per evitare uno sfarfallio del menu al primo render.
+  const isMember = !!workspace && workspaces.some(w => w.id === workspace.id)
+  const showWorkspaceNav = !!workspace && (!workspacesLoaded || isMember)
+  // Una volta confermato che non è membro, ripulisce lo stato persistito (in effect, non in render).
+  useEffect(() => {
+    if (workspacesLoaded && workspace && !isMember) setCurrent(null)
+  }, [workspacesLoaded, workspace, isMember, setCurrent])
 
   const { data: elements = [] } = useQuery<Element[]>({
     queryKey: ['elements', workspace?.id],
@@ -133,7 +144,16 @@ export function Sidebar() {
   const wsBase = workspace ? `/workspace/${workspace.id}` : ''
 
   return (
-    <aside className="flex h-screen w-60 shrink-0 flex-col border-r bg-sidebar">
+    <aside
+      className={cn(
+        'flex h-screen w-60 shrink-0 flex-col border-r bg-sidebar',
+        // Mobile: drawer fuori schermo, scorre dentro quando aperto e sta sopra il backdrop (z-40).
+        'fixed inset-y-0 left-0 z-50 transition-transform duration-200',
+        mobileOpen ? 'translate-x-0' : '-translate-x-full',
+        // Desktop (≥ md): sidebar statica sempre visibile, nessuna traslazione.
+        'md:static md:z-auto md:translate-x-0',
+      )}
+    >
       {/* Workspace switcher */}
       <div className="p-3 border-b border-sidebar-border">
         <DropdownMenu>
@@ -186,7 +206,7 @@ export function Sidebar() {
       </nav>
 
       {/* Main nav */}
-      {workspace && (
+      {showWorkspaceNav && (
         <nav className="flex flex-col gap-0.5 p-2 border-b border-sidebar-border">
           {navLink(`${wsBase}/kanban`, <KanbanSquare className="h-4 w-4" />, 'Kanban', 'kanban')}
           {navLink(`${wsBase}/roadmap`, <GanttChartSquare className="h-4 w-4" />, 'Roadmap', 'roadmap')}
@@ -200,7 +220,7 @@ export function Sidebar() {
       )}
 
       {/* Project tree */}
-      {workspace && (
+      {showWorkspaceNav && (
         <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
           <p className="px-2 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wide">
             Progetti

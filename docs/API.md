@@ -50,6 +50,12 @@ membri, impostazioni, utenti, altre chiavi, AI, chat/voce, presenza, email, né 
 | POST | `/reset-password` | 👤 | Cambia password dell'utente loggato |
 | POST | `/logout` | 👤 | Invalida il refresh token |
 
+> **Sessione singola (v1.2)**: a ogni `login` la "versione di sessione" dell'utente viene incrementata
+> e inclusa negli access token (claim `sv`). Gli access token emessi prima (su altri dispositivi)
+> hanno una versione diversa e vengono **rifiutati immediatamente** (401); essendo già stati eliminati
+> anche i refresh token, quelle sessioni vengono disconnesse. In pratica: **un solo accesso attivo per
+> account alla volta**.
+
 ## 3. Utenti — `/api/users`
 | Metodo | Endpoint | Accesso | Note |
 |--------|----------|---------|------|
@@ -120,6 +126,7 @@ Corpo (`ElementRequest`):
 | POST | `/folders` | 👤 · 🔑 `drive:write` | `{ name, parentId? }` |
 | PATCH | `/folders/{id}/rename` | 👤 · 🔑 `drive:write` | `{ name }` |
 | PATCH | `/folders/{id}/move` | 👤 · 🔑 `drive:write` | `{ targetFolderId }` (null = radice) |
+| PATCH | `/folders/{id}/permission` | 👤 · 🔑 `drive:write` | `{ editableByAll }` — sola lettura **in cascata** su file e sottocartelle (solo proprietario/admin) |
 | DELETE | `/folders/{id}` | 👤 · 🔑 `drive:write` | Solo se vuota |
 | GET | `/files?folderId=` | 👤 · 🔑 `drive:read` | File nella cartella |
 | POST | `/files?folderId=` | 👤 · 🔑 `drive:write` | Upload (multipart, campo `file`) |
@@ -129,11 +136,15 @@ Corpo (`ElementRequest`):
 | POST | `/files/{id}/copy` | 👤 · 🔑 `drive:write` | Duplica |
 | DELETE | `/files/{id}` | 👤 · 🔑 `drive:write` | Elimina |
 | PUT | `/files/{id}/content` | 👤 · 🔑 `drive:write` | Salva testo `{ content }` |
+| PATCH | `/files/{id}/permission` | 👤 · 🔑 `drive:write` | `{ editableByAll }` — sola lettura/modificabile (solo proprietario/admin) |
 | POST | `/files/{id}/lock` | 👤 · 🔑 `drive:write` | Acquisisce il lock di modifica |
 | DELETE | `/files/{id}/lock` | 👤 · 🔑 `drive:write` | Rilascia il lock |
 
-> Spostare/rinominare/eliminare file e cartelle: solo **proprietario** o **admin**. Copiare e
-> caricare: qualsiasi non-guest.
+> **File** (v1.1): permesso **per-file** `editableByAll` (default true). Se true, qualsiasi membro non
+> guest può modificare/spostare/rinominare/eliminare il file; se false (sola lettura) solo
+> **proprietario** o **admin**. Il flag si cambia solo da proprietario/admin (`PATCH …/permission`).
+> **Cartelle**: spostare/rinominare/eliminare resta solo **proprietario** o **admin**. Caricare file e
+> **intere cartelle** e copiare: qualsiasi non-guest.
 
 ## 7. Tag — `/api/workspaces/{wsId}/tags`
 | Metodo | Endpoint | Accesso | Note |
@@ -199,7 +210,15 @@ configurato risponde **503**. Vedi [docs/REALTIME_VOCE.md](./docs/REALTIME_VOCE.
 | Metodo | Endpoint | Accesso | Note |
 |--------|----------|---------|------|
 | POST | `/heartbeat` | 👤 | Heartbeat (`{ channelId? }` = stanza vocale corrente) → snapshot online |
+| POST | `/offline` | 👤 | Uscita immediata dall'app (beacon `pagehide`): rimuove subito l'utente dalla presenza |
 | GET | `` | 👤 | Snapshot della presenza del workspace |
+
+## 12b. Webhook LiveKit — `POST /api/livekit/webhook` (v1.1)
+
+Endpoint **pubblico** (nessun token applicativo) ma autenticato per **firma**: chiamato dal media
+server LiveKit, non dai client. Verifica JWT HS256 + hash SHA-256 del corpo (`LiveKitService.verifyWebhook`).
+Su `participant_left` azzera lo stato "in chiamata" del partecipante. Config in
+`livekit/livekit.yaml` → sezione `webhook`. Vedi [docs/REALTIME_VOCE.md](./docs/REALTIME_VOCE.md) §7.
 
 ---
 
@@ -263,7 +282,12 @@ members[], lastMessage?, unreadCount, …`
 ## 16. WebSocket (realtime)
 
 - Endpoint: `/ws` (SockJS) · topic: `/topic/workspace/{workspaceId}` (broadcast).
-- Eventi: `ELEMENT_*`, `MESSAGE_CREATED`, `CHANNEL_*`, `CHANNEL_READ`, `TYPING`, `PRESENCE`.
+- Eventi: `ELEMENT_*`, `MESSAGE_CREATED`, `CHANNEL_*`, `CHANNEL_READ`, `TYPING`, `PRESENCE`,
+  `DRIVE_CHANGED` (mutazioni del Drive), `AI_MESSAGE` (chat condivise di Akari) — v1.1;
+  `TAG_CHANGED` (tag creati/modificati/eliminati) — v1.2.
+- **Azioni dell'agente AI**: i tool di Akari girano sugli stessi servizi interni delle rotte REST
+  (`ElementService`, `DriveService`, `TagService`), quindi emettono gli stessi eventi
+  (`ELEMENT_*`, `DRIVE_CHANGED`, `TAG_CHANGED`): la UI si aggiorna in tempo reale anche per le azioni AI.
 - Le scritture passano da REST; il WebSocket è solo broadcast e non è autenticato a livello STOMP.
   Dettagli in [docs/REALTIME_VOCE.md](./docs/REALTIME_VOCE.md).
 

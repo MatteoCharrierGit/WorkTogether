@@ -29,7 +29,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String token = extractToken(request);
         if (token != null && jwtUtil.isValid(token)) {
             UUID userId = jwtUtil.extractUserId(token);
+            int tokenVersion = jwtUtil.extractTokenVersion(token);
             userRepository.findById(userId).ifPresent(user -> {
+                // Sessione singola: un token con versione diversa da quella corrente appartiene a una
+                // sessione superata (l'utente ha fatto login altrove) ⇒ non autenticare ⇒ 401.
+                if (tokenVersion != user.getTokenVersion()) return;
                 var auth = new UsernamePasswordAuthenticationToken(
                         user,
                         null,

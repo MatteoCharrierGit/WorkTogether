@@ -102,6 +102,9 @@ interface VoiceSessionValue {
   screenShareAllowed: boolean
   participants: VoiceParticipant[]
   muted: boolean
+  // Volume di riproduzione per partecipante remoto (identity → 0..1; 0 = mutato localmente).
+  participantVolumes: Record<string, number>
+  setParticipantVolume: (identity: string, volume: number) => void
   isSharing: boolean
   activeScreen: ActiveScreen | null
   devices: MediaDeviceInfo[]
@@ -140,6 +143,10 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const [screenShareAllowed, setScreenShareAllowed] = useState(false)
   const [participants, setParticipants] = useState<VoiceParticipant[]>([])
   const [muted, setMuted] = useState(false)
+  // Volume per partecipante (controllo locale: non influisce sugli altri client).
+  const [participantVolumes, setParticipantVolumes] = useState<Record<string, number>>({})
+  const volumesRef = useRef<Record<string, number>>({})
+  volumesRef.current = participantVolumes
   const [isSharing, setIsSharing] = useState(false)
   const [activeScreen, setActiveScreen] = useState<ActiveScreen | null>(null)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
@@ -184,6 +191,9 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       const u = resolve(p.identity)
       const mic = p.getTrackPublication(Track.Source.Microphone)
       const sc = p.getTrackPublication(Track.Source.ScreenShare)
+      // Riapplica il volume scelto localmente: nuove sottoscrizioni/riconnessioni ripartirebbero a 1.
+      const vol = volumesRef.current[p.identity]
+      if (vol !== undefined) { try { p.setVolume(vol) } catch { /* nessuna traccia audio ancora */ } }
       parts.push({
         identity: p.identity, name: u.name, avatar: u.avatar,
         speaking: p.isSpeaking, muted: mic?.isMuted ?? true, isLocal: false,
@@ -221,6 +231,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     setStatus('idle'); setReconnecting(false); setWsId(null); setChannelId(null); setChannelName(null)
     setScreenShareAllowed(false); setParticipants([]); setMuted(false)
     setIsSharing(false); setActiveScreen(null); setDevices([]); setActiveDeviceId('')
+    setParticipantVolumes({})
   }, [])
 
   const join = useCallback(async (p: JoinParams) => {
@@ -299,6 +310,14 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     await room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled)
     sync()
   }, [sync])
+
+  // Imposta il volume di ascolto di un partecipante remoto (solo lato locale). 0 = mutato per me.
+  const setParticipantVolume = useCallback((identity: string, volume: number) => {
+    const v = Math.max(0, Math.min(1, volume))
+    setParticipantVolumes(prev => ({ ...prev, [identity]: v }))
+    const p = roomRef.current?.remoteParticipants.get(identity)
+    if (p) { try { p.setVolume(v) } catch { /* la traccia audio potrebbe non esserci ancora */ } }
+  }, [])
 
   const switchMic = useCallback(async (deviceId: string) => {
     const room = roomRef.current
@@ -379,10 +398,11 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<VoiceSessionValue>(() => ({
     status, reconnecting, wsId, channelId, channelName, screenShareAllowed,
-    participants, muted, isSharing, activeScreen, devices, activeDeviceId,
+    participants, muted, participantVolumes, setParticipantVolume, isSharing, activeScreen, devices, activeDeviceId,
     screenViewerOpen, setScreenViewerOpen, screenSettings, setScreenSettings,
     join, leave, toggleMute, switchMic, startScreenShare, stopScreenShare, attachScreen,
   }), [status, reconnecting, wsId, channelId, channelName, screenShareAllowed, participants, muted,
+    participantVolumes, setParticipantVolume,
     isSharing, activeScreen, devices, activeDeviceId, screenViewerOpen, screenSettings, setScreenSettings,
     join, leave, toggleMute, switchMic, startScreenShare, stopScreenShare, attachScreen])
 

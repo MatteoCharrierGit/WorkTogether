@@ -8,6 +8,7 @@ import com.worktogether.dto.request.TagRequest;
 import com.worktogether.dto.response.TagResponse;
 import com.worktogether.repository.TagRepository;
 import com.worktogether.repository.WorkspaceRepository;
+import com.worktogether.websocket.WorkspaceEventPublisher;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -25,6 +27,7 @@ public class TagService {
     private final TagRepository tagRepository;
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceService workspaceService;
+    private final WorkspaceEventPublisher eventPublisher;
 
     @Transactional
     public List<TagResponse> getTags(UUID workspaceId, User user) {
@@ -46,7 +49,9 @@ public class TagService {
                 .name(req.name())
                 .color(req.color() != null ? req.color() : "#94a3b8")
                 .build();
-        return TagResponse.from(tagRepository.save(tag));
+        TagResponse response = TagResponse.from(tagRepository.save(tag));
+        eventPublisher.publish(workspaceId, "TAG_CHANGED", Map.of("id", response.id()));
+        return response;
     }
 
     @Transactional
@@ -59,7 +64,9 @@ public class TagService {
         }
         tag.setName(req.name());
         if (req.color() != null) tag.setColor(req.color());
-        return TagResponse.from(tagRepository.save(tag));
+        TagResponse response = TagResponse.from(tagRepository.save(tag));
+        eventPublisher.publish(workspaceId, "TAG_CHANGED", Map.of("id", response.id()));
+        return response;
     }
 
     @Transactional
@@ -71,5 +78,6 @@ public class TagService {
             throw new EntityNotFoundException("Tag not found in workspace");
         }
         tagRepository.delete(tag);
+        eventPublisher.publish(workspaceId, "TAG_CHANGED", Map.of("id", tagId));
     }
 }

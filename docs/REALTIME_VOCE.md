@@ -22,6 +22,20 @@
 Lato frontend: una singola connessione STOMP condivisa (`lib/websocket.ts`) con **più handler** per
 workspace (Layout, ChatPage, PresenceManager).
 
+> **⚠️ Reverse proxy (ops, fix v1.2)** — perché i messaggi arrivino **in tempo reale** e non "un giro
+> indietro" (li vedo solo dopo aver inviato qualcosa io), il proxy davanti a `/ws/` deve:
+> 1. **abilitare l'upgrade WebSocket**: `proxy_http_version 1.1`, `Upgrade $http_upgrade`,
+>    `Connection $connection_upgrade` (header condizionale via `map $http_upgrade $connection_upgrade`);
+> 2. quando `proxy_pass` usa un **host variabile** (es. `http://$wt_frontend:80`), **NON** aggiungere
+>    una URI (`/ws/`): la forma con variabile + URI gestisce male l'upgrade → SockJS ripiega su un
+>    trasporto HTTP che viene bufferizzato (causa esatta del "messaggio un giro indietro");
+> 3. **`proxy_buffering off`** su `/ws/` (e su `/api/` per lo streaming SSE dell'agente AI).
+>
+> Vale per **entrambi** gli hop (nginx esterno `global_nginx` → nginx del frontend → backend). Verifica:
+> `curl -ki --http1.1 -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13"
+> -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" https://<dominio>/ws/websocket` ⇒ deve rispondere
+> **`101 Switching Protocols`** (non 200/400). E `GET /ws/info` ⇒ `{"websocket":true,…}`.
+
 ## 2. Canali: DM, gruppi, stanze
 
 Un'unica astrazione **`Channel`** con `type`:
@@ -123,3 +137,40 @@ docker compose --profile media up -d --build
 Admin → **Stanze**: crea/modifica una ROOM e attiva **"Voce abilitata"** (e, opzionalmente,
 **"Condivisione schermo"**, che richiede la voce). Lato dati corrisponde a `channels.voice_enabled` /
 `channels.screen_share_enabled`.
+
+## 7. Novità v1.1
+
+### Eventi realtime aggiuntivi
+- **`DRIVE_CHANGED`** — emesso da `DriveService` su ogni mutazione del Drive (upload, cartelle,
+  spostamenti, rinomine, eliminazioni, salvataggio editor). Il frontend (`Layout`) invalida le query
+  `drive-folders`/`drive-files`, così il Drive si aggiorna senza refresh.
+- **`AI_MESSAGE`** — emesso da `AiChatService` per le conversazioni **CONDIVISE** di Akari (lo stream
+  SSE raggiunge solo chi invia; gli altri partecipanti ri-fetchano i messaggi). `AssistantPage` si
+  sottoscrive; chi sta inviando ignora l'evento per non interferire con lo stream locale.
+- **`TAG_CHANGED`** (v1.2) — emesso da `TagService` su create/update/delete tag; `Layout` invalida
+  `tags` ed `elements` (le card mostrano i tag).
+
+> **Azioni dell'agente AI in tempo reale**: i tool di Akari usano gli stessi servizi interni delle
+> rotte REST, quindi ogni sua azione (creare un task, un file, un tag, …) emette l'evento corrispondente
+> (`ELEMENT_*`, `DRIVE_CHANGED`, `TAG_CHANGED`) e la UI degli altri client si aggiorna senza refresh.
+
+### Disconnessione robusta dalle call
+Due livelli complementari (vedi §4 Presenza):
+1. **Uscita "pulita"** (chiusura tab / refresh / navigazione esterna): `PresenceManager` intercetta
+   `pagehide` e chiama `POST …/presence/offline` con `fetch keepalive` (autenticato col Bearer, a
+   differenza di `sendBeacon`), oltre a `voice.leave()` che chiude la room LiveKit. Lo stato
+   "online/in chiamata" sparisce subito, senza attendere i ~30s del TTL dell'heartbeat.
+2. **Uscita "sporca"** (crash, kill del processo, perdita rete — dove `pagehide` non scatta): è
+   **autorevole** il media server. LiveKit invia un **webhook** a `POST /api/livekit/webhook`
+   (`LiveKitWebhookController`); su `participant_left` il backend mappa `room=channelId → workspaceId`
+   e azzera lo stato "in chiamata" (`PresenceService.clearCall`). Il webhook è verificato per **firma**
+   (`LiveKitService.verifyWebhook`: JWT HS256 + hash SHA-256 del corpo). Config in `livekit/livekit.yaml`
+   sezione `webhook` (`api_key` = `LIVEKIT_API_KEY`, url = `http://backend:8080/api/livekit/webhook`):
+   **il container `livekit` va riavviato** dopo aver toccato quel file.
+
+### Controlli audio per-utente (solo lato locale)
+Dalla `VoiceBar`, cliccando l'avatar di un partecipante remoto si apre un menù con **muta** e
+**slider del volume**. Implementazione in `VoiceSession`: mappa `participantVolumes` (identity → 0..1)
+applicata via `RemoteParticipant.setVolume` di LiveKit; ri-applicata in `sync()` a ogni
+riconnessione/nuova traccia e azzerata all'uscita. È una preferenza **locale**: non influisce su come
+gli altri sentono quel partecipante.
