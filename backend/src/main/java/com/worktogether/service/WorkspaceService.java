@@ -113,6 +113,9 @@ public class WorkspaceService {
      * - l'utente perde il workspace dalla propria vista (membership cancellata).
      * I riferimenti storici globali (created_by/uploaded_by/author) restano validi: l'utente
      * continua a esistere a livello di sistema, quindi nessun record orfano.
+     * Se questa era l'ultima membership dell'utente, display_name/email vengono liberati
+     * (rinominati con un suffisso univoco) così l'username può essere riusato per un nuovo account,
+     * senza cancellare la riga e quindi senza rompere i riferimenti storici.
      * Non è consentito rimuovere l'ultimo ADMIN del workspace.
      */
     @Transactional
@@ -139,9 +142,26 @@ public class WorkspaceService {
 
         memberRepository.delete(member);
 
+        if (memberRepository.countByUserId(userId) == 0) {
+            freeDisplayNameAndEmail(userId);
+        }
+
         // Notifica realtime DOPO il commit: il client dell'utente rimosso esce subito dal
         // workspace e, rifacendo la lista, legge lo stato già aggiornato (niente race).
         publishAfterCommit(workspaceId, "MEMBER_REMOVED", Map.of("userId", userId.toString()));
+    }
+
+    // Suffisso basato sull'id (sempre univoco per costruzione) per liberare display_name/email
+    // senza rischiare collisioni con altri utenti rinominati nello stesso momento.
+    private void freeDisplayNameAndEmail(UUID userId) {
+        userRepository.findById(userId).ifPresent(orphan -> {
+            String suffix = "__removed_" + userId;
+            orphan.setDisplayName(orphan.getDisplayName() + suffix);
+            if (orphan.getEmail() != null) {
+                orphan.setEmail(orphan.getEmail() + suffix);
+            }
+            userRepository.save(orphan);
+        });
     }
 
     @Transactional
