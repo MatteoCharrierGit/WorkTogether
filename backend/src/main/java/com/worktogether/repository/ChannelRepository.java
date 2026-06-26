@@ -59,6 +59,9 @@ public interface ChannelRepository extends JpaRepository<Channel, UUID> {
 
     List<Channel> findByWorkspaceIdAndType(UUID workspaceId, ChannelType type);
 
+    // Canale chat dedicato a una sprint (type = SPRINT).
+    java.util.Optional<Channel> findBySprintId(UUID sprintId);
+
     // Tutti i canali del workspace (per l'export/backup).
     List<Channel> findByWorkspaceId(UUID workspaceId);
 }

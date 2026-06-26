@@ -80,6 +80,36 @@ export interface Element {
   tags: Tag[]
   assignees: User[]
   progress?: number
+  sprintId?: string
+  completedAt?: string
+  blocked?: boolean
+}
+
+export type SprintStatus = 'PLANNED' | 'ACTIVE' | 'CLOSED'
+export type SprintCarryOver = 'BACKLOG' | 'NEXT_SPRINT'
+
+export interface Sprint {
+  id: string
+  workspaceId: string
+  name: string
+  goal?: string
+  startDate?: string
+  endDate?: string
+  actualStartAt?: string
+  actualEndAt?: string
+  status: SprintStatus
+  retrospectiveMd?: string
+  position: number
+  createdBy?: string
+  createdAt: string
+  taskTotal: number
+  taskCompleted: number
+  channelId?: string
+}
+
+export interface SprintDetail {
+  sprint: Sprint | null
+  tasks: Element[]
 }
 
 export interface Member {
@@ -206,7 +236,7 @@ export type WsEventType =
   | 'ELEMENT_CREATED' | 'ELEMENT_UPDATED' | 'ELEMENT_DELETED'
   | 'MESSAGE_CREATED' | 'CHANNEL_CREATED' | 'CHANNEL_UPDATED' | 'CHANNEL_DELETED'
   | 'CHANNEL_READ' | 'TYPING' | 'PRESENCE' | 'DRIVE_CHANGED' | 'AI_MESSAGE' | 'TAG_CHANGED'
-  | 'WORKSPACE_DELETED' | 'MEMBER_REMOVED'
+  | 'WORKSPACE_DELETED' | 'MEMBER_REMOVED' | 'SPRINT_CHANGED'
 
 export interface WsEvent {
   type: WsEventType
@@ -216,7 +246,7 @@ export interface WsEvent {
 
 // --- Chat / Stanze (funzioni Discord-like) ---
 
-export type ChannelType = 'DM' | 'GROUP' | 'ROOM'
+export type ChannelType = 'DM' | 'GROUP' | 'ROOM' | 'SPRINT'
 
 export interface ChannelMemberDto {
   userId: string

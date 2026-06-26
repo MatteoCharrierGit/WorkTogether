@@ -119,6 +119,25 @@ export const elementsApi = {
   delete: (wsId: string, id: string) => api.delete(`/workspaces/${wsId}/elements/${id}`),
 }
 
+// Sprint
+export const sprintApi = {
+  list: (wsId: string) => api.get(`/workspaces/${wsId}/sprints`).then(r => r.data),
+  active: (wsId: string) => api.get(`/workspaces/${wsId}/sprints/active`).then(r => r.data),
+  get: (wsId: string, id: string) => api.get(`/workspaces/${wsId}/sprints/${id}`).then(r => r.data),
+  create: (wsId: string, data: { name: string; goal?: string; startDate?: string; endDate?: string }) =>
+    api.post(`/workspaces/${wsId}/sprints`, data).then(r => r.data),
+  update: (wsId: string, id: string, data: object) =>
+    api.patch(`/workspaces/${wsId}/sprints/${id}`, data).then(r => r.data),
+  delete: (wsId: string, id: string) => api.delete(`/workspaces/${wsId}/sprints/${id}`),
+  start: (wsId: string, id: string) => api.post(`/workspaces/${wsId}/sprints/${id}/start`).then(r => r.data),
+  close: (wsId: string, id: string, data: { retrospective?: string; carryOver?: string; targetSprintId?: string }) =>
+    api.post(`/workspaces/${wsId}/sprints/${id}/close`, data).then(r => r.data),
+  addTask: (wsId: string, id: string, elementId: string) =>
+    api.post(`/workspaces/${wsId}/sprints/${id}/tasks/${elementId}`),
+  removeTask: (wsId: string, id: string, elementId: string) =>
+    api.delete(`/workspaces/${wsId}/sprints/${id}/tasks/${elementId}`),
+}
+
 // Tags
 export const tagsApi = {
   list: (wsId: string) => api.get(`/workspaces/${wsId}/tags`).then(r => r.data),
@@ -151,6 +170,17 @@ export const driveApi = {
     api.patch(`/workspaces/${wsId}/drive/folders/${folderId}/move`, { targetFolderId: targetFolderId ?? null }).then(r => r.data),
   renameFolder: (wsId: string, folderId: string, name: string) =>
     api.patch(`/workspaces/${wsId}/drive/folders/${folderId}/rename`, { name }).then(r => r.data),
+  downloadFolder: async (wsId: string, folderId: string, name: string) => {
+    const res = await api.get(`/workspaces/${wsId}/drive/folders/${folderId}/download`, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${name}.zip`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  },
   listFiles: (wsId: string, folderId?: string) =>
     api.get(`/workspaces/${wsId}/drive/files`, { params: folderId ? { folderId } : {} }).then(r => r.data),
   upload: (wsId: string, file: File, folderId?: string, onProgress?: (percent: number) => void) => {

@@ -343,6 +343,16 @@ export default function DrivePage() {
     }
   }
 
+  const handleDownloadFolder = async (f: FolderType) => {
+    if (!wsId) return
+    try {
+      toast('Preparazione dello ZIP…')
+      await driveApi.downloadFolder(wsId, f.id, f.name)
+    } catch {
+      toast('Errore nel download della cartella', 'destructive')
+    }
+  }
+
   const handleDeleteFile = async (f: DriveFile) => {
     if (!wsId) return
     if (!confirm(`Eliminare "${f.filename}"?`)) return
@@ -561,34 +571,40 @@ export default function DrivePage() {
                     </span>
                   )}
                 </button>
-                {canMoveFolder(f) && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent opacity-0 group-hover:opacity-100 transition"
-                        title="Azioni"
-                      >
-                        <MoreVertical className="h-4 w-4" />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => openRename('folder', f.id, f.name)}>
-                        <Pencil className="h-4 w-4" /> Rinomina
-                      </DropdownMenuItem>
-                      {canSetFolderPermission(f) && (
-                        <DropdownMenuItem onClick={() => handleToggleFolderPermission(f)}>
-                          {f.editableByAll === false
-                            ? <><LockOpen className="h-4 w-4" /> Rendi modificabile (cartella + contenuti)</>
-                            : <><Lock className="h-4 w-4" /> Sola lettura (cartella + contenuti)</>}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent opacity-0 group-hover:opacity-100 transition"
+                      title="Azioni"
+                    >
+                      <MoreVertical className="h-4 w-4" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => handleDownloadFolder(f)}>
+                      <Download className="h-4 w-4" /> Scarica (ZIP)
+                    </DropdownMenuItem>
+                    {canMoveFolder(f) && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => openRename('folder', f.id, f.name)}>
+                          <Pencil className="h-4 w-4" /> Rinomina
                         </DropdownMenuItem>
-                      )}
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={() => handleDeleteFolder(f)} className="text-destructive focus:text-destructive">
-                        <Trash2 className="h-4 w-4" /> Elimina
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
+                        {canSetFolderPermission(f) && (
+                          <DropdownMenuItem onClick={() => handleToggleFolderPermission(f)}>
+                            {f.editableByAll === false
+                              ? <><LockOpen className="h-4 w-4" /> Rendi modificabile (cartella + contenuti)</>
+                              : <><Lock className="h-4 w-4" /> Sola lettura (cartella + contenuti)</>}
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => handleDeleteFolder(f)} className="text-destructive focus:text-destructive">
+                          <Trash2 className="h-4 w-4" /> Elimina
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             ))}
 

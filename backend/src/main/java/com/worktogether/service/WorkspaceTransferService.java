@@ -99,6 +99,9 @@ public class WorkspaceTransferService {
             channels = new ArrayList<>();
             int i = 0;
             for (Channel c : channelRepository.findByWorkspaceId(workspaceId)) {
+                // Le chat di sprint non vengono esportate: le sprint non fanno parte del backup,
+                // quindi il canale risulterebbe orfano nella nuova workspace.
+                if (c.getType() == ChannelType.SPRINT) continue;
                 String ref = "c" + (i++);
                 List<String> memberEmails = channelMemberRepository.findByChannelId(c.getId()).stream()
                         .map(m -> m.getUser().getEmail()).toList();

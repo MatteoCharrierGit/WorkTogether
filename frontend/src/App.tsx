@@ -23,6 +23,7 @@ const SettingsPage = lazy(() => import('@/pages/SettingsPage'))
 const DrivePage = lazy(() => import('@/pages/DrivePage'))
 const AssistantPage = lazy(() => import('@/pages/AssistantPage'))
 const ChatPage = lazy(() => import('@/pages/ChatPage'))
+const SprintPage = lazy(() => import('@/pages/SprintPage'))
 const MailPage = lazy(() => import('@/pages/MailPage'))
 
 const queryClient = new QueryClient({
@@ -57,6 +58,7 @@ export default function App() {
                 <Route path="/workspace/:wsId/drive" element={<DrivePage />} />
                 <Route path="/workspace/:wsId/assistant" element={<AssistantPage />} />
                 <Route path="/workspace/:wsId/chat" element={<ChatPage />} />
+                <Route path="/workspace/:wsId/sprint" element={<SprintPage />} />
                 <Route path="/workspace/:wsId" element={<WorkspaceHomePage />} />
                 <Route path="/workspace/:wsId/kanban" element={<KanbanPage />} />
                 <Route path="/workspace/:wsId/roadmap" element={<RoadmapPage />} />

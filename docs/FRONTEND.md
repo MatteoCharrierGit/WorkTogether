@@ -53,6 +53,7 @@ Route pubbliche: `/login`, `/force-reset`. Tutto il resto è dietro `ProtectedRo
 | `/workspace/:wsId/drive` | `DrivePage` |
 | `/workspace/:wsId/assistant` | `AssistantPage` (Akari) |
 | `/workspace/:wsId/chat` | `ChatPage` (DM/gruppi/stanze/voce) |
+| `/workspace/:wsId/sprint` | `SprintPage` (Planning / Sprint attiva / Archivio) |
 | `/workspace/:wsId/mail` | `MailPage` (solo admin) |
 | `/workspace/:wsId/admin` | `AdminPage` |
 
@@ -135,3 +136,16 @@ Dettagli su token, qualità (audio Opus; screen share 1080p a ~15 fps), presenza
   applica il permesso in cascata; badge "sola lettura" su file e cartelle bloccati.
 - **Sessione singola**: nessuna modifica UI dedicata — quando la sessione viene invalidata altrove,
   l'interceptor axios (401 → refresh fallito) esegue logout e redirect a `/login`.
+
+## 11. Novità v1.3
+
+- **Drive — download cartelle** (`DrivePage`): voce "Scarica (ZIP)" nel menu della cartella, ora
+  disponibile a **tutti i membri** (prima il menu compariva solo a proprietario/admin).
+  `driveApi.downloadFolder` scarica via fetch autenticata (blob → link temporaneo, per portare il Bearer).
+- **Gestione Sprint** (`SprintPage`, `sprintApi`): pagina a 3 tab —
+  **Planning** (crea/modifica/avvia/elimina sprint, solo admin),
+  **Sprint attiva** (header con obiettivo/date/progress bar, mini-board a 3 colonne Backlog/In corso/Completati
+  con badge bloccanti, **timeline** dei completamenti, **chat** della sprint, chiusura admin con scelta
+  carry-over dei task incompleti e retrospettiva) e **Archivio** (sprint chiuse con retrospettiva).
+  La chat riusa `channelsApi` (canale di tipo `SPRINT`). Aggiornamenti realtime via evento `SPRINT_CHANGED`
+  (gestito in `Layout` e in `SprintPage`); voce **Sprint** in `Sidebar`.

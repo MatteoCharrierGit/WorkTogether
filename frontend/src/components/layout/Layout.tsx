@@ -157,11 +157,19 @@ export function Layout() {
         queryClient.invalidateQueries({ queryKey: ['elements'] })
         return
       }
+      if (ev.type === 'SPRINT_CHANGED') {
+        queryClient.invalidateQueries({ queryKey: ['sprints'] })
+        queryClient.invalidateQueries({ queryKey: ['sprint-active'] })
+        return
+      }
       queryClient.invalidateQueries({ queryKey: ['elements'] })
       queryClient.invalidateQueries({ queryKey: ['element'] })
       queryClient.invalidateQueries({ queryKey: ['my-tasks'] })
       queryClient.invalidateQueries({ queryKey: ['drive-folders'] })
       queryClient.invalidateQueries({ queryKey: ['drive-files'] })
+      // Le transizioni di task (status/blocked/sprint) si riflettono anche sulle viste sprint.
+      queryClient.invalidateQueries({ queryKey: ['sprints'] })
+      queryClient.invalidateQueries({ queryKey: ['sprint-active'] })
     })
     return unsub
   }, [workspaceId, queryClient, meId, navigate])

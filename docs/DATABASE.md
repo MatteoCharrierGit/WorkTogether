@@ -53,7 +53,20 @@
 
 > La presenza online/in-chiamata **non è su DB**: è un registro in-memory in `PresenceService`.
 
-## 2. Storico migration (V1 → V15)
+### Sprint
+- **sprints** — `workspace_id, name, goal, start_date/end_date` (previste), `actual_start_at/actual_end_at`
+  (effettivi), `status (PLANNED|ACTIVE|CLOSED)`, `retrospective_md`, `position`, `created_by`, `version`.
+  Indice unico parziale `uq_sprint_active`: **una sola sprint ACTIVE per workspace** (avvio manuale e singolo).
+- Collegamento Task↔Sprint su **elements**: `sprint_id` (NULL = backlog generale, solo TASK), `completed_at`
+  (per la timeline), `is_blocked` (indicatore bloccante).
+- Chat di sprint: riusa **channels** con `type = SPRINT` e `channels.sprint_id`; accessibile a tutti i
+  membri del workspace (come una ROOM pubblica), creata all'avvio della sprint.
+
+> Avvio/chiusura sprint sono **ADMIN-only**; alla chiusura i task incompleti vanno nel backlog
+> (`sprint_id = NULL`) o in una sprint pianificata successiva, i completati mantengono `sprint_id`.
+> Le sprint **non** rientrano nell'export/backup (la relativa chat SPRINT viene esclusa).
+
+## 2. Storico migration (V1 → V17)
 
 | Versione | Contenuto |
 |----------|-----------|
@@ -72,11 +85,13 @@
 | **V13** `drive_assets_editable` | `drive_files.editable_by_all` (default TRUE): permesso per-file modificabile/sola lettura. |
 | **V14** `user_token_version` | `users.token_version` (default 0): versione di sessione per la policy a sessione singola. |
 | **V15** `folder_editable_by_all` | `folders.editable_by_all` (default TRUE): sola lettura cartella, propagata in cascata. |
+| **V16** `user_management` | `users.email`/`password_hash` nullable, `display_name` univoco (handle di login), supporto OTP/inviti. |
+| **V17** `sprints` | tabella `sprints` (ciclo PLANNED→ACTIVE→CLOSED, indice unico parziale 1 attiva/workspace); `elements.sprint_id`/`completed_at`/`is_blocked`; `channels.sprint_id` + tipo canale `SPRINT`. |
 
 ## 3. Note operative
 
 - **Backup**: tutto è in Postgres (volume `postgres_data`); i media voce/screen share **non vengono
   registrati**, quindi non c'è storage extra. I file/allegati stanno nel volume di `UPLOAD_DIR`.
-- **Nuove migration**: la prossima parte da **V16**. Mantenere `ddl-auto: validate` ⇒ ogni cambio di
+- **Nuove migration**: la prossima parte da **V18**. Mantenere `ddl-auto: validate` ⇒ ogni cambio di
   schema passa da una migration Flyway.
 - Verifica all'avvio: nei log del backend Flyway elenca le versioni applicate (utile dopo un deploy).

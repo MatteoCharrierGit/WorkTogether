@@ -19,6 +19,7 @@ public record ElementRequest(
         OffsetDateTime endDate,
         Boolean allDay,
         Integer position,
+        Boolean blocked,
         List<UUID> assigneeIds,
         List<UUID> tagIds
 ) {}

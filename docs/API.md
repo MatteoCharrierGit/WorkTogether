@@ -106,10 +106,14 @@ Corpo (`ElementRequest`):
   "endDate": "2026-07-01T16:00:00Z",
   "allDay": false,
   "position": 0,
+  "blocked": false,                  // indicatore "task bloccante" (usato nella dashboard Sprint)
   "assigneeIds": ["<uuid utente>"],
   "tagIds": ["<uuid tag>"]
 }
 ```
+
+> La risposta (`ElementResponse`) include anche `sprintId` (sprint a cui il TASK è assegnato, null = backlog),
+> `completedAt` (istante di completamento, per la timeline della sprint) e `blocked`.
 
 ### Allegati — `…/elements/{id}/attachments`
 | Metodo | Endpoint | Accesso | Note |
@@ -127,6 +131,7 @@ Corpo (`ElementRequest`):
 | PATCH | `/folders/{id}/rename` | 👤 · 🔑 `drive:write` | `{ name }` |
 | PATCH | `/folders/{id}/move` | 👤 · 🔑 `drive:write` | `{ targetFolderId }` (null = radice) |
 | PATCH | `/folders/{id}/permission` | 👤 · 🔑 `drive:write` | `{ editableByAll }` — sola lettura **in cascata** su file e sottocartelle (solo proprietario/admin) |
+| GET | `/folders/{id}/download` | 👤 · 🔑 `drive:read` | **Scarica la cartella come ZIP** (ricorsivo, alberatura preservata; stream) |
 | DELETE | `/folders/{id}` | 👤 · 🔑 `drive:write` | Solo se vuota |
 | GET | `/files?folderId=` | 👤 · 🔑 `drive:read` | File nella cartella |
 | POST | `/files?folderId=` | 👤 · 🔑 `drive:write` | Upload (multipart, campo `file`) |
@@ -145,6 +150,37 @@ Corpo (`ElementRequest`):
 > **proprietario** o **admin**. Il flag si cambia solo da proprietario/admin (`PATCH …/permission`).
 > **Cartelle**: spostare/rinominare/eliminare resta solo **proprietario** o **admin**. Caricare file e
 > **intere cartelle** e copiare: qualsiasi non-guest.
+
+## 6b. Sprint — `/api/workspaces/{wsId}/sprints` (solo token utente)
+
+Gestione del ciclo di vita di una sprint: **PLANNED → ACTIVE → CLOSED**. Avvio e chiusura sono
+**rigorosamente manuali** (non dipendono dalle date) e riservati all'**admin**; al massimo **una
+sprint ACTIVE per workspace**. Solo gli `elements` di tipo **TASK** si collegano a una sprint.
+
+| Metodo | Endpoint | Accesso | Note |
+|--------|----------|---------|------|
+| GET | `` | 👤 | Tutte le sprint del workspace (con `taskTotal`/`taskCompleted`/`channelId`) |
+| GET | `/active` | 👤 | Sprint attiva + i suoi task (`{ sprint, tasks }`); `sprint` null se nessuna |
+| GET | `/{id}` | 👤 | Dettaglio di una sprint + task |
+| POST | `` | 🛡️ | Crea (planning): `{ name, goal?, startDate?, endDate? }` (date previste, `YYYY-MM-DD`) |
+| PATCH | `/{id}` | 🛡️ | Aggiorna (non se CLOSED): `{ name?, goal?, startDate?, endDate?, position? }` |
+| DELETE | `/{id}` | 🛡️ | Elimina (solo PLANNED); i task tornano al backlog |
+| POST | `/{id}/start` | 🛡️ | Avvia (solo PLANNED): crea la chat di sprint; **409** se esiste già una attiva |
+| POST | `/{id}/close` | 🛡️ | Chiude (solo ACTIVE): vedi corpo sotto |
+| POST | `/{id}/tasks/{elementId}` | 👤 (no guest) | Aggiunge un TASK alla sprint |
+| DELETE | `/{id}/tasks/{elementId}` | 👤 (no guest) | Rimuove il TASK dalla sprint (torna al backlog) |
+
+Corpo chiusura (`CloseSprintRequest`):
+```json
+{
+  "retrospective": "Note di retrospettiva (opzionale)",
+  "carryOver": "BACKLOG",        // BACKLOG (default) | NEXT_SPRINT — destino dei task incompleti
+  "targetSprintId": null          // sprint pianificata di destinazione se carryOver = NEXT_SPRINT
+}
+```
+> Alla chiusura i task **non completati** vengono spostati nel backlog (`sprint_id` = null) o nella
+> sprint pianificata indicata; i task **completati mantengono** il collegamento (storico/timeline).
+> La chat della sprint è un canale di tipo `SPRINT` (vedi §11), accessibile a tutti i membri.
 
 ## 7. Tag — `/api/workspaces/{wsId}/tags`
 | Metodo | Endpoint | Accesso | Note |
@@ -206,6 +242,11 @@ Corpo creazione: `{ "name": "Bot Discord", "scopes": ["elements:read","elements:
 (`memberIds` usato solo se `isPrivate`). Il token voce richiede `voiceEnabled`; se LiveKit non è
 configurato risponde **503**. Vedi [docs/REALTIME_VOCE.md](./docs/REALTIME_VOCE.md).
 
+> **Canali `SPRINT`** (v1.3): la chat dedicata a una sprint è un canale di tipo `SPRINT`, accessibile a
+> tutti i membri del workspace (come una ROOM pubblica). Non compare nella lista `GET ``: vi si accede
+> tramite `channelId` restituito da `…/sprints/active` e si usano gli stessi endpoint messaggi
+> (`/{id}/messages`, `/{id}/read`, …).
+
 ## 12. Presenza — `/api/workspaces/{wsId}/presence` (solo token utente)
 | Metodo | Endpoint | Accesso | Note |
 |--------|----------|---------|------|
@@ -253,14 +294,19 @@ curl -X POST "$BASE/api/workspaces/$WS_ID/elements" \
 ## 14. Modelli dati principali
 
 **Element**: `id, workspaceId, parentId?, type, status, title, body?, startDate?, endDate?, allDay?,
-position, createdBy, createdAt, updatedAt, tags[], assignees[], progress?`
+position, sprintId?, completedAt?, blocked, createdBy, createdAt, updatedAt, tags[], assignees[], progress?`
 - `type`: `EPICA · STORIA · TASK · EVENTO` · `status`: `DA_FARE · IN_CORSO · COMPLETATO · ARCHIVIATO`
+- `sprintId`: sprint del TASK (null = backlog) · `completedAt`: istante di completamento · `blocked`: bloccante
+
+**Sprint**: `id, workspaceId, name, goal?, startDate?, endDate?, actualStartAt?, actualEndAt?, status,
+retrospectiveMd?, position, createdBy?, createdAt, taskTotal, taskCompleted, channelId?`
+- `status`: `PLANNED · ACTIVE · CLOSED`
 
 **Ruoli workspace**: `ADMIN · COLLABORATORE · GUEST` (i guest sono in sola lettura).
 
 **DriveFile**: `id, folderId?, filename, contentType?, sizeBytes, uploadedBy, createdAt, lockedBy?, lockedAt?`
 
-**Channel**: `id, type (DM|GROUP|ROOM), name, description, isPrivate, voiceEnabled, screenShareEnabled,
+**Channel**: `id, type (DM|GROUP|ROOM|SPRINT), name, description, isPrivate, voiceEnabled, screenShareEnabled,
 members[], lastMessage?, unreadCount, …`
 
 **ApiKey** (vista pubblica, mai col segreto): `id, name, prefix, scopes[], createdAt, lastUsedAt?, expiresAt?, revoked`
@@ -284,7 +330,8 @@ members[], lastMessage?, unreadCount, …`
 - Endpoint: `/ws` (SockJS) · topic: `/topic/workspace/{workspaceId}` (broadcast).
 - Eventi: `ELEMENT_*`, `MESSAGE_CREATED`, `CHANNEL_*`, `CHANNEL_READ`, `TYPING`, `PRESENCE`,
   `DRIVE_CHANGED` (mutazioni del Drive), `AI_MESSAGE` (chat condivise di Akari) — v1.1;
-  `TAG_CHANGED` (tag creati/modificati/eliminati) — v1.2.
+  `TAG_CHANGED` (tag creati/modificati/eliminati) — v1.2; `SPRINT_CHANGED` (creazione/avvio/chiusura
+  sprint, assegnazione task) — v1.3.
 - **Azioni dell'agente AI**: i tool di Akari girano sugli stessi servizi interni delle rotte REST
   (`ElementService`, `DriveService`, `TagService`), quindi emettono gli stessi eventi
   (`ELEMENT_*`, `DRIVE_CHANGED`, `TAG_CHANGED`): la UI si aggiorna in tempo reale anche per le azioni AI.
