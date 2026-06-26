@@ -24,6 +24,8 @@ Stack: **Spring Boot 3 / Java 21 / PostgreSQL** (backend) · **React + Vite + Ty
   Completati, **timeline** dei completamenti, indicatore **task bloccanti** e **chat dedicata**) e
   *Archivio* (sprint chiuse con **retrospettiva**). Avvio e chiusura sono **manuali** e riservati
   all'**admin**; alla chiusura i task incompleti si riportano nel backlog o nella sprint successiva.
+  La sezione è **attivabile/nascondibile dall'admin** (Admin → Impostazioni → *Funzionalità*) ed è
+  **nascosta di default**.
 - **Download cartelle dal Drive**: ogni cartella può essere scaricata come **archivio ZIP** (ricorsivo,
   con l'intera alberatura), da qualsiasi membro.
 

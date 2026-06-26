@@ -27,3 +27,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Backup DB locali (dati reali, non versionare)
+backups/

@@ -149,3 +149,6 @@ Dettagli su token, qualità (audio Opus; screen share 1080p a ~15 fps), presenza
   carry-over dei task incompleti e retrospettiva) e **Archivio** (sprint chiuse con retrospettiva).
   La chat riusa `channelsApi` (canale di tipo `SPRINT`). Aggiornamenti realtime via evento `SPRINT_CHANGED`
   (gestito in `Layout` e in `SprintPage`); voce **Sprint** in `Sidebar`.
+- **Visibilità Sprint (toggle admin)**: la voce in `Sidebar` compare solo se `workspace.sprintEnabled`;
+  **di default è nascosta**. L'admin la attiva in `AdminPage` (Impostazioni → *Funzionalità*). La route
+  `SprintPage` è protetta: con sezione disattivata l'accesso diretto via URL reindirizza alla home del workspace.

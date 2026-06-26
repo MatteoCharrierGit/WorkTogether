@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, Navigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { sprintApi, elementsApi, channelsApi } from '@/lib/api'
 import { Sprint, SprintDetail, Element, ChatMessage, ElementStatus } from '@/types'
@@ -73,6 +73,12 @@ export default function SprintPage() {
       }
     })
   }, [wsId, queryClient])
+
+  // La sezione Sprint è attivabile/nascondibile dall'admin (Admin → Impostazioni). Se disattivata,
+  // l'accesso diretto via URL reindirizza alla home del workspace.
+  if (workspace && workspace.sprintEnabled === false) {
+    return <Navigate to={`/workspace/${wsId ?? ''}`} replace />
+  }
 
   const planned = sprints.filter(s => s.status === 'PLANNED')
   const closed = sprints.filter(s => s.status === 'CLOSED')

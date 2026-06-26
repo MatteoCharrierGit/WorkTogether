@@ -97,7 +97,7 @@ export const workspacesApi = {
     api.delete(`/workspaces/${wsId}/members/${userId}`),
   createUser: (wsId: string, data: { email?: string; displayName: string; temporaryPassword?: string; role?: string }) =>
     api.post(`/workspaces/${wsId}/users`, data).then(r => r.data),
-  updateSettings: (wsId: string, data: { avatar?: string; cardShowTags?: boolean; cardShowAssignees?: boolean; cardShowDueDate?: boolean; reminderDaysBefore?: number; eventRemindersEnabled?: boolean; weeklyRecapEnabled?: boolean; mondayDigestEnabled?: boolean }) =>
+  updateSettings: (wsId: string, data: { avatar?: string; cardShowTags?: boolean; cardShowAssignees?: boolean; cardShowDueDate?: boolean; reminderDaysBefore?: number; eventRemindersEnabled?: boolean; weeklyRecapEnabled?: boolean; mondayDigestEnabled?: boolean; sprintEnabled?: boolean }) =>
     api.patch(`/workspaces/${wsId}/settings`, data).then(r => r.data),
   // Backup / trasporto: export delle sezioni selezionate → JSON; import → nuova workspace.
   exportWorkspace: (wsId: string, sections: { settings?: boolean; members?: boolean; tags?: boolean; elements?: boolean; chat?: boolean; ai?: boolean }) =>

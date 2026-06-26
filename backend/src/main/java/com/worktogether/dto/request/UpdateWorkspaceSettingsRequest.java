@@ -9,5 +9,6 @@ public record UpdateWorkspaceSettingsRequest(
         Integer reminderDaysBefore,
         Boolean eventRemindersEnabled,
         Boolean weeklyRecapEnabled,
-        Boolean mondayDigestEnabled
+        Boolean mondayDigestEnabled,
+        Boolean sprintEnabled
 ) {}

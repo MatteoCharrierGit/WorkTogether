@@ -57,6 +57,11 @@ public class Workspace {
     @Column(name = "monday_digest_enabled", nullable = false)
     private boolean mondayDigestEnabled = false;
 
+    // Visibilità della sezione Sprint (toggle admin). Default false: nascosta finché non attivata.
+    @Builder.Default
+    @Column(name = "sprint_enabled", nullable = false)
+    private boolean sprintEnabled = false;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by", nullable = false)
     private User createdBy;

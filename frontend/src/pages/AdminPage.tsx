@@ -1021,7 +1021,7 @@ export default function AdminPage() {
     toast('API key revocata')
   }
 
-  const applyWsSettings = async (data: { avatar?: string; cardShowTags?: boolean; cardShowAssignees?: boolean; cardShowDueDate?: boolean; reminderDaysBefore?: number; eventRemindersEnabled?: boolean; weeklyRecapEnabled?: boolean; mondayDigestEnabled?: boolean }, msg: string) => {
+  const applyWsSettings = async (data: { avatar?: string; cardShowTags?: boolean; cardShowAssignees?: boolean; cardShowDueDate?: boolean; reminderDaysBefore?: number; eventRemindersEnabled?: boolean; weeklyRecapEnabled?: boolean; mondayDigestEnabled?: boolean; sprintEnabled?: boolean }, msg: string) => {
     try {
       const updated = await workspacesApi.updateSettings(wsId!, data)
       queryClient.invalidateQueries({ queryKey: ['workspaces'] })
@@ -1130,6 +1130,23 @@ export default function AdminPage() {
                   </label>
                 ))}
               </div>
+            </div>
+
+            <Separator />
+
+            {/* Funzionalità del workspace */}
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold">Funzionalità</h3>
+              <p className="text-xs text-muted-foreground">Attiva o nascondi sezioni del workspace per tutti i membri.</p>
+              <label className="flex items-center gap-2.5 text-sm cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={currentWs?.sprintEnabled ?? false}
+                  onChange={e => applyWsSettings({ sprintEnabled: e.target.checked }, e.target.checked ? 'Sezione Sprint attivata' : 'Sezione Sprint nascosta')}
+                  className="h-4 w-4 rounded border-input"
+                />
+                Mostra la sezione <strong>Sprint</strong> (gestione sprint)
+              </label>
             </div>
 
             <Separator />

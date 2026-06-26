@@ -9,8 +9,9 @@
 - **users** — `id, email (unique), display_name, password_hash, must_reset_password,
   is_system_admin, avatar, onboarding_completed, created_at, updated_at`.
 - **workspaces** — `id, name, description, created_by, avatar` + impostazioni card Kanban
-  (`card_show_tags/assignees/due_date`) e automazioni email
-  (`reminder_days_before, event_reminders_enabled, weekly_recap_enabled, monday_digest_enabled`).
+  (`card_show_tags/assignees/due_date`), automazioni email
+  (`reminder_days_before, event_reminders_enabled, weekly_recap_enabled, monday_digest_enabled`) e
+  visibilità sezioni (`sprint_enabled`, default FALSE: toggle admin per mostrare la sezione Sprint).
 - **workspace_members** — appartenenza + ruolo `ADMIN|COLLABORATORE|GUEST`, unico per `(workspace, user)`.
 - **refresh_tokens** — token di refresh persistiti (`token unique, expires_at`).
 
@@ -66,7 +67,7 @@
 > (`sprint_id = NULL`) o in una sprint pianificata successiva, i completati mantengono `sprint_id`.
 > Le sprint **non** rientrano nell'export/backup (la relativa chat SPRINT viene esclusa).
 
-## 2. Storico migration (V1 → V17)
+## 2. Storico migration (V1 → V18)
 
 | Versione | Contenuto |
 |----------|-----------|
@@ -87,11 +88,12 @@
 | **V15** `folder_editable_by_all` | `folders.editable_by_all` (default TRUE): sola lettura cartella, propagata in cascata. |
 | **V16** `user_management` | `users.email`/`password_hash` nullable, `display_name` univoco (handle di login), supporto OTP/inviti. |
 | **V17** `sprints` | tabella `sprints` (ciclo PLANNED→ACTIVE→CLOSED, indice unico parziale 1 attiva/workspace); `elements.sprint_id`/`completed_at`/`is_blocked`; `channels.sprint_id` + tipo canale `SPRINT`. |
+| **V18** `workspace_sprint_enabled` | `workspaces.sprint_enabled` (default FALSE): toggle admin per la visibilità della sezione Sprint. |
 
 ## 3. Note operative
 
 - **Backup**: tutto è in Postgres (volume `postgres_data`); i media voce/screen share **non vengono
   registrati**, quindi non c'è storage extra. I file/allegati stanno nel volume di `UPLOAD_DIR`.
-- **Nuove migration**: la prossima parte da **V18**. Mantenere `ddl-auto: validate` ⇒ ogni cambio di
+- **Nuove migration**: la prossima parte da **V19**. Mantenere `ddl-auto: validate` ⇒ ogni cambio di
   schema passa da una migration Flyway.
 - Verifica all'avvio: nei log del backend Flyway elenca le versioni applicate (utile dopo un deploy).

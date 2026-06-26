@@ -54,6 +54,7 @@ export interface Workspace {
   eventRemindersEnabled?: boolean
   weeklyRecapEnabled?: boolean
   mondayDigestEnabled?: boolean
+  sprintEnabled?: boolean
 }
 
 export interface Tag {

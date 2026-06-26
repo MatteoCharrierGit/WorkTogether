@@ -171,3 +171,6 @@ In assenza di JDK/Maven locale, è possibile compilare in un container usa-e-get
 - **Chat di sprint**: nuovo `ChannelType.SPRINT` e `channels.sprint_id`; `ChannelService.createSprintChannel`
   la crea all'avvio. Accessibile a tutti i membri (come una ROOM pubblica, vedi `assertChannelAccess`);
   esclusa da export/backup (`WorkspaceTransferService`). Nuovo evento realtime `SPRINT_CHANGED`.
+- **Visibilità sezione Sprint**: `workspaces.sprint_enabled` (migration **V18**, default FALSE) esposto in
+  `WorkspaceResponse` e aggiornabile da admin via `PATCH …/settings` (`UpdateWorkspaceSettingsRequest.sprintEnabled`).
+  Toggle solo di UI: nascosta di default.

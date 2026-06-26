@@ -75,7 +75,7 @@ membri, impostazioni, utenti, altre chiavi, AI, chat/voce, presenza, email, né 
 | PATCH | `/{wsId}/members/{userId}/role?role=` | 🛡️ | Cambia ruolo |
 | DELETE | `/{wsId}/members/{userId}` | 🛡️ | Rimuove un membro |
 | POST | `/{wsId}/users` | 🛡️ | Crea un nuovo utente nel workspace |
-| PATCH | `/{wsId}/settings` | 🛡️ | Impostazioni (avatar, card Kanban, automazioni email) |
+| PATCH | `/{wsId}/settings` | 🛡️ | Impostazioni (avatar, card Kanban, automazioni email, `sprintEnabled`: visibilità sezione Sprint) |
 | DELETE | `/{wsId}` | 🛡️ | Elimina il workspace e tutti i suoi dati (irreversibile) |
 
 `role` ∈ `ADMIN | COLLABORATORE | GUEST`.
@@ -156,6 +156,10 @@ Corpo (`ElementRequest`):
 Gestione del ciclo di vita di una sprint: **PLANNED → ACTIVE → CLOSED**. Avvio e chiusura sono
 **rigorosamente manuali** (non dipendono dalle date) e riservati all'**admin**; al massimo **una
 sprint ACTIVE per workspace**. Solo gli `elements` di tipo **TASK** si collegano a una sprint.
+
+> **Visibilità**: la sezione Sprint è mostrata solo se `workspaces.sprintEnabled = true` (toggle admin
+> in `PATCH …/settings`); **di default è nascosta**. Le rotte sotto restano comunque protette dai
+> ruoli; il toggle controlla l'esposizione nella UI.
 
 | Metodo | Endpoint | Accesso | Note |
 |--------|----------|---------|------|

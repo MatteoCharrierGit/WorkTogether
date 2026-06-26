@@ -19,13 +19,14 @@ public record WorkspaceResponse(
         int reminderDaysBefore,
         boolean eventRemindersEnabled,
         boolean weeklyRecapEnabled,
-        boolean mondayDigestEnabled
+        boolean mondayDigestEnabled,
+        boolean sprintEnabled
 ) {
     public static WorkspaceResponse from(Workspace w, WorkspaceRole role) {
         return new WorkspaceResponse(
                 w.getId(), w.getName(), w.getDescription(), role, w.getCreatedAt(),
                 w.getAvatar(), w.isCardShowTags(), w.isCardShowAssignees(), w.isCardShowDueDate(),
                 w.getReminderDaysBefore(), w.isEventRemindersEnabled(),
-                w.isWeeklyRecapEnabled(), w.isMondayDigestEnabled());
+                w.isWeeklyRecapEnabled(), w.isMondayDigestEnabled(), w.isSprintEnabled());
     }
 }

@@ -212,6 +212,7 @@ public class WorkspaceService {
         if (req.eventRemindersEnabled() != null) ws.setEventRemindersEnabled(req.eventRemindersEnabled());
         if (req.weeklyRecapEnabled() != null) ws.setWeeklyRecapEnabled(req.weeklyRecapEnabled());
         if (req.mondayDigestEnabled() != null) ws.setMondayDigestEnabled(req.mondayDigestEnabled());
+        if (req.sprintEnabled() != null) ws.setSprintEnabled(req.sprintEnabled());
         ws = workspaceRepository.save(ws);
         return WorkspaceResponse.from(ws, getUserRole(workspaceId, requester));
     }
