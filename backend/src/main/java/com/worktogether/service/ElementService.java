@@ -17,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
+import java.time.OffsetDateTime;
 import java.util.*;
 
 @Service
@@ -80,11 +81,14 @@ public class ElementService {
             assignees.addAll(userRepository.findAllById(req.assigneeIds()));
         }
 
+        ElementStatus status = req.status() != null ? req.status() : ElementStatus.DA_FARE;
         Element element = Element.builder()
                 .workspace(ws)
                 .parent(parent)
                 .type(req.type())
-                .status(req.status() != null ? req.status() : ElementStatus.DA_FARE)
+                .status(status)
+                .completedAt(status == ElementStatus.COMPLETATO ? OffsetDateTime.now() : null)
+                .blocked(req.blocked() != null ? req.blocked() : false)
                 .title(req.title())
                 .body(normalizeBody(req.body()))
                 .startDate(req.startDate())
@@ -127,7 +131,8 @@ public class ElementService {
 
         if (req.title() != null) element.setTitle(req.title());
         if (req.body() != null) element.setBody(normalizeBody(req.body()));
-        if (req.status() != null) element.setStatus(req.status());
+        if (req.status() != null) applyStatus(element, req.status());
+        if (req.blocked() != null) element.setBlocked(req.blocked());
         if (req.startDate() != null) element.setStartDate(req.startDate());
         if (req.endDate() != null) element.setEndDate(req.endDate());
         if (req.allDay() != null) {
@@ -154,6 +159,18 @@ public class ElementService {
         ElementResponse response = ElementResponse.from(element, progress);
         eventPublisher.publish(workspaceId, "ELEMENT_UPDATED", response);
         return response;
+    }
+
+    // Applica un cambio di stato gestendo completed_at: lo valorizza quando il task diventa
+    // COMPLETATO (se non già impostato), lo azzera se torna in qualsiasi altro stato. Usato anche
+    // dalla timeline della sprint.
+    private void applyStatus(Element element, ElementStatus newStatus) {
+        element.setStatus(newStatus);
+        if (newStatus == ElementStatus.COMPLETATO) {
+            if (element.getCompletedAt() == null) element.setCompletedAt(OffsetDateTime.now());
+        } else {
+            element.setCompletedAt(null);
+        }
     }
 
     @Transactional

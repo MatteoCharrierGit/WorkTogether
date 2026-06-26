@@ -1,11 +1,12 @@
 # WorkTogether
 
-> **Versione: v1.2** · release corrente (giugno 2026)
+> **Versione: v1.3** · release corrente (giugno 2026)
 
 Piattaforma self-hosted di **collaborazione e task management** per piccoli team, con:
 
 - **Kanban / Roadmap / Calendario** su una gerarchia *Epica → Storia → Task* + *Eventi*.
-- **Drive** di workspace (cartelle, file, editor di testo/codice con lock di modifica).
+- **Sprint**: pianificazione, sprint attiva con board/progress/timeline e chat dedicata, chiusura con retrospettiva.
+- **Drive** di workspace (cartelle, file, editor di testo/codice con lock di modifica, **download cartelle in ZIP**).
 - **Akari**, agente AI integrato (OpenRouter) che agisce sul workspace via tool, scrive email e crea eventi.
 - **Chat in stile Discord**: messaggi diretti, gruppi, stanze, **voce** e **condivisione schermo** (LiveKit), con **presenza** online/in-chiamata.
 - **Email** formattate in Markdown e **automazioni** schedulate (promemoria, recap, digest).
@@ -15,6 +16,16 @@ Piattaforma self-hosted di **collaborazione e task management** per piccoli team
 Stack: **Spring Boot 3 / Java 21 / PostgreSQL** (backend) · **React + Vite + TypeScript + Tailwind/shadcn** (frontend) · **LiveKit** (media SFU) · **Docker Compose** (deploy).
 
 ---
+
+## Novità v1.3 (giugno 2026)
+
+- **Gestione Sprint**: nuova sezione **Sprint** con tre viste — *Planning* (crea/avvia/elimina sprint
+  pianificate, solo admin), *Sprint attiva* (obiettivo, date, **progress bar**, board Backlog/In corso/
+  Completati, **timeline** dei completamenti, indicatore **task bloccanti** e **chat dedicata**) e
+  *Archivio* (sprint chiuse con **retrospettiva**). Avvio e chiusura sono **manuali** e riservati
+  all'**admin**; alla chiusura i task incompleti si riportano nel backlog o nella sprint successiva.
+- **Download cartelle dal Drive**: ogni cartella può essere scaricata come **archivio ZIP** (ricorsivo,
+  con l'intera alberatura), da qualsiasi membro.
 
 ## Novità v1.2 (giugno 2026)
 

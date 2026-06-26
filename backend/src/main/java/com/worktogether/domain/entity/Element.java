@@ -58,6 +58,19 @@ public class Element {
     @Builder.Default
     private Integer position = 0;
 
+    // Sprint a cui il task è assegnato (NULL = backlog generale). Solo i TASK vengono collegati.
+    @Column(name = "sprint_id")
+    private UUID sprintId;
+
+    // Momento di completamento (status → COMPLETATO); usato per la timeline della sprint.
+    @Column(name = "completed_at")
+    private OffsetDateTime completedAt;
+
+    // Indicatore di task bloccante.
+    @Column(name = "is_blocked", nullable = false)
+    @Builder.Default
+    private boolean blocked = false;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by", nullable = false)
     private User createdBy;

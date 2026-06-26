@@ -24,12 +24,17 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 @Service
 @RequiredArgsConstructor
@@ -281,6 +286,70 @@ public class DriveService {
         } catch (java.net.MalformedURLException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "File non leggibile");
         }
+    }
+
+    /** Valida l'accesso e restituisce il nome della cartella da scaricare (per il nome dello ZIP).
+     *  Il download è consentito a qualunque membro: il flag "sola lettura" riguarda solo la modifica. */
+    public String validateFolderDownload(UUID workspaceId, UUID folderId, User user) {
+        workspaceService.assertMember(workspaceId, user);
+        return validateFolder(workspaceId, folderId).getName();
+    }
+
+    /** Scrive nello stream uno ZIP con il contenuto ricorsivo della cartella, preservando l'alberatura.
+     *  Pensato per essere invocato in streaming (fuori dalla transazione della request): usa solo query
+     *  dei repository, senza lazy-loading. Non valida i permessi: chiamare prima {@link #validateFolderDownload}. */
+    public void writeFolderZip(UUID workspaceId, UUID folderId, OutputStream out) throws IOException {
+        try (ZipOutputStream zip = new ZipOutputStream(out)) {
+            zipFolderContents(workspaceId, folderId, "", zip);
+        }
+    }
+
+    // Aggiunge ricorsivamente file e sottocartelle allo ZIP sotto il prefisso di path indicato.
+    private void zipFolderContents(UUID workspaceId, UUID folderId, String prefix, ZipOutputStream zip) throws IOException {
+        Set<String> usedNames = new HashSet<>();
+        boolean empty = true;
+
+        for (DriveFile df : driveFileRepository.findByWorkspaceIdAndFolderIdOrderByFilenameAsc(workspaceId, folderId)) {
+            Path source = Path.of(uploadDir, workspaceId.toString(), "drive", df.getStoredName());
+            if (!Files.exists(source)) continue; // file mancante su disco: salta, non interrompere lo ZIP
+            empty = false;
+            String entryName = uniqueName(usedNames, sanitizeEntry(df.getFilename()));
+            zip.putNextEntry(new ZipEntry(prefix + entryName));
+            Files.copy(source, zip);
+            zip.closeEntry();
+        }
+
+        for (Folder sub : folderRepository.findByWorkspaceIdAndParentIdOrderByNameAsc(workspaceId, folderId)) {
+            empty = false;
+            String dirName = uniqueName(usedNames, sanitizeEntry(sub.getName()));
+            zipFolderContents(workspaceId, sub.getId(), prefix + dirName + "/", zip);
+        }
+
+        // Cartella vuota (e non radice): crea comunque una entry di directory per preservarla.
+        if (empty && !prefix.isEmpty()) {
+            zip.putNextEntry(new ZipEntry(prefix));
+            zip.closeEntry();
+        }
+    }
+
+    // Garantisce nomi univoci nello stesso livello dello ZIP (es. "file (2).txt").
+    private String uniqueName(Set<String> used, String name) {
+        if (used.add(name)) return name;
+        int dot = name.lastIndexOf('.');
+        String base = dot > 0 ? name.substring(0, dot) : name;
+        String ext = dot > 0 ? name.substring(dot) : "";
+        for (int i = 2; ; i++) {
+            String candidate = base + " (" + i + ")" + ext;
+            if (used.add(candidate)) return candidate;
+        }
+    }
+
+    // Ripulisce un nome per usarlo come entry ZIP: niente separatori di path o caratteri di traversal.
+    private String sanitizeEntry(String name) {
+        if (name == null || name.isBlank()) return "senza_nome";
+        String cleaned = name.replace("\\", "/");
+        cleaned = cleaned.substring(cleaned.lastIndexOf('/') + 1).trim();
+        return cleaned.isBlank() ? "senza_nome" : cleaned;
     }
 
     @Transactional

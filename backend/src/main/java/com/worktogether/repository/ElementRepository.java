@@ -34,6 +34,24 @@ public interface ElementRepository extends JpaRepository<Element, UUID> {
     @Query("SELECT e FROM Element e WHERE e.workspace.id = :workspaceId ORDER BY e.position ASC, e.createdAt ASC")
     List<Element> findByWorkspaceId(UUID workspaceId);
 
+    // ---- Sprint ----
+
+    @Query("SELECT e FROM Element e WHERE e.sprintId = :sprintId ORDER BY e.position ASC, e.createdAt ASC")
+    List<Element> findBySprintId(UUID sprintId);
+
+    long countBySprintId(UUID sprintId);
+
+    long countBySprintIdAndStatus(UUID sprintId, ElementStatus status);
+
+    // Task della sprint non ancora completati né archiviati (da gestire alla chiusura).
+    @Query("""
+        SELECT e FROM Element e
+        WHERE e.sprintId = :sprintId
+          AND e.status NOT IN (com.worktogether.domain.enums.ElementStatus.COMPLETATO,
+                               com.worktogether.domain.enums.ElementStatus.ARCHIVIATO)
+    """)
+    List<Element> findIncompleteBySprintId(UUID sprintId);
+
     @Query("""
         SELECT COUNT(e) FROM Element e
         WHERE e.parent.id IN (

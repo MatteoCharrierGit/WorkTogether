@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   ChevronDown, ChevronRight, KanbanSquare, GanttChartSquare, Calendar,
-  Settings, LogOut, Plus, Building2, CheckSquare, Check, Palette, Folder, UserCog, Bot, Mail, MessagesSquare
+  Settings, LogOut, Plus, Building2, CheckSquare, Check, Palette, Folder, UserCog, Bot, Mail, MessagesSquare, Target
 } from 'lucide-react'
 import { cn, TYPE_ICONS } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
@@ -211,6 +211,7 @@ export function Sidebar({ mobileOpen = false }: { mobileOpen?: boolean }) {
           {navLink(`${wsBase}/kanban`, <KanbanSquare className="h-4 w-4" />, 'Kanban', 'kanban')}
           {navLink(`${wsBase}/roadmap`, <GanttChartSquare className="h-4 w-4" />, 'Roadmap', 'roadmap')}
           {navLink(`${wsBase}/calendar`, <Calendar className="h-4 w-4" />, 'Calendario', 'calendar')}
+          {navLink(`${wsBase}/sprint`, <Target className="h-4 w-4" />, 'Sprint', 'sprint')}
           {navLink(`${wsBase}/drive`, <Folder className="h-4 w-4" />, 'File', 'files')}
           {navLink(`${wsBase}/chat`, <MessagesSquare className="h-4 w-4" />, 'Chat', 'chat', totalUnread)}
           {aiStatus?.enabled && navLink(`${wsBase}/assistant`, <Bot className="h-4 w-4" />, 'Akari', 'akari')}

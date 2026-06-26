@@ -26,8 +26,8 @@ media server (LiveKit) sono attivabili tramite **profili** separati.
 
 Le funzionalità sono di due nature, deliberatamente tenute separate:
 
-- **Binario A — Nativo (nella JVM).** Task management, drive, AI, chat testuale, stanze, permessi,
-  presenza. Vive in Spring Boot + Postgres; il realtime usa il **WebSocket STOMP esistente**.
+- **Binario A — Nativo (nella JVM).** Task management, sprint, drive, AI, chat testuale, stanze,
+  permessi, presenza. Vive in Spring Boot + Postgres; il realtime usa il **WebSocket STOMP esistente**.
 - **Binario B — Media (fuori dalla JVM).** Voce e condivisione schermo: WebRTC gestito da un
   **media server SFU dedicato (LiveKit)** come container separato + TURN. Spring resta l'**autorità**:
   non instrada media, ma **firma i token d'accesso** a breve scadenza dopo aver validato ruolo e
@@ -44,7 +44,7 @@ Vantaggio: la parte "scomoda" (NAT, porte UDP, TLS, TURN) è isolata e non tocca
   trasportano payload minimi (es. `MESSAGE_CREATED` manda solo `channelId`); i client con accesso
   rifanno la fetch via REST.
 - **Eventi**: elementi (`ELEMENT_*`), chat (`MESSAGE_CREATED`, `CHANNEL_*`, `TYPING`), presenza
-  (`PRESENCE`). Dettagli in [REALTIME_VOCE](./REALTIME_VOCE.md).
+  (`PRESENCE`), drive (`DRIVE_CHANGED`), sprint (`SPRINT_CHANGED`). Dettagli in [REALTIME_VOCE](./REALTIME_VOCE.md).
 - **Presenza**: registro **in-memory** lato server alimentato da heartbeat REST e diffuso via `PRESENCE`.
 
 ## 4. Sicurezza e accesso

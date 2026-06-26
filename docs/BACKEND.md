@@ -44,6 +44,7 @@ Ogni controller è sotto `/api`. Tabella completa delle rotte (pubbliche e priva
 | `AiController` | `…/ai` | stato/impostazioni, conversazioni, chat SSE, comandi, conferme |
 | `EmailController` | `…/emails` | invio email + bozza AI |
 | `ChannelController` | `…/channels` | DM/gruppi/stanze, messaggi, typing, **token voce** |
+| `SprintController` | `…/sprints` | gestione sprint: CRUD, avvio/chiusura (admin), task della sprint |
 | `PresenceController` | `…/presence` | heartbeat + snapshot presenza |
 
 Gli errori sono normalizzati da `GlobalExceptionHandler` nella forma `{ "error": "…" }`:
@@ -87,7 +88,8 @@ Gli errori sono normalizzati da `GlobalExceptionHandler` nella forma `{ "error":
 | `OpenRouterClient` | client HTTP verso OpenRouter (modelli, completion, test chiave) |
 | `WorkspaceEmailService` · `MarkdownEmailRenderer` | invio email per ruolo/utente, render Markdown→HTML |
 | `AutomationService` | `@Scheduled`: promemoria eventi, recap settimanale, digest del lunedì |
-| `ChannelService` | DM/gruppi/stanze, messaggi, non-letti, typing, **token voce** |
+| `ChannelService` | DM/gruppi/stanze, messaggi, non-letti, typing, **token voce**; crea la chat di sprint |
+| `SprintService` | ciclo di vita sprint (PLANNED→ACTIVE→CLOSED), una sola attiva, carry-over task alla chiusura |
 | `PresenceService` | presenza online/in-chiamata in-memory + sweep schedulato |
 | `LiveKitService` | firma i token d'accesso LiveKit (JWT HS256) |
 
@@ -151,3 +153,21 @@ In assenza di JDK/Maven locale, è possibile compilare in un container usa-e-get
   (`cascadeEditable`); upload/creazione ereditano il flag della cartella contenitore (`folderEditable`).
   Endpoint `PATCH …/drive/folders/{id}/permission` (solo proprietario/admin).
 - **Drag & drop di cartelle**: gestito lato frontend (traversal `webkitGetAsEntry`), nessuna modifica API.
+
+## Novità v1.3
+
+- **Download cartelle (Drive)**: `GET …/drive/folders/{id}/download` ritorna uno **ZIP in streaming**
+  (`StreamingResponseBody` + `ZipOutputStream` in `DriveService.writeFolderZip`): visita ricorsiva di
+  `folders`/`drive_files`, alberatura preservata, dedup dei nomi, cartelle vuote incluse. Accesso a
+  qualunque membro (`drive:read`). Lo streaming gira fuori dalla transazione della request (usa solo
+  query dei repository), e il re-dispatch `ASYNC` è già `permitAll` in `SecurityConfig`.
+- **Gestione Sprint** (migration **V17**): nuova entità `Sprint` (`SprintStatus PLANNED|ACTIVE|CLOSED`),
+  `SprintService`/`SprintController` (`…/sprints`). Avvio/chiusura **manuali** e **admin-only**; indice
+  unico parziale `uq_sprint_active` ⇒ **una sola sprint ACTIVE per workspace**. Collegamento Task↔Sprint
+  su `elements.sprint_id` (solo `TASK`); `elements.completed_at` (valorizzato/azzerato in
+  `ElementService.applyStatus` per la timeline) e `elements.is_blocked` (bloccanti). Alla chiusura i task
+  incompleti vanno nel backlog o in una sprint pianificata (`CloseSprintRequest.carryOver`), i completati
+  mantengono il collegamento.
+- **Chat di sprint**: nuovo `ChannelType.SPRINT` e `channels.sprint_id`; `ChannelService.createSprintChannel`
+  la crea all'avvio. Accessibile a tutti i membri (come una ROOM pubblica, vedi `assertChannelAccess`);
+  esclusa da export/backup (`WorkspaceTransferService`). Nuovo evento realtime `SPRINT_CHANGED`.

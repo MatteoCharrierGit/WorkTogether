@@ -17,6 +17,7 @@ import org.springframework.http.*;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import java.util.List;
 import java.util.UUID;
@@ -80,6 +81,20 @@ public class DriveController {
             @AuthenticationPrincipal User user) {
         driveService.deleteFolder(wsId, folderId, user);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/folders/{folderId}/download")
+    public ResponseEntity<StreamingResponseBody> downloadFolder(
+            @PathVariable UUID wsId,
+            @PathVariable UUID folderId,
+            @AuthenticationPrincipal User user) {
+        String folderName = driveService.validateFolderDownload(wsId, folderId, user);
+        String zipName = folderName.replaceAll("[^A-Za-z0-9._-]", "_") + ".zip";
+        StreamingResponseBody body = out -> driveService.writeFolderZip(wsId, folderId, out);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/zip"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + zipName + "\"")
+                .body(body);
     }
 
     // ---- Files ----

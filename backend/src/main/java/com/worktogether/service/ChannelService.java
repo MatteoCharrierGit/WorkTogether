@@ -174,6 +174,22 @@ public class ChannelService {
         broadcastChannelEvent(workspaceId, "CHANNEL_DELETED", roomId);
     }
 
+    // ---------------------------------------------------------------- Sprint
+
+    /** Crea la chat dedicata a una sprint. È accessibile a tutti i membri del workspace (come una
+     *  ROOM pubblica): le righe channel_members vengono create lazy al primo accesso/lettura. */
+    @Transactional
+    public Channel createSprintChannel(UUID workspaceId, UUID sprintId, String sprintName, User creator) {
+        Workspace ws = workspaceRepository.getReferenceById(workspaceId);
+        Channel channel = channelRepository.save(Channel.builder()
+                .workspace(ws).type(ChannelType.SPRINT)
+                .name("Sprint: " + sprintName)
+                .sprintId(sprintId)
+                .createdBy(creator).build());
+        broadcastChannelEvent(workspaceId, "CHANNEL_CREATED", channel.getId());
+        return channel;
+    }
+
     // ---------------------------------------------------------------- Messaggi
 
     @Transactional
@@ -289,10 +305,13 @@ public class ChannelService {
         return c;
     }
 
-    // Accesso: ROOM pubblica → qualsiasi membro del workspace; altrimenti membro esplicito del canale.
+    // Accesso: ROOM pubblica e chat SPRINT → qualsiasi membro del workspace; altrimenti membro esplicito.
     private void assertChannelAccess(Channel channel, User user) {
         workspaceService.assertMember(channel.getWorkspace().getId(), user);
         if (channel.getType() == ChannelType.ROOM && !channel.isPrivate()) {
+            return;
+        }
+        if (channel.getType() == ChannelType.SPRINT) {
             return;
         }
         if (!memberRepository.existsByChannelIdAndUserId(channel.getId(), user.getId())) {
