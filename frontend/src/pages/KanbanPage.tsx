@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { subscribeWorkspace } from '@/lib/websocket'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
 import { Plus, ChevronDown, ChevronRight, Search, X, Filter, Trash2 } from 'lucide-react'
 import { elementsApi, tagsApi, workspacesApi } from '@/lib/api'
@@ -275,6 +276,19 @@ export default function KanbanPage() {
     queryFn: () => elementsApi.list(wsId!),
     enabled: !!wsId,
   })
+
+  // Aggiornamento in tempo reale: quando un elemento viene creato/aggiornato/eliminato
+  // (anche da API esterna o dall'assistente), ricarichiamo gli elementi senza che l'utente
+  // debba ricaricare la pagina, così la Kanban si riordina da sola.
+  useEffect(() => {
+    if (!wsId) return
+    return subscribeWorkspace(wsId, ev => {
+      if (ev.type.startsWith('ELEMENT_')) {
+        queryClient.invalidateQueries({ queryKey: ['elements', wsId] })
+        queryClient.invalidateQueries({ queryKey: ['my-tasks'] })
+      }
+    })
+  }, [wsId, queryClient])
   const { data: tags = [] } = useQuery<Tag[]>({
     queryKey: ['tags', wsId],
     queryFn: () => tagsApi.list(wsId!),

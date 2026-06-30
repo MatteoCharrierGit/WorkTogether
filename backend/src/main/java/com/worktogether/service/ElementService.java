@@ -101,9 +101,31 @@ public class ElementService {
                 .build();
 
         element = elementRepository.save(element);
+
+        // Se il nuovo elemento finisce sotto una storia/epica già contrassegnata come COMPLETATO,
+        // quel ramo non è più davvero concluso: riattiviamo gli antenati completati (IN_CORSO) così
+        // non restano "completati" pur avendo lavoro nuovo aperto sotto di sé.
+        reactivateCompletedAncestors(parent, workspaceId);
+
         ElementResponse response = ElementResponse.from(element);
         eventPublisher.publish(workspaceId, "ELEMENT_CREATED", response);
         return response;
+    }
+
+    // Risale la catena dei padri e riporta a IN_CORSO ogni antenato che risulta COMPLETATO,
+    // azzerando completedAt. Pubblica un ELEMENT_UPDATED per ciascuno così la UI si aggiorna.
+    private void reactivateCompletedAncestors(Element parent, UUID workspaceId) {
+        Element ancestor = parent;
+        while (ancestor != null) {
+            if (ancestor.getStatus() == ElementStatus.COMPLETATO) {
+                ancestor.setStatus(ElementStatus.IN_CORSO);
+                ancestor.setCompletedAt(null);
+                ancestor = elementRepository.save(ancestor);
+                Integer progress = ancestor.getType() == ElementType.EPICA ? calcProgress(ancestor.getId()) : null;
+                eventPublisher.publish(workspaceId, "ELEMENT_UPDATED", ElementResponse.from(ancestor, progress));
+            }
+            ancestor = ancestor.getParent();
+        }
     }
 
     @Transactional

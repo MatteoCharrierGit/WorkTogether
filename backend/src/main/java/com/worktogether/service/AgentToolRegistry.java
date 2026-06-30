@@ -67,7 +67,9 @@ public class AgentToolRegistry {
         // --- Scrittura (se non sola lettura) ---
         if (autonomy != AiAutonomy.READ_ONLY) {
             tools.add(tool("create_element",
-                    "Crea un elemento. Per far comparire un TASK nella Kanban va passato parentId di una STORIA. "
+                    "Crea un elemento. Se crei un'EPICA o una STORIA con un titolo che esiste già (stessa epica, per "
+                            + "le storie) NON viene duplicata: ricevi l'elemento esistente con \"reused\": true e devi "
+                            + "usare quell'id come parentId per i task. Per far comparire un TASK nella Kanban va passato parentId di una STORIA. "
                             + "Gli EVENTO del calendario sono a GIORNATA INTERA: per crearli basta la DATA in startDate "
                             + "nel formato YYYY-MM-DD (es. 2026-06-25), NON serve l'ora. startDate è obbligatorio per gli EVENTO. "
                             + "Per un evento su più giorni indica anche endDate (YYYY-MM-DD).",
@@ -454,6 +456,27 @@ public class AgentToolRegistry {
             return "ERRORE: un TASK richiede il parentId di una STORIA per comparire nella Kanban. Riprova "
                     + "scegliendo parentId tra queste storie: " + json(stories);
         }
+        // Anti-duplicato: se l'agente prova a (ri)creare un'EPICA o una STORIA che esiste già
+        // — stesso titolo (case-insensitive), e per le storie sotto la stessa epica — non ne
+        // creiamo una seconda: restituiamo quella esistente così il task viene appeso lì sotto.
+        String type = text(a, "type");
+        if ("EPICA".equalsIgnoreCase(type) || "STORIA".equalsIgnoreCase(type)) {
+            String title = text(a, "title").trim();
+            UUID parentId = uuid(a, "parentId");
+            for (ElementResponse e : elementService.getElements(wsId, user)) {
+                if (!type.equalsIgnoreCase(String.valueOf(e.type()))) continue;
+                if (e.title() == null || !e.title().trim().equalsIgnoreCase(title)) continue;
+                // Per le storie distinguiamo anche il padre: stesse storie sotto epiche diverse sono distinte.
+                if ("STORIA".equalsIgnoreCase(type)) {
+                    String existingParent = e.parentId() == null ? null : e.parentId().toString();
+                    String wantedParent = parentId == null ? null : parentId.toString();
+                    if (!Objects.equals(existingParent, wantedParent)) continue;
+                }
+                return json(Map.of("id", e.id(), "type", e.type(), "title", e.title(),
+                        "status", e.status(), "reused", true));
+            }
+        }
+
         boolean isEvent = "EVENTO".equalsIgnoreCase(text(a, "type"));
         if (isEvent) {
             normalizeEventDates(a);

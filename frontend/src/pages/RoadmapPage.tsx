@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { subscribeWorkspace } from '@/lib/websocket'
 import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react'
 import { elementsApi } from '@/lib/api'
 import { useElementDelete } from '@/lib/useElementDelete'
@@ -119,6 +120,7 @@ function EpicRow({ epic, stories, allElements, minDate, maxDate, totalDays }: {
 
 export default function RoadmapPage() {
   const { wsId } = useParams<{ wsId: string }>()
+  const queryClient = useQueryClient()
   const workspace = useWorkspaceStore(s => s.current)
   const [createOpen, setCreateOpen] = useState(false)
 
@@ -127,6 +129,17 @@ export default function RoadmapPage() {
     queryFn: () => elementsApi.list(wsId!),
     enabled: !!wsId,
   })
+
+  // Aggiornamento in tempo reale: la roadmap si riallinea da sola quando gli elementi cambiano
+  // (creazione da API/assistente, modifiche di stato), senza bisogno di ricaricare la pagina.
+  useEffect(() => {
+    if (!wsId) return
+    return subscribeWorkspace(wsId, ev => {
+      if (ev.type.startsWith('ELEMENT_')) {
+        queryClient.invalidateQueries({ queryKey: ['elements', wsId] })
+      }
+    })
+  }, [wsId, queryClient])
 
   const epics = elements.filter(e => e.type === 'EPICA')
   const stories = elements.filter(e => e.type === 'STORIA')
