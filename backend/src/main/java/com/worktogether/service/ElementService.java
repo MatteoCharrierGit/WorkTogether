@@ -72,6 +72,20 @@ public class ElementService {
                     .orElseThrow(() -> new EntityNotFoundException("Parent not found"));
         }
 
+        // Anti-duplicato per i caricamenti via API: un'integrazione esterna che ri-sincronizza
+        // ricrea spesso le stesse EPICHE/STORIE (per titolo). Invece di duplicarle, riusiamo
+        // quella già presente (stesso titolo, e per le storie lo stesso padre) così i figli
+        // finiscono sotto l'elemento esistente. Vale solo per le richieste autenticate via API key:
+        // dalla UI un utente resta libero di creare elementi con lo stesso titolo.
+        if (isApiKeyRequest() && (req.type() == ElementType.EPICA || req.type() == ElementType.STORIA)) {
+            Element existing = findExistingContainer(workspaceId, req.type(), req.title(),
+                    parent != null ? parent.getId() : null);
+            if (existing != null) {
+                Integer progress = existing.getType() == ElementType.EPICA ? calcProgress(existing.getId()) : null;
+                return ElementResponse.from(existing, progress);
+            }
+        }
+
         Set<Tag> tags = new HashSet<>();
         if (req.tagIds() != null) {
             tags.addAll(tagRepository.findAllById(req.tagIds()));
@@ -110,6 +124,36 @@ public class ElementService {
         ElementResponse response = ElementResponse.from(element);
         eventPublisher.publish(workspaceId, "ELEMENT_CREATED", response);
         return response;
+    }
+
+    // Cerca un'EPICA/STORIA già esistente con lo stesso titolo (case-insensitive) e, per le storie,
+    // sotto lo stesso padre. Restituisce la più vecchia (la "canonica") oppure null se non esiste.
+    private Element findExistingContainer(UUID workspaceId, ElementType type, String title, UUID parentId) {
+        if (title == null) return null;
+        String wanted = title.trim();
+        return elementRepository.findByWorkspaceIdAndType(workspaceId, type).stream()
+                .filter(e -> e.getTitle() != null && e.getTitle().trim().equalsIgnoreCase(wanted))
+                .filter(e -> {
+                    if (type != ElementType.STORIA) return true; // le epiche stanno alla radice
+                    UUID existingParent = e.getParent() != null ? e.getParent().getId() : null;
+                    return Objects.equals(existingParent, parentId);
+                })
+                .min(Comparator.comparing(Element::getCreatedAt))
+                .orElse(null);
+    }
+
+    // True se la richiesta corrente è autenticata via API key (vedi ApiKeyAuthFilter).
+    private boolean isApiKeyRequest() {
+        try {
+            var attrs = org.springframework.web.context.request.RequestContextHolder.getRequestAttributes();
+            if (attrs instanceof org.springframework.web.context.request.ServletRequestAttributes sra) {
+                return sra.getRequest().getAttribute(
+                        com.worktogether.security.ApiKeyAuthFilter.ATTR_API_KEY) != null;
+            }
+        } catch (Exception ignored) {
+            // fuori da un contesto web (es. test): trattiamo come richiesta non-API
+        }
+        return false;
     }
 
     // Risale la catena dei padri e riporta a IN_CORSO ogni antenato che risulta COMPLETATO,
