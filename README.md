@@ -153,3 +153,7 @@ worktogether/
 - **Voce/Schermo**: container LiveKit dedicato; Spring firma i token d'accesso. Niente webcam, niente registrazioni.
 
 Stato e roadmap delle funzioni realtime: [PIANO_DISCORD.md](./PIANO_DISCORD.md) (fasi 0→4 completate lato codice).
+
+---
+
+_Ultimo controllo del README: 17 ottobre 2026._
