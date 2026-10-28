@@ -12,6 +12,7 @@ import { useUiStore } from '@/store/uiStore'
 import { elementsApi, workspacesApi, aiApi, channelsApi } from '@/lib/api'
 import type { Channel, Element, Workspace } from '@/types'
 import { IconButton } from '@/components/ui/icon-button'
+import { NotificationBell } from '@/components/notifications/NotificationBell'
 import { Kbd } from '@/components/ui/kbd'
 import { Skeleton } from '@/components/ui/skeleton'
 import { SimpleTooltip } from '@/components/ui/tooltip'
@@ -372,16 +373,21 @@ export function Sidebar({ collapsed = false, variant = 'desktop' }: SidebarProps
             icon={<Search />}
           />
         ) : (
+          <div className="mb-1 flex items-center gap-1">
           <button
             type="button"
             onClick={() => setCommandOpen(true)}
-            className="mb-1 flex h-8 w-full items-center gap-2 rounded-md border border-sidebar-border bg-background/60 px-2 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border border-sidebar-border bg-background/60 px-2 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span className="flex-1 text-left">Cerca…</span>
             <Kbd className="hidden md:inline-flex">{MOD_KEY}K</Kbd>
           </button>
+          {/* Notifiche: nel drawer mobile la campanella è già nella top bar. */}
+          {variant === 'desktop' && <NotificationBell tooltipSide="bottom" />}
+          </div>
         )}
+        {collapsed && variant === 'desktop' && <NotificationBell tooltipSide="right" />}
         <NavLinkItem item={MY_TASKS_ITEM} active={isNavActive(MY_TASKS_ITEM, pathname)} collapsed={collapsed} />
       </div>
 

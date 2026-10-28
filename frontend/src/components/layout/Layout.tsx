@@ -19,6 +19,7 @@ import { VoiceSessionProvider } from '@/contexts/VoiceSession'
 import { VoiceBar } from '@/components/voice/VoiceBar'
 import { ScreenShareOverlay } from '@/components/voice/ScreenShareOverlay'
 import { PresenceManager } from '@/components/PresenceManager'
+import { NotificationBell } from '@/components/notifications/NotificationBell'
 import { IconButton } from '@/components/ui/icon-button'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { useAuthStore } from '@/store/authStore'
@@ -147,6 +148,7 @@ export function Layout() {
             <IconButton label="Apri menu" onClick={() => setNavOpen(true)} icon={<Menu />} />
             <span className="min-w-0 flex-1 truncate px-1 text-sm font-semibold">{title}</span>
             <IconButton label="Cerca" onClick={() => setCommandOpen(true)} icon={<Search />} />
+            <NotificationBell />
           </header>
           <Outlet />
         </main>

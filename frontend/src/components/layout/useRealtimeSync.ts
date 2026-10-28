@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { QueryClient, QueryKey, useQueryClient } from '@tanstack/react-query'
-import type { Channel, Workspace, WsEvent, WsEventType } from '@/types'
+import type { AppNotification, Channel, NotificationWsEventType, Workspace, WsEvent, WsEventType } from '@/types'
 import { useWorkspaceEvents, useUserEvents, onWSConnect } from '@/lib/websocket'
-import { getActiveChatChannel } from '@/lib/notifications'
+import { appIsForeground, getActiveChatChannel, showChatNotification } from '@/lib/notifications'
+import { applyRemoteRead, prependNotification } from '@/components/notifications/useNotifications'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { toast } from '@/components/ui/toast'
 
@@ -27,6 +28,8 @@ const elementKeys: KeysFor = wsId => [
   // Le transizioni dei task (stato/blocco/sprint) si riflettono nelle viste sprint.
   ['sprints', wsId],
   ['sprint-active', wsId],
+  // Dashboard: KPI, throughput, carico e sprint dipendono dai task.
+  ['dashboard', wsId],
 ]
 
 const channelKeys: KeysFor = wsId => [['channels', wsId], ['rooms', wsId]]
@@ -37,12 +40,12 @@ const INVALIDATIONS: Partial<Record<WsEventType, KeysFor>> = {
   ELEMENT_UPDATED: (wsId, ev) => [...elementKeys(wsId, ev), ['attachments', wsId]],
   ELEMENT_DELETED: elementKeys,
   TAG_CHANGED: wsId => [['tags', wsId], ['elements', wsId], ['element', wsId], ['my-tasks']],
-  SPRINT_CHANGED: wsId => [['sprints', wsId], ['sprint-active', wsId]],
+  SPRINT_CHANGED: wsId => [['sprints', wsId], ['sprint-active', wsId], ['dashboard', wsId]],
   DRIVE_CHANGED: wsId => [['drive-folders', wsId], ['drive-files', wsId]],
   CHANNEL_CREATED: channelKeys,
   CHANNEL_UPDATED: channelKeys,
   CHANNEL_DELETED: channelKeys,
-  MEMBER_ADDED: wsId => [['members', wsId], ['channels', wsId]],
+  MEMBER_ADDED: wsId => [['members', wsId], ['channels', wsId], ['dashboard', wsId]],
   // MESSAGE_CREATED: aggiornato in cache con setQueryData (vedi sotto), nessun refetch.
   // TYPING / PRESENCE / AI_MESSAGE: gestiti da ChatPage / PresenceManager / AssistantPage.
 }
@@ -51,7 +54,9 @@ const INVALIDATIONS: Partial<Record<WsEventType, KeysFor>> = {
 const RECONNECT_KEYS = (wsId: string): QueryKey[] => [
   ['elements', wsId], ['element', wsId], ['my-tasks'], ['channels', wsId], ['tags', wsId],
   ['sprints', wsId], ['sprint-active', wsId], ['drive-folders', wsId], ['drive-files', wsId],
-  ['members', wsId], ['workspaces'],
+  ['members', wsId], ['workspaces'], ['dashboard', wsId],
+  // Notifiche personali arrivate mentre si era offline.
+  ['notifications'], ['notifications-unread'],
 ]
 
 /** Coda di invalidazioni con flush ritardato e deduplica per chiave. */
@@ -108,7 +113,7 @@ export function useRealtimeSync({ workspaceId, meId, onMessage }: Options) {
       case 'MEMBER_REMOVED': {
         const kicked = ev.type === 'WORKSPACE_DELETED' || p.userId === meId
         if (!kicked) {
-          batcher.add([['members', workspaceId], ['channels', workspaceId]])
+          batcher.add([['members', workspaceId], ['channels', workspaceId], ['dashboard', workspaceId]])
           return
         }
         const id = (ev.type === 'WORKSPACE_DELETED' && p.workspaceId) || workspaceId
@@ -165,6 +170,27 @@ export function useRealtimeSync({ workspaceId, meId, onMessage }: Options) {
 
   // Coda personale: CHANNEL_READ arriva solo a chi ha letto (anche da un'altra scheda/dispositivo).
   useUserEvents(ev => {
+    // Notifiche in-app: aggiornate in cache (lista + contatore) senza refetch.
+    const userType = ev.type as WsEventType | NotificationWsEventType
+    if (userType === 'NOTIFICATION') {
+      const n = ev.payload as AppNotification | undefined
+      if (!n?.id) return
+      prependNotification(queryClient, n)
+      // Notifica di sistema (se l'utente ha concesso il permesso) quando l'app non è in primo piano.
+      if (!appIsForeground()) {
+        showChatNotification({
+          title: n.title,
+          body: n.body ?? '',
+          tag: `notif-${n.id}`,
+          onClick: n.link ? () => navigate(n.link!) : undefined,
+        })
+      }
+      return
+    }
+    if (userType === 'NOTIFICATIONS_READ') {
+      applyRemoteRead(queryClient, ev.payload || {})
+      return
+    }
     if (ev.type !== 'CHANNEL_READ') return
     const { workspaceId: wsId, channelId } = ev.payload || {}
     if (!wsId || !channelId) return

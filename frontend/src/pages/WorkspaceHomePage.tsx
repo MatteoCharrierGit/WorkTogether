@@ -15,8 +15,8 @@ import { ROLE_LABELS } from '@/components/layout/nav'
 
 /**
  * Ingresso dell'area autenticata.
- *  - `/workspace/:wsId` → imposta il workspace corrente e apre la sua Kanban.
- *  - `/` → apre l'ultimo workspace usato (o il primo) sulla Kanban.
+ *  - `/workspace/:wsId` → imposta il workspace corrente e apre la sua Dashboard.
+ *  - `/` → apre l'ultimo workspace usato (o il primo) sulla Dashboard.
  * Mostra contenuto solo mentre carica, se non ci sono workspace, o se il workspace richiesto
  * non è tra quelli dell'utente.
  */
@@ -44,7 +44,7 @@ export default function WorkspaceHomePage() {
   useEffect(() => {
     if (!target) return
     setCurrent(target)
-    navigate(`/workspace/${target.id}/kanban`, { replace: true })
+    navigate(`/workspace/${target.id}/dashboard`, { replace: true })
   }, [target, setCurrent, navigate])
 
   const createAction = isSystemAdmin && (
@@ -107,7 +107,7 @@ function WorkspaceList({ workspaces, onPick }: { workspaces: Workspace[]; onPick
         {workspaces.map(ws => (
           <li key={ws.id}>
             <Link
-              to={`/workspace/${ws.id}/kanban`}
+              to={`/workspace/${ws.id}/dashboard`}
               onClick={() => onPick(ws)}
               className="flex items-center gap-3 px-3 py-3 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >

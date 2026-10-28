@@ -1,5 +1,5 @@
 import {
-  Bot, CalendarDays, CheckSquare, Folder, GanttChartSquare, Home, KanbanSquare, Mail, MessagesSquare,
+  Bot, CalendarDays, CheckSquare, Folder, GanttChartSquare, Home, KanbanSquare, LayoutDashboard, Mail, MessagesSquare,
   Settings, ShieldCheck, Target, type LucideIcon,
 } from 'lucide-react'
 import type { Workspace } from '@/types'
@@ -43,6 +43,7 @@ export function workspaceNavGroups({ workspace, aiEnabled }: NavContext): NavGro
   const base = `/workspace/${workspace.id}`
   const isAdmin = workspace.myRole === 'ADMIN'
   const plan: NavItem[] = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: `${base}/dashboard`, keywords: ['panoramica', 'home', 'statistiche', 'kpi'] },
     // Il dettaglio elemento nasce dalla board: tiene evidenziato Kanban.
     { id: 'kanban', label: 'Kanban', icon: KanbanSquare, to: `${base}/kanban`, match: [`${base}/kanban`, `${base}/element`], tour: 'kanban', keywords: ['board', 'task'] },
     { id: 'roadmap', label: 'Roadmap', icon: GanttChartSquare, to: `${base}/roadmap`, tour: 'roadmap', keywords: ['gantt', 'timeline'] },
@@ -76,6 +77,7 @@ export function isNavActive(item: NavItem, pathname: string): boolean {
 }
 
 const SEGMENT_TITLES: Record<string, string> = {
+  dashboard: 'Dashboard',
   kanban: 'Kanban',
   roadmap: 'Roadmap',
   calendar: 'Calendario',
@@ -109,11 +111,11 @@ export const ROLE_LABELS: Record<string, string> = {
 export const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl '
 
 /** Sezioni che esistono in ogni workspace: cambiando workspace si resta nella stessa sezione. */
-const PORTABLE_SECTIONS = ['kanban', 'roadmap', 'calendar', 'chat', 'drive']
+const PORTABLE_SECTIONS = ['dashboard', 'kanban', 'roadmap', 'calendar', 'chat', 'drive']
 
 /** Path di destinazione quando si passa al workspace `wsId` partendo da `pathname`. */
 export function workspaceSwitchPath(pathname: string, wsId: string): string {
   const m = pathname.match(/^\/workspace\/[^/]+\/([^/]+)/)
-  const section = m && PORTABLE_SECTIONS.includes(m[1]) ? m[1] : 'kanban'
+  const section = m && PORTABLE_SECTIONS.includes(m[1]) ? m[1] : 'dashboard'
   return `/workspace/${wsId}/${section}`
 }

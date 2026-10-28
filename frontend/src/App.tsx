@@ -27,6 +27,7 @@ const AssistantPage = lazy(() => import('@/pages/AssistantPage'))
 const ChatPage = lazy(() => import('@/pages/ChatPage'))
 const SprintPage = lazy(() => import('@/pages/SprintPage'))
 const MailPage = lazy(() => import('@/pages/MailPage'))
+const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -66,6 +67,7 @@ export default function App() {
                 <Route path="/workspace/:wsId/chat" element={<ChatPage />} />
                 <Route path="/workspace/:wsId/sprint" element={<SprintPage />} />
                 <Route path="/workspace/:wsId" element={<WorkspaceHomePage />} />
+                <Route path="/workspace/:wsId/dashboard" element={<DashboardPage />} />
                 <Route path="/workspace/:wsId/kanban" element={<KanbanPage />} />
                 <Route path="/workspace/:wsId/roadmap" element={<RoadmapPage />} />
                 <Route path="/workspace/:wsId/calendar" element={<CalendarPage />} />
