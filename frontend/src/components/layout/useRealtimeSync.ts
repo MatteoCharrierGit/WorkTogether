@@ -42,6 +42,7 @@ const INVALIDATIONS: Partial<Record<WsEventType, KeysFor>> = {
   CHANNEL_CREATED: channelKeys,
   CHANNEL_UPDATED: channelKeys,
   CHANNEL_DELETED: channelKeys,
+  MEMBER_ADDED: wsId => [['members', wsId], ['channels', wsId]],
   // MESSAGE_CREATED: aggiornato in cache con setQueryData (vedi sotto), nessun refetch.
   // TYPING / PRESENCE / AI_MESSAGE: gestiti da ChatPage / PresenceManager / AssistantPage.
 }
@@ -117,6 +118,21 @@ export function useRealtimeSync({ workspaceId, meId, onMessage }: Options) {
         void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
         toast(ev.type === 'WORKSPACE_DELETED' ? 'Questo workspace è stato eliminato' : 'Sei stato rimosso da questo workspace')
         navigate('/', { replace: true })
+        return
+      }
+      case 'MEMBER_ROLE_CHANGED':
+      case 'WORKSPACE_UPDATED': {
+        batcher.add(ev.type === 'WORKSPACE_UPDATED'
+          ? [['sprints', workspaceId], ['sprint-active', workspaceId]]
+          : [['members', workspaceId]])
+        // Il proprio ruolo e le impostazioni (sprintEnabled, opzioni card) vivono nel workspace
+        // corrente dello store: riletto dalla lista aggiornata.
+        if (ev.type === 'WORKSPACE_UPDATED' || p.userId === meId) {
+          void queryClient.refetchQueries({ queryKey: ['workspaces'] }).then(() => {
+            const fresh = queryClient.getQueryData<Workspace[]>(['workspaces'])?.find(w => w.id === workspaceId)
+            if (fresh && useWorkspaceStore.getState().current?.id === workspaceId) setCurrentWorkspace(fresh)
+          })
+        }
         return
       }
       case 'MESSAGE_CREATED': {

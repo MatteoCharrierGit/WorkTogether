@@ -26,7 +26,6 @@ import {
 } from '@/components/chat/useChannelMessages'
 
 const READ_DEBOUNCE_MS = 500
-const OWN_ECHO_WINDOW_MS = 10_000
 
 export default function ChatPage() {
   const { wsId } = useParams<{ wsId: string }>()
@@ -61,8 +60,6 @@ export default function ChatPage() {
   // Non letti al momento dell'apertura → separatore "Nuovi" sul primo messaggio non letto.
   const unreadAtOpen = useRef<{ id: string; count: number } | null>(null)
   const [firstUnread, setFirstUnread] = useState<{ channelId: string; msgId: string } | null>(null)
-  // Canali con messaggi arrivati mentre non erano aperti (cache da riallineare alla riapertura).
-  const staleChannels = useRef(new Set<string>())
 
   const openChannel = useCallback((id: string | null) => {
     if (id) {
@@ -82,13 +79,6 @@ export default function ChatPage() {
       setFirstUnread({ channelId: u.id, msgId: settled[settled.length - u.count].id })
     }
   }, [activeId, messages, messagesQuery.isLoading, messagesQuery.data])
-
-  // Riaprendo un canale con cache vecchia: riallinea solo l'ultima pagina.
-  useEffect(() => {
-    if (!wsId || !activeId || !staleChannels.current.has(activeId)) return
-    staleChannels.current.delete(activeId)
-    void syncLatestMessages(queryClient, wsId, activeId)
-  }, [wsId, activeId, queryClient])
 
   // Deep-link dalle notifiche: ?c=<channelId> apre quel canale (una volta caricati).
   useEffect(() => {
@@ -155,19 +145,17 @@ export default function ChatPage() {
 
   // ---------------------------------------------------------------- realtime
 
-  const lastOwnSend = useRef(0)
-
   useWorkspaceEvents(wsId, ev => {
     if (ev.type !== 'MESSAGE_CREATED' || !wsId) return
     const p = ev.payload || {}
     if (!p.channelId) return
     const own = p.authorId === me?.id
-    if (p.channelId !== activeIdRef.current) {
-      if (queryClient.getQueryData(messagesKey(wsId, p.channelId))) staleChannels.current.add(p.channelId)
-      return
-    }
-    // Il mio messaggio inviato da questa scheda è già in cache (risposta della POST).
-    if (own && Date.now() - lastOwnSend.current < OWN_ECHO_WINDOW_MS) return
+    // Canali non aperti: la cache viene riallineata alla riapertura (useChannelMessages).
+    if (p.channelId !== activeIdRef.current) return
+    // Messaggio già in cache (es. inviato da questa scheda, risposta della POST): niente sync.
+    // I miei messaggi da un'altra scheda/dispositivo invece si sincronizzano.
+    if (p.messageId && queryClient.getQueryData<{ pages: UiMessage[][] }>(messagesKey(wsId, p.channelId))
+      ?.pages.some(pg => pg.some(m => m.id === p.messageId))) return
     void syncLatestMessages(queryClient, wsId, p.channelId)
     if (!own) requestRead()
   })
@@ -198,7 +186,6 @@ export default function ChatPage() {
   const send = useCallback(async (text: string) => {
     const channelId = activeIdRef.current
     if (!wsId || !channelId || !me) return false
-    lastOwnSend.current = Date.now()
     lastTypingSent.current = 0
     const tmp: UiMessage = {
       id: `tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -213,7 +200,6 @@ export default function ChatPage() {
     appendMessages(queryClient, wsId, channelId, [tmp])
     try {
       const real: UiMessage = await channelsApi.sendMessage(wsId, channelId, text)
-      lastOwnSend.current = Date.now()
       appendMessages(queryClient, wsId, channelId, [real], tmp.id)
     } catch (err: any) {
       removeMessage(queryClient, wsId, channelId, tmp.id)

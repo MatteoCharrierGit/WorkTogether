@@ -110,7 +110,8 @@ export const workspacesApi = {
 
 // Elements
 export const elementsApi = {
-  list: (wsId: string) => api.get(`/workspaces/${wsId}/elements`).then(r => r.data),
+  // La web app non usa il body in lista: lo esclude esplicitamente (il default server è includeBody=true).
+  list: (wsId: string) => api.get(`/workspaces/${wsId}/elements`, { params: { includeBody: false } }).then(r => r.data),
   get: (wsId: string, id: string) => api.get(`/workspaces/${wsId}/elements/${id}`).then(r => r.data),
   create: (wsId: string, data: object) =>
     api.post(`/workspaces/${wsId}/elements`, data).then(r => r.data),

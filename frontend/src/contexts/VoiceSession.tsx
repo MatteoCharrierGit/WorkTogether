@@ -308,11 +308,25 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     setParticipantVolumes({})
   }, [])
 
+  // Generazione del join: leave() (o un nuovo join) la incrementa, così un join ancora in attesa
+  // di token/modulo/connessione si accorge di essere superato e chiude la propria Room.
+  const joinGenRef = useRef(0)
+
   const join = useCallback(async (p: JoinParams) => {
     if (statusRef.current === 'connecting') return
-    if (roomRef.current) await roomRef.current.disconnect()
-
+    const gen = ++joinGenRef.current
+    const stale = () => gen !== joinGenRef.current
     statusRef.current = 'connecting'
+    let room: Room | null = null
+    if (roomRef.current) {
+      const prev = roomRef.current
+      roomRef.current = null
+      await prev.disconnect().catch(() => {})
+      if (stale()) return
+      reset()
+      statusRef.current = 'connecting'
+    }
+
     setStatus('connecting'); setWsId(p.wsId); setChannelId(p.channelId)
     setChannelName(p.channelName); setScreenShareAllowed(p.screenShareEnabled)
     setScreenViewerOpen(true)
@@ -322,14 +336,16 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         channelsApi.voiceToken(p.wsId, p.channelId),
         loadLiveKit(),
       ])
+      if (stale()) return
       if (!url) throw new Error('URL del media server non configurato')
 
-      const room = new Room({
+      room = new Room({
         adaptiveStream: true,
         dynacast: true,
         audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       })
       roomRef.current = room
+      const thisRoom = room
 
       room
         .on(RoomEvent.ParticipantConnected, sync)
@@ -353,21 +369,33 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         })
         .on(RoomEvent.Reconnecting, () => setReconnecting(true))
         .on(RoomEvent.Reconnected, () => { setReconnecting(false); sync() })
-        .on(RoomEvent.Disconnected, () => reset())
+        // Solo la Room corrente resetta lo stato (una Room di un join superato no).
+        .on(RoomEvent.Disconnected, () => { if (roomRef.current === thisRoom) reset() })
 
       await room.connect(url, token)
+      if (stale()) throw new Error('stale join')
       await room.localParticipant.setMicrophoneEnabled(true)
+      if (stale()) throw new Error('stale join')
       await room.startAudio().catch(() => {})
+      if (stale()) throw new Error('stale join')
 
       try {
         const mics = await Room.getLocalDevices('audioinput')
         setDevices(mics)
         setActiveDeviceId(room.getActiveDevice('audioinput') ?? mics[0]?.deviceId ?? '')
       } catch { /* etichette dispositivi non disponibili: ignora */ }
+      if (stale()) throw new Error('stale join')
 
+      statusRef.current = 'connected'
       setStatus('connected')
       sync()
     } catch (err: any) {
+      if (stale()) {
+        // Join annullato (leave o nuovo join): chiude la propria Room senza toccare lo stato.
+        if (room && roomRef.current === room) roomRef.current = null
+        await room?.disconnect().catch(() => {})
+        return
+      }
       await roomRef.current?.disconnect().catch(() => {})
       reset()
       const msg = err?.response?.data?.error
@@ -379,8 +407,11 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   }, [sync, reset])
 
   const leave = useCallback(async () => {
-    await roomRef.current?.disconnect().catch(() => {})
+    joinGenRef.current++ // invalida un eventuale join in corso
+    statusRef.current = 'idle'
+    const room = roomRef.current
     reset()
+    await room?.disconnect().catch(() => {})
   }, [reset])
 
   const toggleMute = useCallback(async () => {

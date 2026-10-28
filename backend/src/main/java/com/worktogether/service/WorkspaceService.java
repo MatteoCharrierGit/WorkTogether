@@ -89,7 +89,10 @@ public class WorkspaceService {
                 .findByWorkspaceIdAndUserId(workspaceId, userId)
                 .orElseGet(() -> WorkspaceMember.builder().workspace(ws).user(target).build());
         member.setRole(role);
-        return MemberResponse.from(memberRepository.save(member));
+        MemberResponse saved = MemberResponse.from(memberRepository.save(member));
+        publishAfterCommit(workspaceId, "MEMBER_ADDED",
+                Map.of("userId", userId.toString(), "role", String.valueOf(role)));
+        return saved;
     }
 
     @Transactional
@@ -99,6 +102,8 @@ public class WorkspaceService {
                 .orElseThrow(() -> new EntityNotFoundException("Member not found"));
         member.setRole(role);
         memberRepository.save(member);
+        publishAfterCommit(workspaceId, "MEMBER_ROLE_CHANGED",
+                Map.of("userId", userId.toString(), "role", String.valueOf(role)));
     }
 
     /**
@@ -189,6 +194,8 @@ public class WorkspaceService {
         WorkspaceMember member = WorkspaceMember.builder()
                 .workspace(ws).user(newUser).role(role).build();
         memberRepository.save(member);
+        publishAfterCommit(workspaceId, "MEMBER_ADDED",
+                Map.of("userId", newUser.getId().toString(), "role", String.valueOf(role)));
         return UserResponse.from(newUser);
     }
 
@@ -209,6 +216,8 @@ public class WorkspaceService {
         if (req.mondayDigestEnabled() != null) ws.setMondayDigestEnabled(req.mondayDigestEnabled());
         if (req.sprintEnabled() != null) ws.setSprintEnabled(req.sprintEnabled());
         ws = workspaceRepository.save(ws);
+        // Impostazioni (sprintEnabled, card, avatar…): gli altri client rifanno la lista workspace.
+        publishAfterCommit(workspaceId, "WORKSPACE_UPDATED", Map.of("workspaceId", workspaceId.toString()));
         return WorkspaceResponse.from(ws, getUserRole(workspaceId, requester));
     }
 

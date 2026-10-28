@@ -42,7 +42,8 @@ function ElementDetail({ wsId, elementId }: { wsId: string; elementId: string })
   })
 
   if (query.isLoading) return <DetailSkeleton />
-  if (query.isError || !query.data) {
+  // Con dati in cache un refetch fallito (isError + data) NON smonta l'editor: si perderebbero le bozze.
+  if (!query.data) {
     const notFound = (query.error as any)?.response?.status === 404 || (!query.isError && !query.data)
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center p-4">
@@ -183,6 +184,8 @@ function ElementDocument({ wsId, element }: { wsId: string; element: Element }) 
     if (!ok) return
     try {
       await elementsApi.delete(wsId, element.id)
+      // Elemento eliminato: niente PUT delle bozze pendenti (allo smontaggio darebbe 404).
+      save.discard()
       queryClient.invalidateQueries({ queryKey: ['elements', wsId] })
       queryClient.invalidateQueries({ queryKey: ['my-tasks'] })
       toast('Elemento eliminato')

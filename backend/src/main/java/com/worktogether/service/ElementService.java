@@ -215,7 +215,9 @@ public class ElementService {
 
         Element element = findInWorkspace(workspaceId, elementId);
 
-        if (req.type() == ElementType.EPICA && role != WorkspaceRole.ADMIN) {
+        // Conta il tipo salvato (il PUT è parziale: type può mancare o non corrispondere).
+        if ((element.getType() == ElementType.EPICA || req.type() == ElementType.EPICA)
+                && role != WorkspaceRole.ADMIN) {
             throw new AccessDeniedException("Only admins can modify Epics");
         }
         if ((element.getType() == ElementType.STORIA || element.getType() == ElementType.EVENTO)

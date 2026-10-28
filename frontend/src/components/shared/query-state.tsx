@@ -123,7 +123,9 @@ export function QueryState<T>({
     return <div className={className}>{loading ?? <LoadingSkeleton kind={skeleton} rows={rows} />}</div>
   }
 
-  if (errorFlag) {
+  // Un refetch fallito con dati già in cache (react-query v5: isError + data) non nasconde il
+  // contenuto: l'errore vince solo quando non ci sono dati da mostrare.
+  if (errorFlag && data == null) {
     return (
       <Callout
         variant="destructive"

@@ -33,8 +33,8 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 1000 * 30,
       retry: 1,
-      // Gli aggiornamenti arrivano via WebSocket: il refetch al focus è ridondante.
-      refetchOnWindowFocus: false,
+      // Refetch al focus attivo (default): non tutte le mutazioni emettono eventi WebSocket.
+      // I messaggi chat hanno staleTime Infinity e restano esclusi.
     },
   },
 })

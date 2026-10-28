@@ -19,13 +19,12 @@ public class ElementController {
 
     private final ElementService elementService;
 
-    // La lista omette "body" (rich text) per alleggerire il payload: le viste lista non lo usano.
-    // Il dettaglio GET /{id} lo include sempre; ?includeBody=true lo ripristina anche in lista
-    // (es. integrazioni esterne via API key che lo leggevano).
+    // Per compatibilità con le integrazioni esterne (API key) la lista include "body" di default;
+    // la web app passa ?includeBody=false per alleggerire il payload (le viste lista non lo usano).
     @GetMapping
     public ResponseEntity<List<ElementResponse>> list(
             @PathVariable UUID wsId,
-            @RequestParam(defaultValue = "false") boolean includeBody,
+            @RequestParam(defaultValue = "true") boolean includeBody,
             @AuthenticationPrincipal User user) {
         return ResponseEntity.ok(elementService.getElements(wsId, user, includeBody));
     }

@@ -63,9 +63,13 @@ export function FileViewerDialog({ open, onClose, wsId, file, canEdit, resolveNa
   const urlRef = useRef<string | null>(null)
   useEffect(() => { holdRef.current = iHoldLock }, [iHoldLock])
   useEffect(() => { urlRef.current = blobUrl }, [blobUrl])
+  // File attualmente aperto nel dialog (null se chiuso/smontato): decide se un lock arrivato
+  // dopo l'annullamento del caricamento va rilasciato.
+  const activeFileRef = useRef<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
+    activeFileRef.current = open && file ? file.id : null
     if (!open || !file) return
 
     const load = async () => {
@@ -88,7 +92,14 @@ export function FileViewerDialog({ open, onClose, wsId, file, canEdit, resolveNa
           setContent(text); setEdited(text)
           if (canEdit) {
             const lock: LockResult = await driveApi.lock(wsId, file.id)
-            if (cancelled) return
+            if (cancelled) {
+              // Dialog chiuso (o file cambiato) mentre il lock era in acquisizione: lo si rilascia,
+              // a meno che lo stesso file sia stato riaperto (il nuovo caricamento lo riusa).
+              if (lock.acquired && activeFileRef.current !== file.id) {
+                driveApi.unlock(wsId, file.id).catch(() => { /* ignore */ })
+              }
+              return
+            }
             if (lock.acquired) {
               setIHoldLock(true)
               if (k === 'text') setMode('edit')
@@ -117,7 +128,7 @@ export function FileViewerDialog({ open, onClose, wsId, file, canEdit, resolveNa
   }
 
   // Rilascia lock/URL allo smontaggio (fire-and-forget).
-  useEffect(() => () => { cleanup() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { activeFileRef.current = null; cleanup() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const editable = iHoldLock && !lockedByName
   const dirty = edited !== content

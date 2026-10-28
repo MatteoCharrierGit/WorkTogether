@@ -209,6 +209,7 @@ public class ChannelService {
         // metadati già pubblici (chi/dove) + il nome autore, per una notifica sobria.
         eventPublisher.publish(workspaceId, "MESSAGE_CREATED", Map.of(
                 "channelId", channelId.toString(),
+                "messageId", msg.getId().toString(),
                 "authorId", user.getId().toString(),
                 "authorName", user.getDisplayName()));
         return MessageResponse.from(msg);

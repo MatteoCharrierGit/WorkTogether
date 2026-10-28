@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { InfiniteData, QueryClient, useInfiniteQuery } from '@tanstack/react-query'
+import { useEffect, useMemo } from 'react'
+import { InfiniteData, QueryClient, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { channelsApi } from '@/lib/api'
 import { ChatMessage } from '@/types'
 
@@ -90,9 +90,17 @@ export async function syncLatestMessages(qc: QueryClient, wsId: string, channelI
 /**
  * Messaggi di un canale con paginazione all'indietro: cursore `before` = createdAt del messaggio
  * più vecchio, passato come stringa esattamente come arriva dal server (axios lo codifica nell'URL).
- * Gli aggiornamenti arrivano via WebSocket → niente refetch automatici.
+ * Gli aggiornamenti arrivano via WebSocket → niente refetch automatici. Aprendo un canale che ha
+ * già una cache (es. ritorno in chat entro gcTime, o riconnessione WS a pagina smontata) si
+ * riallinea una volta l'ultima pagina: gli eventi arrivati nel frattempo non sono stati visti.
  */
 export function useChannelMessages(wsId: string | undefined, channelId: string | null) {
+  const qc = useQueryClient()
+  useEffect(() => {
+    if (!wsId || !channelId) return
+    if (qc.getQueryData(messagesKey(wsId, channelId))) void syncLatestMessages(qc, wsId, channelId)
+  }, [qc, wsId, channelId])
+
   const query = useInfiniteQuery({
     queryKey: messagesKey(wsId, channelId),
     queryFn: ({ pageParam }) => fetchPage(wsId!, channelId!, pageParam),

@@ -7,6 +7,7 @@ import com.worktogether.dto.request.CreateInvitationRequest;
 import com.worktogether.dto.response.InvitationPreviewResponse;
 import com.worktogether.dto.response.InvitationResponse;
 import com.worktogether.repository.*;
+import com.worktogether.websocket.WorkspaceEventPublisher;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +38,7 @@ public class WorkspaceInvitationService {
     private final UserRepository userRepository;
     private final WorkspaceService workspaceService;
     private final EmailVerificationService verification;
+    private final WorkspaceEventPublisher eventPublisher;
 
     @Value("${app.frontend.base-url:}")
     private String frontendBaseUrl;
@@ -136,6 +138,8 @@ public class WorkspaceInvitationService {
                         .workspace(inv.getWorkspace()).user(currentUser).build());
         member.setRole(inv.getRole());
         memberRepository.save(member);
+        eventPublisher.publish(inv.getWorkspace().getId(), "MEMBER_ADDED",
+                java.util.Map.of("userId", currentUser.getId().toString(), "role", String.valueOf(inv.getRole())));
 
         inv.setStatus(InvitationStatus.ACCEPTED);
         inv.setAcceptedAt(OffsetDateTime.now());

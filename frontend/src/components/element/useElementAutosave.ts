@@ -27,8 +27,11 @@ const DEBOUNCE_MS = 800
  * - Titolo e corpo sono bozze locali: salvate 800ms dopo l'ultima modifica, al blur, quando la
  *   scheda va in background e allo smontaggio.
  * - Le proprietà (stato, tag, …) si salvano subito con aggiornamento ottimistico della cache.
- * - Il PUT è parziale: si inviano solo title/type (obbligatori) e i campi cambiati, così non si
- *   sovrascrivono modifiche concorrenti ad altri campi (il backend ignora i campi null).
+ * - Il PUT è parziale: si inviano solo i campi cambiati localmente (il titolo solo se modificato),
+ *   così non si sovrascrivono modifiche concorrenti di altri utenti (il backend ignora i campi null).
+ * - Aggiornamenti ottimistici versionati per campo: la risposta di un PUT non sovrascrive un valore
+ *   ottimistico più recente; se il PUT fallisce il valore torna a quello precedente.
+ * - `discard()` annulla bozze e proprietà pendenti (es. dopo l'eliminazione dell'elemento).
  * - Gli aggiornamenti remoti (WS → refetch) non toccano un campo con modifiche locali non salvate
  *   o con il focus: vengono applicati al blur.
  * - Niente salvataggi prima che l'elemento sia caricato; un PUT alla volta (coda).
@@ -53,6 +56,14 @@ export function useElementAutosave(wsId: string | undefined, element: Element | 
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
   const initRef = useRef(!!element)
   const mountedRef = useRef(true)
+  const discardedRef = useRef(false)
+  // Versioni per campo ottimistico: ultima versione applicata, ultima confermata dal server,
+  // valore precedente alla prima modifica non confermata (per il rollback).
+  const seqRef = useRef(0)
+  const optVersionRef = useRef(new Map<keyof Element, number>())
+  const optAckedRef = useRef(new Map<keyof Element, number>())
+  const optBaseRef = useRef(new Map<keyof Element, unknown>())
+  const pendingOptRef = useRef(new Map<keyof Element, number>())
 
   const safeSetStatus = (s: SaveStatus) => { if (mountedRef.current) setStatus(s) }
 
@@ -83,14 +94,15 @@ export function useElementAutosave(wsId: string | undefined, element: Element | 
   const flush = useCallback((): Promise<void> => {
     clearTimeout(timerRef.current)
     const el = serverRef.current
-    if (!el || !wsId || readOnly) return Promise.resolve()
+    if (!el || !wsId || readOnly || discardedRef.current) return Promise.resolve()
     if (inFlightRef.current) {
       againRef.current = true
       return inFlightRef.current
     }
 
     const d = draftRef.current
-    const payload: Record<string, unknown> = { title: el.title, type: el.type }
+    // type serve solo al controllo permessi (non viene modificato); il titolo va solo se cambiato.
+    const payload: Record<string, unknown> = { type: el.type }
     const sent: { title?: string; body?: string } = {}
 
     if (dirtyRef.current.has('title')) {
@@ -106,6 +118,8 @@ export function useElementAutosave(wsId: string | undefined, element: Element | 
     const patch = patchRef.current
     patchRef.current = null
     if (patch) Object.assign(payload, patch)
+    const sentOpt = pendingOptRef.current
+    pendingOptRef.current = new Map()
 
     if (sent.title === undefined && sent.body === undefined && !patch) {
       if (mountedRef.current) setStatus(s => (dirtyRef.current.size ? 'pending' : s === 'idle' ? 'idle' : 'saved'))
@@ -121,8 +135,19 @@ export function useElementAutosave(wsId: string | undefined, element: Element | 
         if (sent.body !== undefined && draftRef.current.body === sent.body) dirtyRef.current.delete('body')
         // Evita che un refetch partito prima del salvataggio riporti dati vecchi.
         await queryClient.cancelQueries({ queryKey: ['element', wsId, el.id] })
-        queryClient.setQueryData<Element>(['element', wsId, el.id], old =>
-          old ? { ...old, ...res, body: res.body ?? (sent.body !== undefined ? sent.body : old.body) } : res)
+        sentOpt.forEach((v, k) => {
+          optAckedRef.current.set(k, Math.max(v, optAckedRef.current.get(k) ?? 0))
+          if (optVersionRef.current.get(k) === v) optBaseRef.current.delete(k)
+        })
+        queryClient.setQueryData<Element>(['element', wsId, el.id], old => {
+          if (!old) return res
+          const next: Element = { ...old, ...res, body: res.body ?? (sent.body !== undefined ? sent.body : old.body) }
+          // I campi con un valore ottimistico più recente (patch successiva non ancora confermata) restano.
+          optVersionRef.current.forEach((v, k) => {
+            if (v > (optAckedRef.current.get(k) ?? 0)) (next as any)[k] = (old as any)[k]
+          })
+          return next
+        })
         if (sent.title !== undefined || patch) {
           queryClient.invalidateQueries({ queryKey: ['elements', wsId] })
           queryClient.invalidateQueries({ queryKey: ['my-tasks'] })
@@ -131,8 +156,22 @@ export function useElementAutosave(wsId: string | undefined, element: Element | 
         safeSetStatus(dirtyRef.current.size ? 'pending' : 'saved')
       } catch (err) {
         failed = true
-        // Le proprietà non salvate tornano in coda: "Riprova" le reinvia.
-        if (patch) patchRef.current = { ...patch, ...patchRef.current }
+        if (discardedRef.current) return
+        // Proprietà non salvate: si ripristina il valore precedente (salvo modifiche più recenti).
+        if (sentOpt.size) {
+          const rollback: Partial<Element> = {}
+          sentOpt.forEach((v, k) => {
+            if (optVersionRef.current.get(k) === v && optBaseRef.current.has(k)) {
+              ;(rollback as Record<string, unknown>)[k] = optBaseRef.current.get(k)
+              optBaseRef.current.delete(k)
+              optAckedRef.current.set(k, v)
+            }
+          })
+          if (Object.keys(rollback).length) {
+            queryClient.setQueryData<Element>(['element', wsId, el.id], old => (old ? { ...old, ...rollback } : old))
+            serverRef.current = serverRef.current && { ...serverRef.current, ...rollback }
+          }
+        }
         const msg = getErrorMessage(err, 'Salvataggio non riuscito')
         if (mountedRef.current) setError(msg)
         safeSetStatus('error')
@@ -184,6 +223,13 @@ export function useElementAutosave(wsId: string | undefined, element: Element | 
   const patch = useCallback((fields: ElementPatch, optimistic?: Partial<Element>) => {
     if (!serverRef.current || readOnly) return
     if (optimistic) {
+      const cur = (queryClient.getQueryData<Element>(key) ?? serverRef.current) as Element
+      for (const k of Object.keys(optimistic) as (keyof Element)[]) {
+        if (!optBaseRef.current.has(k)) optBaseRef.current.set(k, cur[k])
+        const v = ++seqRef.current
+        optVersionRef.current.set(k, v)
+        pendingOptRef.current.set(k, v)
+      }
       queryClient.setQueryData<Element>(key, old => (old ? { ...old, ...optimistic } : old))
       serverRef.current = { ...serverRef.current, ...optimistic }
     }
@@ -242,5 +288,15 @@ export function useElementAutosave(wsId: string | undefined, element: Element | 
 
   const retry = useCallback(() => { void flush() }, [flush])
 
-  return { title, body, setTitle, setBody, patch, status, error, retry, flush, ...focusHandlers }
+  /** Scarta bozze e proprietà pendenti e blocca i salvataggi successivi (elemento eliminato). */
+  const discard = useCallback(() => {
+    discardedRef.current = true
+    clearTimeout(timerRef.current)
+    dirtyRef.current.clear()
+    patchRef.current = null
+    pendingOptRef.current = new Map()
+    againRef.current = false
+  }, [])
+
+  return { title, body, setTitle, setBody, patch, status, error, retry, flush, discard, ...focusHandlers }
 }
