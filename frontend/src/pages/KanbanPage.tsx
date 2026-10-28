@@ -2,10 +2,10 @@ import { memo, useCallback, useDeferredValue, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
-import { Check, ChevronRight, KanbanSquare, Plus, Search, SearchX, Tag as TagIcon, Trash2, Users, X } from 'lucide-react'
+import { ArrowDownWideNarrow, Check, ChevronRight, Flag, KanbanSquare, Plus, Search, SearchX, Tag as TagIcon, Trash2, Users, X } from 'lucide-react'
 import { elementsApi, tagsApi, workspacesApi } from '@/lib/api'
 import { useElementDelete } from '@/lib/useElementDelete'
-import { Element, ElementStatus, Tag, Member, Workspace } from '@/types'
+import { Element, ElementPriority, ElementStatus, Tag, Member, Workspace } from '@/types'
 import { cn, getErrorMessage, STATUS_LABELS, TYPE_LABELS } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
@@ -17,7 +17,8 @@ import {
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
-  EmptyState, LoadingSkeleton, PageHeader, QueryState, StatusIcon, TaskCard, TypeIcon, UserAvatar, useConfirm,
+  EmptyState, LoadingSkeleton, PageHeader, PriorityIndicator, PRIORITY_ORDER, priorityRank, QueryState, StatusIcon,
+  TaskCard, TypeIcon, UserAvatar, useConfirm,
 } from '@/components/shared'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { CreateElementDialog } from '@/components/CreateElementDialog'
@@ -29,6 +30,24 @@ interface CardConfig { tags: boolean; assignees: boolean; dueDate: boolean }
 type ByStatus = Record<ElementStatus, Element[]>
 
 const emptyByStatus = (): ByStatus => ({ DA_FARE: [], IN_CORSO: [], COMPLETATO: [], ARCHIVIATO: [] })
+
+// Ordinamento opzionale nelle colonne: priorità (urgenti in cima), poi scadenza più vicina,
+// a parità resta l'ordine manuale del server (sort stabile).
+const byPriorityThenDue = (a: Element, b: Element) => {
+  const p = priorityRank(b.priority) - priorityRank(a.priority)
+  if (p !== 0) return p
+  const da = a.endDate ? new Date(a.endDate).getTime() : Infinity
+  const db = b.endDate ? new Date(b.endDate).getTime() : Infinity
+  return da === db ? 0 : da < db ? -1 : 1
+}
+
+const SORT_PREF_KEY = 'wt:kanban-sort-priority'
+function readSortPref(): boolean {
+  try { return localStorage.getItem(SORT_PREF_KEY) === '1' } catch { return false }
+}
+function writeSortPref(on: boolean) {
+  try { localStorage.setItem(SORT_PREF_KEY, on ? '1' : '0') } catch { /* storage non disponibile */ }
+}
 
 /* ------------------------------------------------------------------- Card */
 
@@ -60,6 +79,7 @@ const KanbanCard = memo(function KanbanCard({ task, index, wsId, cardConfig, del
           assignees={cardConfig.assignees ? task.assignees : undefined}
           dueDate={cardConfig.dueDate ? task.endDate : undefined}
           blocked={task.blocked}
+          priority={task.priority}
           dragging={snapshot.isDragging}
           aria-label={`${task.title} — ${STATUS_LABELS[task.status]}`}
           className={cn(
@@ -327,6 +347,9 @@ export default function KanbanPage() {
   const deferredSearch = useDeferredValue(search)
   const [assigneeFilter, setAssigneeFilter] = useState<string[]>([])
   const [tagFilter, setTagFilter] = useState<string[]>([])
+  const [priorityFilter, setPriorityFilter] = useState<string[]>([])
+  const [sortByPriority, setSortByPriority] = useState(readSortPref)
+  const toggleSort = () => setSortByPriority(v => { writeSortPref(!v); return !v })
 
   // Gli eventi realtime (ELEMENT_*) sono già gestiti dal Layout, che invalida ['elements'].
   const elementsQuery = useQuery<Element[]>({
@@ -404,7 +427,7 @@ export default function KanbanPage() {
 
   // --- Filtri: task visibili raggruppati per storia ---
   const query = deferredSearch.trim().toLowerCase()
-  const hasFilters = query !== '' || assigneeFilter.length > 0 || tagFilter.length > 0
+  const hasFilters = query !== '' || assigneeFilter.length > 0 || tagFilter.length > 0 || priorityFilter.length > 0
   const { tasksByStory, statusCounts, visibleCount } = useMemo(() => {
     const map = new Map<string, Element[]>()
     const counts = emptyByStatus()
@@ -414,14 +437,16 @@ export default function KanbanPage() {
       if (query && !t.title.toLowerCase().includes(query)) continue
       if (assigneeFilter.length > 0 && !t.assignees.some(a => assigneeFilter.includes(a.id))) continue
       if (tagFilter.length > 0 && !t.tags.some(tg => tagFilter.includes(tg.id))) continue
+      if (priorityFilter.length > 0 && !priorityFilter.includes(t.priority ?? 'NONE')) continue
       const list = map.get(t.parentId) ?? []
       list.push(t)
       map.set(t.parentId, list)
       counts[t.status].push(t)
       n++
     }
+    if (sortByPriority) for (const list of map.values()) list.sort(byPriorityThenDue)
     return { tasksByStory: map, statusCounts: counts, visibleCount: n }
-  }, [structure.allTasks, query, assigneeFilter, tagFilter])
+  }, [structure.allTasks, query, assigneeFilter, tagFilter, priorityFilter, sortByPriority])
 
   // Storie visibili per gruppo: con i filtri attivi solo quelle con task corrispondenti.
   const visibleGroups = useMemo(
@@ -434,7 +459,7 @@ export default function KanbanPage() {
 
   const toggleIn = (set: React.Dispatch<React.SetStateAction<string[]>>) => (id: string) =>
     set(arr => (arr.includes(id) ? arr.filter(x => x !== id) : [...arr, id]))
-  const clearFilters = () => { setSearch(''); setAssigneeFilter([]); setTagFilter([]) }
+  const clearFilters = () => { setSearch(''); setAssigneeFilter([]); setTagFilter([]); setPriorityFilter([]) }
 
   // --- Callback stabili per le lane/card memo ---
   const toggleStory = useCallback((id: string, def: boolean) => setCollapsed(c => ({ ...c, [id]: !(c[id] ?? def) })), [])
@@ -593,6 +618,27 @@ export default function KanbanPage() {
                 </span>
               )}
             />
+            <FilterMenu<ElementPriority>
+              label="Priorità"
+              icon={Flag}
+              menuLabel="Filtra per priorità"
+              emptyLabel="Nessuna priorità"
+              items={PRIORITY_ORDER}
+              selected={priorityFilter}
+              getId={p => p}
+              onToggle={toggleIn(setPriorityFilter)}
+              renderItem={p => <PriorityIndicator priority={p} variant="inline" showNone />}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              aria-pressed={sortByPriority}
+              onClick={toggleSort}
+              className={cn(sortByPriority && 'border-primary/60 bg-primary/5 text-primary')}
+              title="Ordina i task di ogni colonna per priorità, poi per scadenza"
+            >
+              <ArrowDownWideNarrow className="h-3.5 w-3.5" /> Ordina per priorità
+            </Button>
             {(hasFilters || search) && (
               <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={clearFilters}>
                 <X className="h-3.5 w-3.5" /> Pulisci

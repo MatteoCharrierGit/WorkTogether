@@ -12,6 +12,7 @@ export type SaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error'
 export interface ElementPatch {
   status?: Element['status']
   blocked?: boolean
+  priority?: Element['priority']
   startDate?: string
   endDate?: string
   allDay?: boolean

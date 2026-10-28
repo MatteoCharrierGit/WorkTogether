@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { toast } from '@/components/ui/toast'
 import {
-  AvatarStack, BlockedBadge, Callout, EmptyState, StatusBadge, StatusIcon, TypeIcon, TYPE_META, useConfirm,
+  AvatarStack, BlockedBadge, Callout, EmptyState, PriorityIndicator, StatusBadge, StatusIcon, TypeIcon, TYPE_META, useConfirm,
 } from '@/components/shared'
 import { ElementBreadcrumb, type ElementCrumb } from '@/components/element/ElementBreadcrumb'
 import { ElementProperties } from '@/components/element/ElementProperties'
@@ -255,6 +255,7 @@ function ElementDocument({ wsId, element }: { wsId: string; element: Element }) 
                 {TYPE_META[element.type]?.label ?? element.type}
               </span>
               {element.blocked && <BlockedBadge size="sm" />}
+              <PriorityIndicator priority={element.priority} variant="badge" size="sm" />
               {readOnly && <span className="rounded-full bg-muted px-1.5 text-2xs font-medium">Sola lettura</span>}
             </div>
 
@@ -342,6 +343,7 @@ function ElementDocument({ wsId, element }: { wsId: string; element: Element }) 
                         >
                           <StatusIcon status={c.status} size="sm" />
                           <TypeIcon type={c.type} size="sm" />
+                          <PriorityIndicator priority={c.priority} />
                           <span className={cn('min-w-0 flex-1 truncate', c.status === 'COMPLETATO' && 'text-muted-foreground line-through')}>
                             {c.title}
                           </span>

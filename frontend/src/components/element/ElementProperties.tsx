@@ -1,10 +1,10 @@
 import * as React from 'react'
 import { Link } from 'react-router-dom'
 import {
-  CalendarDays, CalendarClock, Check, ChevronsUpDown, CircleDashed, Clock, Flag, FolderTree,
+  CalendarDays, CalendarClock, Check, ChevronsUpDown, CircleDashed, Clock, Flag, FolderTree, SignalHigh,
   Plus, Tag as TagIcon, TriangleAlert, Users, Zap, Shapes, UserPen,
 } from 'lucide-react'
-import type { Element, ElementStatus, Member, Sprint, Tag } from '@/types'
+import type { Element, ElementPriority, ElementStatus, Member, Sprint, Tag } from '@/types'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
-  StatusBadge, StatusIcon, TagChip, TypeIcon, TYPE_META, UserAvatar, AvatarStack,
+  PriorityIndicator, PRIORITY_ORDER, StatusBadge, StatusIcon, TagChip, TypeIcon, TYPE_META, UserAvatar, AvatarStack,
 } from '@/components/shared'
 import { cn, formatDate } from '@/lib/utils'
 import type { ElementPatch } from './useElementAutosave'
@@ -107,6 +107,32 @@ export function ElementProperties({
           <TypeIcon type={element.type} size="sm" /> {TYPE_META[element.type]?.label ?? element.type}
         </div>
       </Row>
+
+      {(element.type === 'TASK' || element.type === 'STORIA') && (
+        <Row icon={SignalHigh} label="Priorità">
+          {readOnly ? (
+            <div className="px-2"><PriorityIndicator priority={element.priority} variant="inline" showNone /></div>
+          ) : (
+            <Select
+              value={element.priority ?? 'NONE'}
+              onValueChange={v => onPatch({ priority: v as ElementPriority }, { priority: v as ElementPriority })}
+            >
+              <SelectTrigger aria-label="Priorità" className="h-8 border-transparent bg-transparent px-2 shadow-none hover:bg-accent">
+                <SelectValue>
+                  <PriorityIndicator priority={element.priority} variant="inline" showNone />
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {PRIORITY_ORDER.map(p => (
+                  <SelectItem key={p} value={p}>
+                    <PriorityIndicator priority={p} variant="inline" showNone />
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </Row>
+      )}
 
       {element.type !== 'EVENTO' && (
         <Row icon={TriangleAlert} label="Bloccante">

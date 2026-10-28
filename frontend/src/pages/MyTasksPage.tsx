@@ -5,7 +5,7 @@ import { usersApi, workspacesApi } from '@/lib/api'
 import { Element, Workspace } from '@/types'
 import { cn, formatDate } from '@/lib/utils'
 import { CalendarDays, CheckSquare, ChevronRight, PartyPopper } from 'lucide-react'
-import { EmptyState, PageHeader, QueryState, StatusBadge, TypeIcon } from '@/components/shared'
+import { EmptyState, PageHeader, PriorityIndicator, priorityRank, QueryState, StatusBadge, TypeIcon } from '@/components/shared'
 
 type GroupKey = 'overdue' | 'today' | 'week' | 'later' | 'none'
 
@@ -46,6 +46,9 @@ const TaskRow = memo(function TaskRow({ task, wsName, overdue }: { task: Element
         className="group flex items-start gap-3 px-3 py-2.5 transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none sm:items-center"
       >
         <TypeIcon type={task.type} size="sm" labelled className="mt-0.5 sm:mt-0" />
+        {!done && task.priority && task.priority !== 'NONE' && (
+          <PriorityIndicator priority={task.priority} className="mt-0.5 sm:mt-0" />
+        )}
         <div className="min-w-0 flex-1 sm:flex sm:items-center sm:gap-3">
           <p className={cn('truncate text-sm font-medium sm:flex-1', done && 'text-muted-foreground line-through')}>{task.title}</p>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 sm:mt-0 sm:shrink-0 sm:flex-nowrap">
@@ -120,8 +123,11 @@ export default function MyTasksPage() {
       if (t.status === 'COMPLETATO' || t.status === 'ARCHIVIATO') completed.push(t)
       else g[groupOf(t, today, endOfWeek)].push(t)
     }
-    const byDue = (a: Element, b: Element) => new Date(a.endDate!).getTime() - new Date(b.endDate!).getTime()
-    g.overdue.sort(byDue); g.today.sort(byDue); g.week.sort(byDue); g.later.sort(byDue)
+    // In ogni gruppo: priorità più alta prima, poi scadenza più vicina.
+    const due = (t: Element) => (t.endDate ? new Date(t.endDate).getTime() : Infinity)
+    const byPriorityThenDue = (a: Element, b: Element) =>
+      priorityRank(b.priority) - priorityRank(a.priority) || (due(a) === due(b) ? 0 : due(a) < due(b) ? -1 : 1)
+    for (const k of Object.keys(g) as GroupKey[]) g[k].sort(byPriorityThenDue)
     return { groups: g, done: completed, openCount: tasks.length - completed.length }
   }, [tasksQuery.data])
 

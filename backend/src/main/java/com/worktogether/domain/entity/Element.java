@@ -1,5 +1,6 @@
 package com.worktogether.domain.entity;
 
+import com.worktogether.domain.enums.ElementPriority;
 import com.worktogether.domain.enums.ElementStatus;
 import com.worktogether.domain.enums.ElementType;
 import jakarta.persistence.*;
@@ -36,6 +37,12 @@ public class Element {
     @Column(nullable = false, length = 20)
     @Builder.Default
     private ElementStatus status = ElementStatus.DA_FARE;
+
+    // Priorità (task e storie). NONE = nessuna.
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 10)
+    @Builder.Default
+    private ElementPriority priority = ElementPriority.NONE;
 
     @Column(nullable = false, length = 500)
     private String title;

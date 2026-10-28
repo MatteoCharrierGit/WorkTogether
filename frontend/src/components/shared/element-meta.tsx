@@ -1,8 +1,9 @@
 import {
-  Archive, CalendarDays, Circle, CircleCheck, CircleDot, BookOpen, Rocket, SquareCheck, TriangleAlert,
+  Archive, CalendarDays, Circle, CircleCheck, CircleDot, BookOpen, Minus, OctagonAlert, Rocket,
+  SquareCheck, TriangleAlert,
   type LucideIcon,
 } from 'lucide-react'
-import type { ElementStatus, ElementType } from '@/types'
+import type { ElementPriority, ElementStatus, ElementType } from '@/types'
 import { cn, STATUS_LABELS, TYPE_LABELS } from '@/lib/utils'
 
 /** Icona + colore (solo token) per ogni tipo di elemento. */
@@ -96,6 +97,99 @@ export function BlockedBadge({ className, size = 'default' }: { className?: stri
     >
       <TriangleAlert className={size === 'sm' ? 'h-3 w-3' : 'h-3.5 w-3.5'} aria-hidden="true" />
       Bloccante
+    </span>
+  )
+}
+
+// --- Priorità ---
+
+type PriorityIconComponent = (props: { className?: string; 'aria-hidden'?: boolean | 'true' | 'false' }) => JSX.Element
+
+/** Tre barre crescenti: le prime `level` piene (colore corrente), le altre tenui. */
+function bars(level: 1 | 2 | 3): PriorityIconComponent {
+  return function PriorityBars({ className, ...rest }) {
+    return (
+      <svg viewBox="0 0 16 16" fill="currentColor" className={className} {...rest}>
+        {[0, 1, 2].map(i => (
+          <rect
+            key={i}
+            x={2 + i * 4.5}
+            y={10 - i * 3.5}
+            width="3"
+            height={4 + i * 3.5}
+            rx="1"
+            opacity={i < level ? 1 : 0.25}
+          />
+        ))}
+      </svg>
+    )
+  }
+}
+
+/** Icona + colore (solo token) + peso di ordinamento per ogni priorità. */
+export const PRIORITY_META: Record<
+  ElementPriority,
+  { label: string; icon: LucideIcon | PriorityIconComponent; className: string; badge: string; rank: number }
+> = {
+  URGENT: { label: 'Urgente', icon: OctagonAlert, className: 'text-destructive', badge: 'bg-destructive-subtle text-destructive', rank: 4 },
+  HIGH: { label: 'Alta', icon: bars(3), className: 'text-warning', badge: 'bg-warning-subtle text-warning', rank: 3 },
+  MEDIUM: { label: 'Media', icon: bars(2), className: 'text-info', badge: 'bg-info-subtle text-info', rank: 2 },
+  LOW: { label: 'Bassa', icon: bars(1), className: 'text-muted-foreground', badge: 'bg-muted text-muted-foreground', rank: 1 },
+  NONE: { label: 'Nessuna', icon: Minus, className: 'text-muted-foreground/70', badge: 'bg-muted text-muted-foreground', rank: 0 },
+}
+
+/** Priorità dalla più alta alla più bassa (per Select e filtri). */
+export const PRIORITY_ORDER: ElementPriority[] = ['URGENT', 'HIGH', 'MEDIUM', 'LOW', 'NONE']
+
+/** Peso numerico (URGENT=4 … NONE/assente=0): ordinare con `b - a` per avere le urgenti in cima. */
+export function priorityRank(p?: ElementPriority | string | null): number {
+  return PRIORITY_META[(p ?? 'NONE') as ElementPriority]?.rank ?? 0
+}
+
+export interface PriorityIndicatorProps {
+  priority?: ElementPriority | string | null
+  /** `icon`: solo icona (con tooltip nativo + sr-only); `badge`: pill con etichetta; `inline`: icona + testo */
+  variant?: 'icon' | 'badge' | 'inline'
+  size?: 'sm' | 'default'
+  /** Mostra anche "Nessuna" (default: non renderizza nulla se la priorità è assente) */
+  showNone?: boolean
+  className?: string
+}
+
+/** Indicatore di priorità (Urgente / Alta / Media / Bassa). */
+export function PriorityIndicator({ priority, variant = 'icon', size = 'default', showNone = false, className }: PriorityIndicatorProps) {
+  const key = (priority ?? 'NONE') as ElementPriority
+  const meta = PRIORITY_META[key] ?? PRIORITY_META.NONE
+  if (key === 'NONE' && !showNone) return null
+  const Icon = meta.icon
+  const iconCls = size === 'sm' ? 'h-3 w-3' : 'h-3.5 w-3.5'
+  if (variant === 'icon') {
+    return (
+      <span className={cn('inline-flex shrink-0 items-center', meta.className, className)} title={`Priorità: ${meta.label}`}>
+        <Icon className={iconCls} aria-hidden="true" />
+        <span className="sr-only">Priorità {meta.label.toLowerCase()}</span>
+      </span>
+    )
+  }
+  if (variant === 'inline') {
+    return (
+      <span className={cn('inline-flex items-center gap-1.5', size === 'sm' ? 'text-2xs' : 'text-sm', className)}>
+        <Icon className={cn(iconCls, meta.className)} aria-hidden="true" />
+        {meta.label}
+      </span>
+    )
+  }
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 whitespace-nowrap rounded-full font-medium',
+        size === 'sm' ? 'px-1.5 py-0 text-2xs' : 'px-2 py-0.5 text-xs',
+        meta.badge,
+        className
+      )}
+    >
+      <Icon className={iconCls} aria-hidden="true" />
+      {meta.label}
     </span>
   )
 }

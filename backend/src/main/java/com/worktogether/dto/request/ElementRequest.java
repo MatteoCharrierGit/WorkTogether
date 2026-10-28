@@ -1,5 +1,6 @@
 package com.worktogether.dto.request;
 
+import com.worktogether.domain.enums.ElementPriority;
 import com.worktogether.domain.enums.ElementStatus;
 import com.worktogether.domain.enums.ElementType;
 import jakarta.validation.constraints.NotBlank;
@@ -21,5 +22,7 @@ public record ElementRequest(
         Integer position,
         Boolean blocked,
         List<UUID> assigneeIds,
-        List<UUID> tagIds
+        List<UUID> tagIds,
+        // null = invariata (update parziale) / NONE (create)
+        ElementPriority priority
 ) {}

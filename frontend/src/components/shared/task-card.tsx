@@ -1,9 +1,9 @@
 import * as React from 'react'
 import { Link } from 'react-router-dom'
 import { CalendarDays } from 'lucide-react'
-import type { ElementStatus, ElementType, Tag } from '@/types'
+import type { ElementPriority, ElementStatus, ElementType, Tag } from '@/types'
 import { cn, formatDate, isOverdue } from '@/lib/utils'
-import { BlockedBadge, StatusIcon, TypeIcon } from './element-meta'
+import { BlockedBadge, PriorityIndicator, StatusIcon, TypeIcon } from './element-meta'
 import { TagList } from './tag-chip'
 import { AvatarStack } from './user-avatar'
 
@@ -22,6 +22,8 @@ export interface TaskCardProps extends Omit<React.HTMLAttributes<HTMLDivElement>
   maxAssignees?: number
   dueDate?: string | null
   blocked?: boolean
+  /** Priorità: icona accanto al titolo (alta/urgente anche come badge) */
+  priority?: ElementPriority | null
   /** Card attenuata (task completato) */
   muted?: boolean
   /** Stato visivo durante il drag */
@@ -51,6 +53,7 @@ export const TaskCard = React.forwardRef<HTMLDivElement, TaskCardProps>(function
     maxAssignees = 3,
     dueDate,
     blocked = false,
+    priority,
     muted,
     dragging = false,
     actions,
@@ -95,6 +98,7 @@ export const TaskCard = React.forwardRef<HTMLDivElement, TaskCardProps>(function
       <div className="flex items-start gap-1.5">
         {showStatus && status && <StatusIcon status={status} size="sm" className="mt-0.5" />}
         {showType && type && <TypeIcon type={type} size="sm" className="mt-0.5" />}
+        {priority && priority !== 'NONE' && !done && <PriorityIndicator priority={priority} size="default" className="mt-0.5" />}
         <div className={cn('min-w-0 flex-1 text-sm font-medium leading-snug line-clamp-2', done && 'text-muted-foreground')}>{titleNode}</div>
         {actions && (
           <div className="relative z-[1] -mr-1 -mt-1 flex shrink-0 items-center opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">

@@ -13,6 +13,7 @@ import {
   notificationsSupported, notificationsEnabled, setNotificationsEnabled,
   notificationPermission, requestNotificationPermission,
 } from '@/lib/notifications'
+import { InAppNotificationSettings } from '@/components/notifications/InAppNotificationSettings'
 import { Camera, Check, Trash2, Palette, UserCircle, Lock, Bell, Sun, Moon, Monitor, Settings } from 'lucide-react'
 
 export default function SettingsPage() {
@@ -43,7 +44,8 @@ export default function SettingsPage() {
     try {
       const dataUrl = await resizeImageToDataUrl(file)
       const updated = await usersApi.updateProfile({ avatar: dataUrl })
-      updateUser({ avatar: updated.avatar })
+      // Il server salva i byte e risponde con un URL versionato (?v=N): cambia a ogni foto nuova.
+      updateUser({ avatar: updated.avatarUrl ?? updated.avatar, avatarUrl: updated.avatarUrl ?? updated.avatar })
       toast('Foto aggiornata')
     } catch {
       toast('Errore nel caricamento della foto', 'destructive')
@@ -57,7 +59,7 @@ export default function SettingsPage() {
     setAvatarBusy(true)
     try {
       await usersApi.updateProfile({ avatar: '' })
-      updateUser({ avatar: undefined })
+      updateUser({ avatar: undefined, avatarUrl: undefined })
       toast('Foto rimossa')
     } catch (err) {
       toast(getErrorMessage(err, 'Impossibile rimuovere la foto'), 'destructive')
@@ -120,14 +122,14 @@ export default function SettingsPage() {
         {/* Profilo */}
         <SettingsSection icon={UserCircle} title="Profilo" description="Come ti vedono gli altri membri." contentClassName="space-y-5">
           <div className="flex items-center gap-4">
-            <UserAvatar name={user?.displayName} avatar={user?.avatar} size="xl" />
+            <UserAvatar name={user?.displayName} avatarUrl={user?.avatarUrl} avatar={user?.avatar} size="xl" />
             <div className="min-w-0 space-y-2">
               <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatar} />
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" loading={avatarBusy} onClick={() => fileRef.current?.click()}>
                   {!avatarBusy && <Camera className="h-3.5 w-3.5" />} Cambia foto
                 </Button>
-                {user?.avatar && (
+                {(user?.avatarUrl || user?.avatar) && (
                   <Button size="sm" variant="ghost" disabled={avatarBusy} onClick={handleRemoveAvatar}>
                     <Trash2 className="h-3.5 w-3.5" /> Rimuovi
                   </Button>
@@ -243,6 +245,9 @@ export default function SettingsPage() {
             </Callout>
           )}
         </SettingsSection>
+
+        {/* Notifiche in app (campanella): preferenze per tipo, salvate sul server */}
+        <InAppNotificationSettings />
 
         {/* Sicurezza */}
         <SettingsSection icon={Lock} title="Sicurezza" description="Cambia la password di accesso. Almeno 8 caratteri.">

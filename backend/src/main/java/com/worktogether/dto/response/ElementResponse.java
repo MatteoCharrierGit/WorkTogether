@@ -1,6 +1,7 @@
 package com.worktogether.dto.response;
 
 import com.worktogether.domain.entity.Element;
+import com.worktogether.domain.enums.ElementPriority;
 import com.worktogether.domain.enums.ElementStatus;
 import com.worktogether.domain.enums.ElementType;
 
@@ -28,7 +29,8 @@ public record ElementResponse(
         OffsetDateTime updatedAt,
         List<TagResponse> tags,
         List<UserResponse> assignees,
-        Integer progress
+        Integer progress,
+        ElementPriority priority
 ) {
     public static ElementResponse from(Element e) {
         return from(e, null);
@@ -63,7 +65,8 @@ public record ElementResponse(
                 e.getUpdatedAt(),
                 e.getTags().stream().map(TagResponse::from).toList(),
                 e.getAssignees().stream().map(UserResponse::from).toList(),
-                progress
+                progress,
+                e.getPriority()
         );
     }
 }

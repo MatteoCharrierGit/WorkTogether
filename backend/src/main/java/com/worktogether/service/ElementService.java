@@ -31,6 +31,7 @@ public class ElementService {
     private final WorkspaceService workspaceService;
     private final WorkspaceEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
+    private final NotificationService notificationService;
 
     /** Lista per le viste (board/roadmap/calendario): senza {@code body}, vedi {@link #getElements(UUID, User, boolean)}. */
     @Transactional(readOnly = true)
@@ -136,6 +137,7 @@ public class ElementService {
                 .startDate(req.startDate())
                 .endDate(req.endDate())
                 .allDay(req.allDay() != null ? req.allDay() : false)
+                .priority(req.priority() != null ? req.priority() : ElementPriority.NONE)
                 .position(req.position() != null ? req.position() : 0)
                 .createdBy(user)
                 .tags(tags)
@@ -148,6 +150,9 @@ public class ElementService {
         // quel ramo non è più davvero concluso: riattiviamo gli antenati completati (IN_CORSO) così
         // non restano "completati" pur avendo lavoro nuovo aperto sotto di sé.
         reactivateCompletedAncestors(parent, workspaceId);
+
+        notificationService.notifyAssigned(element,
+                element.getAssignees().stream().map(User::getId).toList(), user);
 
         ElementResponse response = ElementResponse.from(element);
         eventPublisher.publish(workspaceId, "ELEMENT_CREATED", response);
@@ -225,7 +230,13 @@ public class ElementService {
             throw new AccessDeniedException("Guests cannot modify elements");
         }
 
+        // Stato precedente per le notifiche (nuovi assegnatari, cambio di stato).
+        ElementStatus previousStatus = element.getStatus();
+        Set<UUID> previousAssignees = new HashSet<>();
+        for (User a : element.getAssignees()) previousAssignees.add(a.getId());
+
         if (req.title() != null) element.setTitle(req.title());
+        if (req.priority() != null) element.setPriority(req.priority());
         if (req.body() != null) element.setBody(normalizeBody(req.body()));
         if (req.status() != null) applyStatus(element, req.status());
         if (req.blocked() != null) element.setBlocked(req.blocked());
@@ -251,6 +262,18 @@ public class ElementService {
         }
 
         element = elementRepository.save(element);
+
+        List<UUID> added = new ArrayList<>();
+        List<UUID> kept = new ArrayList<>();
+        for (User a : element.getAssignees()) {
+            (previousAssignees.contains(a.getId()) ? kept : added).add(a.getId());
+        }
+        notificationService.notifyAssigned(element, added, user);
+        if (element.getStatus() != previousStatus) {
+            // I nuovi assegnatari ricevono già ASSIGNED: il cambio di stato va a quelli già presenti.
+            notificationService.notifyStatusChanged(element, previousStatus, kept, user);
+        }
+
         Integer progress = element.getType() == ElementType.EPICA ? calcProgress(elementId) : null;
         ElementResponse response = ElementResponse.from(element, progress);
         eventPublisher.publish(workspaceId, "ELEMENT_UPDATED", response);

@@ -85,4 +85,17 @@ public interface ElementRepository extends JpaRepository<Element, UUID> {
         GROUP BY s.parent.id
     """)
     List<Object[]> epicProgressByEpicIds(java.util.Collection<UUID> epicIds);
+
+    // ---- Notifiche (promemoria di scadenza) ----
+
+    // Task/storie aperti con scadenza (endDate) in [from, to) e almeno un assegnatario.
+    @Query("""
+        SELECT DISTINCT e FROM Element e JOIN FETCH e.assignees JOIN FETCH e.workspace
+        WHERE e.endDate >= :from AND e.endDate < :to
+          AND e.type IN (com.worktogether.domain.enums.ElementType.TASK,
+                         com.worktogether.domain.enums.ElementType.STORIA)
+          AND e.status NOT IN (com.worktogether.domain.enums.ElementStatus.COMPLETATO,
+                               com.worktogether.domain.enums.ElementStatus.ARCHIVIATO)
+    """)
+    List<Element> findOpenWithDueBetween(java.time.OffsetDateTime from, java.time.OffsetDateTime to);
 }

@@ -90,7 +90,8 @@ public class WorkspaceTransferService {
                         e.getParent() != null ? elemRef.get(e.getParent().getId()) : null,
                         e.getType().name(), e.getStatus().name(), e.getTitle(), e.getBody(),
                         e.getStartDate(), e.getEndDate(), e.isAllDay(), e.getPosition(),
-                        e.getCreatedAt(), e.getCreatedBy().getEmail(), tagRefIds, assigneeEmails));
+                        e.getCreatedAt(), e.getCreatedBy().getEmail(), tagRefIds, assigneeEmails,
+                        e.getPriority().name()));
             }
         }
 
@@ -207,6 +208,7 @@ public class WorkspaceTransferService {
                         .title(e.title()).body(e.body())
                         .startDate(e.startDate()).endDate(e.endDate()).allDay(e.allDay())
                         .position(e.position())
+                        .priority(parsePriority(e.priority()))
                         .createdAt(e.createdAt() != null ? e.createdAt() : OffsetDateTime.now())
                         .createdBy(resolveUserOrAdmin(e.createdByEmail(), admin, warnings, missingEmails))
                         .tags(tags).assignees(assignees)
@@ -314,6 +316,16 @@ public class WorkspaceTransferService {
             return role != null ? WorkspaceRole.valueOf(role) : WorkspaceRole.COLLABORATORE;
         } catch (IllegalArgumentException ex) {
             return WorkspaceRole.COLLABORATORE;
+        }
+    }
+
+    // Priorità dal backup: assente nei backup vecchi o valore sconosciuto ⇒ NONE.
+    private static com.worktogether.domain.enums.ElementPriority parsePriority(String value) {
+        if (value == null || value.isBlank()) return com.worktogether.domain.enums.ElementPriority.NONE;
+        try {
+            return com.worktogether.domain.enums.ElementPriority.valueOf(value);
+        } catch (IllegalArgumentException ex) {
+            return com.worktogether.domain.enums.ElementPriority.NONE;
         }
     }
 }

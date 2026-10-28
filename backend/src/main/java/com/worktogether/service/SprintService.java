@@ -46,6 +46,7 @@ public class SprintService {
     private final WorkspaceService workspaceService;
     private final ChannelService channelService;
     private final WorkspaceEventPublisher eventPublisher;
+    private final NotificationService notificationService;
 
     // ---------------------------------------------------------------- Lettura
 
@@ -169,6 +170,8 @@ public class SprintService {
             channelService.createSprintChannel(workspaceId, sprintId, sprint.getName(), user);
         }
         notifySprintChanged(workspaceId);
+        notifySprintMembers(sprint, com.worktogether.domain.enums.NotificationType.SPRINT_STARTED,
+                user.getDisplayName() + " ha avviato la sprint «" + sprint.getName() + "»", user);
         return toResponse(sprint);
     }
 
@@ -183,6 +186,10 @@ public class SprintService {
         UUID targetSprintId = (carry == SprintCarryOver.NEXT_SPRINT)
                 ? resolveTargetSprint(workspaceId, sprintId, req.targetSprintId())
                 : null;
+
+        // Destinatari calcolati PRIMA di spostare i task incompleti fuori dalla sprint.
+        notifySprintMembers(sprint, com.worktogether.domain.enums.NotificationType.SPRINT_CLOSED,
+                user.getDisplayName() + " ha chiuso la sprint «" + sprint.getName() + "»", user);
 
         // Gestione dei task incompleti: BACKLOG → sprint_id null, NEXT_SPRINT → sprint successiva.
         // I task completati mantengono sprint_id (storico/timeline della sprint chiusa).
@@ -299,6 +306,18 @@ public class SprintService {
         long completed = elementRepository.countBySprintIdAndStatus(sprint.getId(), ElementStatus.COMPLETATO);
         UUID channelId = channelRepository.findBySprintId(sprint.getId()).map(Channel::getId).orElse(null);
         return SprintResponse.from(sprint, total, completed, channelId);
+    }
+
+    // Notifica in-app agli assegnatari dei task della sprint (l'autore è escluso da NotificationService).
+    private void notifySprintMembers(Sprint sprint, com.worktogether.domain.enums.NotificationType type,
+                                     String title, User actor) {
+        UUID wsId = sprint.getWorkspace().getId();
+        java.util.Set<UUID> recipients = new java.util.LinkedHashSet<>();
+        for (Element e : elementRepository.findBySprintId(sprint.getId())) {
+            for (User a : e.getAssignees()) recipients.add(a.getId());
+        }
+        notificationService.notifyAll(recipients, type, wsId, actor, title, sprint.getGoal(),
+                "/workspace/" + wsId + "/sprint", null);
     }
 
     private void notifySprintChanged(UUID workspaceId) {

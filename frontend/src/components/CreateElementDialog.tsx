@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { elementsApi } from '@/lib/api'
-import { Element, ElementType } from '@/types'
+import { Element, ElementPriority, ElementType } from '@/types'
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label'
 import { Kbd } from '@/components/ui/kbd'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from '@/components/ui/toast'
-import { TypeIcon } from '@/components/shared'
+import { PriorityIndicator, PRIORITY_ORDER, TypeIcon } from '@/components/shared'
 import { cn, getErrorMessage, TYPE_LABELS } from '@/lib/utils'
 
 interface Props {
@@ -38,6 +38,7 @@ export function CreateElementDialog({ open, onClose, workspaceId, defaultType = 
   const [title, setTitle] = useState('')
   const [type, setType] = useState<ElementType>(defaultType)
   const [parentId, setParentId] = useState(defaultParentId ?? '')
+  const [priority, setPriority] = useState<ElementPriority>('NONE')
   const [loading, setLoading] = useState(false)
 
   // Ogni apertura riparte dai default (lo stesso dialog può essere riusato per storie diverse).
@@ -46,6 +47,7 @@ export function CreateElementDialog({ open, onClose, workspaceId, defaultType = 
     setTitle('')
     setType(defaultType)
     setParentId(defaultParentId ?? '')
+    setPriority('NONE')
   }, [open, defaultType, defaultParentId])
 
   const elementsQuery = useQuery<Element[]>({
@@ -55,6 +57,8 @@ export function CreateElementDialog({ open, onClose, workspaceId, defaultType = 
   })
   const elements = elementsQuery.data
 
+  // La priorità ha senso per task e storie.
+  const hasPriority = type === 'TASK' || type === 'STORIA'
   const parentType: ElementType | null = type === 'TASK' ? 'STORIA' : type === 'STORIA' ? 'EPICA' : null
   // Elementi aperti prima, conclusi in fondo.
   const parentOptions = useMemo(() => {
@@ -79,6 +83,7 @@ export function CreateElementDialog({ open, onClose, workspaceId, defaultType = 
         title: title.trim(),
         type,
         parentId: parentType && parentId ? parentId : undefined,
+        priority: hasPriority && priority !== 'NONE' ? priority : undefined,
       })
       queryClient.invalidateQueries({ queryKey: ['elements', workspaceId] })
       toast(`${TYPE_LABELS[type]} creat${type === 'TASK' || type === 'EVENTO' ? 'o' : 'a'}`, 'success')
@@ -94,6 +99,7 @@ export function CreateElementDialog({ open, onClose, workspaceId, defaultType = 
   const titleId = `${uid}-title`
   const parentFieldId = `${uid}-parent`
   const parentLabel = parentType === 'STORIA' ? 'Storia' : 'Epica'
+  const priorityFieldId = `${uid}-priority`
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
@@ -176,6 +182,26 @@ export function CreateElementDialog({ open, onClose, workspaceId, defaultType = 
                   </SelectContent>
                 </Select>
               )}
+            </div>
+          )}
+
+          {hasPriority && (
+            <div className="space-y-2">
+              <Label htmlFor={priorityFieldId}>Priorità</Label>
+              <Select value={priority} onValueChange={v => setPriority(v as ElementPriority)}>
+                <SelectTrigger id={priorityFieldId} className="sm:w-56">
+                  <SelectValue>
+                    <PriorityIndicator priority={priority} variant="inline" showNone />
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {PRIORITY_ORDER.map(p => (
+                    <SelectItem key={p} value={p}>
+                      <PriorityIndicator priority={p} variant="inline" showNone />
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           )}
 

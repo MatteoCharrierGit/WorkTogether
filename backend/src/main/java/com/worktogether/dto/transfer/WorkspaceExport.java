@@ -64,7 +64,9 @@ public record WorkspaceExport(
             OffsetDateTime createdAt,
             String createdByEmail,
             List<String> tagRefIds,
-            List<String> assigneeEmails
+            List<String> assigneeEmails,
+            // Aggiunto con il pacchetto priorità: assente (null) nei backup precedenti.
+            String priority
     ) {}
 
     public record ChannelData(
