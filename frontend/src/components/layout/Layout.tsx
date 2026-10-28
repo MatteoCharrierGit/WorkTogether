@@ -114,6 +114,14 @@ export function Layout() {
   return (
     <VoiceSessionProvider>
       <div className="flex h-dvh overflow-hidden bg-background">
+        {/* Link "salta al contenuto": primo elemento raggiungibile con Tab, visibile solo a fuoco. */}
+        <a
+          href="#main-content"
+          onClick={e => { e.preventDefault(); document.getElementById('main-content')?.focus() }}
+          className="sr-only z-toast rounded-md bg-background px-3 py-2 text-sm font-medium shadow-md focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus-ring"
+        >
+          Vai al contenuto
+        </a>
         {/* Sidebar desktop: piena o rail di icone (preferenza persistita). */}
         <aside
           aria-label="Navigazione principale"
@@ -133,7 +141,7 @@ export function Layout() {
           </SheetContent>
         </Sheet>
 
-        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <main id="main-content" tabIndex={-1} className="flex min-w-0 flex-1 flex-col overflow-hidden outline-none">
           {/* Barra mobile minimale: le pagine hanno già il proprio PageHeader. */}
           <header className="z-header flex h-12 shrink-0 items-center gap-1 border-b bg-background/95 px-2 backdrop-blur md:hidden">
             <IconButton label="Apri menu" onClick={() => setNavOpen(true)} icon={<Menu />} />

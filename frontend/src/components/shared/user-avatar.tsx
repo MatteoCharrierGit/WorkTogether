@@ -3,7 +3,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn, getInitials, hueFromString } from '@/lib/utils'
 
 const SIZES = {
-  xs: { box: 'h-5 w-5', text: 'text-[0.5625rem]', dot: 'h-1.5 w-1.5' },
+  xs: { box: 'h-5 w-5', text: 'text-2xs', dot: 'h-1.5 w-1.5' },
   sm: { box: 'h-6 w-6', text: 'text-2xs', dot: 'h-2 w-2' },
   md: { box: 'h-8 w-8', text: 'text-xs', dot: 'h-2.5 w-2.5' },
   lg: { box: 'h-10 w-10', text: 'text-sm', dot: 'h-3 w-3' },
@@ -43,14 +43,15 @@ export function UserAvatar({ name = 'Utente', avatar, size = 'md', presence, cla
   const hue = hueFromString(name)
   return (
     <span className={cn('relative inline-flex shrink-0', className)}>
-      <Avatar className={cn(s.box, ring && 'ring-2 ring-background')}>
+      <Avatar className={cn(s.box, 'bg-background', ring && 'ring-2 ring-background')}>
         {avatar && <AvatarImage src={avatar} alt={name} />}
         <AvatarFallback
           className={cn('tinted font-semibold', s.text)}
           style={{ ['--tint-h' as string]: String(hue), ['--tint-s' as string]: '55%' } as React.CSSProperties}
           title={name}
         >
-          {getInitials(name || '?')}
+          {/* A 20px due iniziali non stanno: si mostra solo la prima (il nome completo resta nel title). */}
+          {size === 'xs' ? getInitials(name || '?').slice(0, 1) : getInitials(name || '?')}
         </AvatarFallback>
       </Avatar>
       {p && (
@@ -62,6 +63,15 @@ export function UserAvatar({ name = 'Utente', avatar, size = 'md', presence, cla
       )}
     </span>
   )
+}
+
+// Sovrapposizione per taglia: non deve coprire le iniziali dell'avatar precedente.
+const STACK_OVERLAP: Record<keyof typeof SIZES, string> = {
+  xs: '-space-x-1',
+  sm: '-space-x-0.5',
+  md: '-space-x-1.5',
+  lg: '-space-x-2',
+  xl: '-space-x-3',
 }
 
 /** Avatar sovrapposti con "+N". */
@@ -80,7 +90,12 @@ export function AvatarStack({
   const shown = users.slice(0, max)
   const rest = users.length - shown.length
   return (
-    <div className={cn('flex items-center -space-x-1.5', className)} aria-label={users.map(u => u.displayName).join(', ')}>
+    <div
+      role="group"
+      className={cn('flex items-center', STACK_OVERLAP[size], className)}
+      aria-label={users.map(u => u.displayName).join(', ')}
+      title={users.map(u => u.displayName).join(', ')}
+    >
       {shown.map(u => (
         <UserAvatar key={u.id} name={u.displayName} avatar={u.avatar} size={size} ring />
       ))}

@@ -518,7 +518,7 @@ export default function KanbanPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="shrink-0 border-b px-3 pt-4 md:px-6">
+      <div className="shrink-0 border-b px-3 pt-4 md:px-6 md:pt-6">
         <PageHeader
           title="Kanban"
           description={workspaceName}

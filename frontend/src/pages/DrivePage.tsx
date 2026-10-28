@@ -118,7 +118,6 @@ export default function DrivePage() {
     queryKey: ['drive-files', wsId, currentFolderId],
     queryFn: () => driveApi.listFiles(wsId!, currentFolderId),
     enabled: !!wsId,
-    refetchInterval: q => ((q.state.data as DriveFile[] | undefined)?.some(isLocked) ? 30_000 : false),
   })
   const { data: members = [] } = useQuery<Member[]>({
     queryKey: ['members', wsId],

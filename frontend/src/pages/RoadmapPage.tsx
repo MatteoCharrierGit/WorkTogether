@@ -11,7 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmptyState, PageHeader, QueryState } from '@/components/shared'
 import { CreateElementDialog } from '@/components/CreateElementDialog'
 import { useWorkspaceStore } from '@/store/workspaceStore'
-import { useDeleteElement } from '@/components/calendar/use-delete-element'
+import { useElementDelete } from '@/lib/useElementDelete'
 import { useMediaQuery } from '@/components/calendar/use-media-query'
 import {
   buildScale, buildTree, collectDates, flattenTree, headerSegments, type TreeNode, type Zoom,
@@ -61,7 +61,7 @@ export default function RoadmapPage() {
 
   // Il tempo reale (ELEMENT_*) è gestito globalmente da useRealtimeSync.
 
-  const { canDelete, remove } = useDeleteElement(wsId)
+  const { canDelete, remove } = useElementDelete(wsId)
   const onDelete = useCallback((el: Element) => void remove(el), [remove])
   const onToggle = useCallback(
     (key: string) =>

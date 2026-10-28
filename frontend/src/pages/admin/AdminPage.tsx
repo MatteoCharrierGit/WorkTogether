@@ -136,8 +136,9 @@ export default function AdminPage() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-5xl px-4 pb-10 pt-5 sm:px-6 lg:pt-8">
+      <div className="mx-auto w-full max-w-5xl px-4 pb-10 pt-4 sm:px-6 sm:pt-6">
         <PageHeader
+          hideTitleOnMobile
           icon={Shield}
           title="Amministrazione"
           description={currentWs ? `Impostazioni, membri e integrazioni di ${currentWs.name}` : 'Gestione workspace, utenti e integrazioni'}

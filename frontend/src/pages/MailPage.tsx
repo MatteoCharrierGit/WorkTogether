@@ -100,15 +100,15 @@ export default function MailPage() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6">
+      <div className="mx-auto w-full max-w-5xl px-4 py-4 sm:px-6 sm:py-6">
         <PageHeader
           className="hidden md:flex"
           icon={Mail}
           title="Mail"
           description={`Scrivi e invia email ai membri del workspace${currentWs ? ` · ${currentWs.name}` : ''}`}
           actions={
-            <Button onClick={send} loading={sending} disabled={!canSend} className="hidden lg:inline-flex">
-              {!sending && <Send className="h-4 w-4" />} Invia a {recipients.length}
+            <Button size="sm" onClick={send} loading={sending} disabled={!canSend} className="hidden lg:inline-flex">
+              {!sending && <Send className="h-3.5 w-3.5" />} Invia a {recipients.length}
             </Button>
           }
         />

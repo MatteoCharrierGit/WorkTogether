@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { toast } from '@/components/ui/toast'
 import { Callout, PageHeader, PasswordInput, SettingRow, SettingsSection, UserAvatar } from '@/components/shared'
-import { resizeImageToDataUrl } from '@/lib/utils'
+import { getErrorMessage, resizeImageToDataUrl } from '@/lib/utils'
 import {
   notificationsSupported, notificationsEnabled, setNotificationsEnabled,
   notificationPermission, requestNotificationPermission,
@@ -59,8 +59,8 @@ export default function SettingsPage() {
       await usersApi.updateProfile({ avatar: '' })
       updateUser({ avatar: undefined })
       toast('Foto rimossa')
-    } catch {
-      toast('Errore', 'destructive')
+    } catch (err) {
+      toast(getErrorMessage(err, 'Impossibile rimuovere la foto'), 'destructive')
     } finally {
       setAvatarBusy(false)
     }
@@ -74,8 +74,8 @@ export default function SettingsPage() {
       const updated = await usersApi.updateProfile({ displayName: displayName.trim() })
       updateUser({ displayName: updated.displayName })
       toast('Nome aggiornato')
-    } catch {
-      toast('Errore', 'destructive')
+    } catch (err) {
+      toast(getErrorMessage(err, 'Impossibile aggiornare il nome'), 'destructive')
     } finally {
       setSavingName(false)
     }
@@ -114,8 +114,8 @@ export default function SettingsPage() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-2xl space-y-6 px-4 pb-10 pt-5 sm:px-6 lg:pt-8">
-        <PageHeader icon={Settings} title="Impostazioni" description="Profilo, aspetto, notifiche e sicurezza del tuo account" className="pb-0 sm:pb-0" />
+      <div className="mx-auto w-full max-w-2xl space-y-6 px-4 pb-10 pt-4 sm:px-6 sm:pt-6">
+        <PageHeader hideTitleOnMobile icon={Settings} title="Impostazioni" description="Profilo, aspetto, notifiche e sicurezza del tuo account" className="pb-0 sm:pb-0" />
 
         {/* Profilo */}
         <SettingsSection icon={UserCircle} title="Profilo" description="Come ti vedono gli altri membri." contentClassName="space-y-5">

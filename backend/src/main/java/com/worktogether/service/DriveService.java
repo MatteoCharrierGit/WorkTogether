@@ -441,9 +441,13 @@ public class DriveService {
         if (isLockActive(df) && !df.getLockedBy().equals(user.getId())) {
             return new LockResponse(false, df.getLockedBy(), df.getLockedAt());
         }
+        // Il rinnovo periodico del proprio lock non cambia lo stato visibile: si notifica solo
+        // quando il lock passa da libero/scaduto ad attivo, così il badge "in modifica da…" è realtime.
+        boolean newlyLocked = !isLockActive(df);
         df.setLockedBy(user.getId());
         df.setLockedAt(OffsetDateTime.now());
         driveFileRepository.save(df);
+        if (newlyLocked) notifyDriveChanged(workspaceId, df.getFolderId());
         return new LockResponse(true, df.getLockedBy(), df.getLockedAt());
     }
 
@@ -454,6 +458,7 @@ public class DriveService {
             df.setLockedBy(null);
             df.setLockedAt(null);
             driveFileRepository.save(df);
+            notifyDriveChanged(workspaceId, df.getFolderId());
         }
     }
 

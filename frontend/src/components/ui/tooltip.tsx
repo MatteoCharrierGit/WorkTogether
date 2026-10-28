@@ -48,11 +48,20 @@ function SimpleTooltip({
   shortcut?: string
   disabled?: boolean
 }) {
+  const triggerRef = React.useRef<HTMLElement>(null)
+  const [open, setOpen] = React.useState(false)
+  // Radix apre il tooltip a ogni focus, anche programmatico (es. autofocus del primo bottone di
+  // un dialog aperto col mouse). Si apre solo con hover o con focus da tastiera (:focus-visible).
+  const onOpenChange = React.useCallback((next: boolean) => {
+    const el = triggerRef.current
+    if (next && el && !el.matches(':hover') && !el.matches(':focus-visible')) return
+    setOpen(next)
+  }, [])
   if (disabled || !content) return children
   return (
     <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <Tooltip open={open} onOpenChange={onOpenChange}>
+        <TooltipTrigger ref={triggerRef as React.Ref<HTMLButtonElement>} asChild>{children}</TooltipTrigger>
         <TooltipContent side={side} align={align}>
           <span className="flex items-center gap-2">
             {content}

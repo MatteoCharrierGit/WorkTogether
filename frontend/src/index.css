@@ -249,6 +249,15 @@
   @apply h-4 w-4 rounded-sm border-input;
   accent-color: hsl(var(--primary));
 }
+/* Liste di attività nel Markdown renderizzato (lib/markdown.ts) */
+.prose li.task-list-item {
+  @apply list-none;
+  margin-left: -1.25em;
+}
+.prose li.task-list-item > input[type="checkbox"] {
+  @apply mr-1.5 h-3.5 w-3.5 align-[-0.125em];
+  accent-color: hsl(var(--primary));
+}
 .ProseMirror h1 { @apply text-2xl font-semibold tracking-tight mt-4 mb-2; }
 .ProseMirror h2 { @apply text-xl font-semibold tracking-tight mt-3 mb-2; }
 .ProseMirror h3 { @apply text-lg font-medium mt-2 mb-1; }

@@ -5,7 +5,7 @@ import {
 import type { ElementStatus, ElementType } from '@/types'
 import { cn, STATUS_LABELS, TYPE_LABELS } from '@/lib/utils'
 
-/** Icona + colore (solo token) per ogni tipo di elemento. Sostituisce le emoji di TYPE_ICONS. */
+/** Icona + colore (solo token) per ogni tipo di elemento. */
 export const TYPE_META: Record<ElementType, { label: string; icon: LucideIcon; className: string }> = {
   EPICA: { label: TYPE_LABELS.EPICA, icon: Rocket, className: 'text-primary' },
   STORIA: { label: TYPE_LABELS.STORIA, icon: BookOpen, className: 'text-info' },

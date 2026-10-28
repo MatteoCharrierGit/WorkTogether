@@ -75,20 +75,6 @@ export const TYPE_LABELS: Record<string, string> = {
   EVENTO: 'Evento',
 }
 
-export const TYPE_ICONS: Record<string, string> = {
-  EPICA: '🚀',
-  STORIA: '📂',
-  TASK: '📝',
-  EVENTO: '📅',
-}
-
-export const STATUS_COLORS: Record<string, string> = {
-  DA_FARE: 'text-muted-foreground',
-  IN_CORSO: 'text-blue-500',
-  COMPLETATO: 'text-green-600',
-  ARCHIVIATO: 'text-muted-foreground opacity-50',
-}
-
 // ---------------------------------------------------------------------------
 // Helper del design system
 // ---------------------------------------------------------------------------

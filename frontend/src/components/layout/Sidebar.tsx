@@ -239,6 +239,8 @@ export function Sidebar({ collapsed = false, variant = 'desktop' }: SidebarProps
   // se l'utente non ne è (più) membro, il Layout azzera lo stato e torna alla home.
   const workspace = workspaces.find(w => w.id === currentId) ?? (workspacesLoaded ? null : persistedCurrent)
   const wsId = workspace?.id
+  // Primo caricamento senza workspace persistito: scheletro invece di "Seleziona workspace" senza navigazione.
+  const loadingWorkspace = !workspace && !workspacesLoaded
 
   const { data: aiStatus } = useQuery<{ enabled: boolean }>({
     queryKey: ['ai-status', wsId],
@@ -297,8 +299,18 @@ export function Sidebar({ collapsed = false, variant = 'desktop' }: SidebarProps
                   collapsed ? 'h-9 w-9 justify-center' : 'h-10 w-full px-2',
                 )}
               >
-                <WorkspaceAvatar name={workspace?.name} avatar={workspace?.avatar} />
-                {!collapsed && (
+                {loadingWorkspace ? (
+                  <Skeleton className="h-7 w-7 shrink-0 rounded-md" />
+                ) : (
+                  <WorkspaceAvatar name={workspace?.name} avatar={workspace?.avatar} />
+                )}
+                {!collapsed && loadingWorkspace && (
+                  <span className="min-w-0 flex-1 space-y-1.5" aria-busy="true">
+                    <Skeleton className="h-3.5 w-24" />
+                    <Skeleton className="h-2.5 w-12" />
+                  </span>
+                )}
+                {!collapsed && !loadingWorkspace && (
                   <>
                     <span className="min-w-0 flex-1 text-left">
                       <span className="block truncate text-sm font-semibold">{workspace?.name ?? 'Seleziona workspace'}</span>
@@ -375,6 +387,16 @@ export function Sidebar({ collapsed = false, variant = 'desktop' }: SidebarProps
 
       {/* Navigazione del workspace + progetti (area scorrevole) */}
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+        {loadingWorkspace && (
+          <div className={cn('space-y-1 px-2 py-2', collapsed && 'flex flex-col items-center')} aria-busy="true" aria-label="Caricamento workspace">
+            {Array.from({ length: 7 }, (_, i) => (
+              <div key={i} className={cn('flex h-8 items-center gap-2.5', collapsed ? 'justify-center' : 'px-2')}>
+                <Skeleton className="h-4 w-4 shrink-0 rounded" />
+                {!collapsed && <Skeleton className="h-3.5" style={{ width: `${45 + ((i * 17) % 35)}%` }} />}
+              </div>
+            ))}
+          </div>
+        )}
         {groups.map(group => (
           <nav key={group.id} aria-label={group.label} className={cn('px-2 pb-2', collapsed && 'flex flex-col items-center gap-0.5 border-t border-sidebar-border pt-2')}>
             {!collapsed && (

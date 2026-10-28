@@ -20,7 +20,7 @@ import { MonthView } from '@/components/calendar/MonthView'
 import { WeekView } from '@/components/calendar/WeekView'
 import { AgendaView } from '@/components/calendar/AgendaView'
 import { CalendarItemRow } from '@/components/calendar/CalendarChip'
-import { useDeleteElement } from '@/components/calendar/use-delete-element'
+import { useElementDelete } from '@/lib/useElementDelete'
 import { useMediaQuery } from '@/components/calendar/use-media-query'
 import {
   bucketByDay, dayKey, emptyItems, type CalendarFilter, type CalendarView,
@@ -86,7 +86,7 @@ export default function CalendarPage() {
   })
   const elements = query.data
 
-  const { canDelete, remove } = useDeleteElement(wsId)
+  const { canDelete, remove } = useElementDelete(wsId)
   const onDelete = useCallback((el: Element) => void remove(el), [remove])
 
   // Giorni visibili: ricalcolati solo quando cambia il mese/settimana, non a ogni render.

@@ -72,7 +72,10 @@ export function markdownToHtml(md: string): string {
     const ul = line.match(/^\s*[-*]\s+(.*)$/)
     if (ul) {
       if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul' }
-      html += `<li>${inline(ul[1])}</li>`
+      const task = ul[1].match(/^\[( |x|X)\]\s+(.*)$/)
+      html += task
+        ? `<li class="task-list-item"><input type="checkbox" disabled${task[1] === ' ' ? '' : ' checked'} aria-label="${task[1] === ' ' ? 'Da fare' : 'Fatto'}"> ${inline(task[2])}</li>`
+        : `<li>${inline(ul[1])}</li>`
       continue
     }
 
