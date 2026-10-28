@@ -38,6 +38,10 @@ public class WorkspaceService {
     private final AiConversationRepository aiConversationRepository;
     private final WorkspaceInvitationRepository invitationRepository;
     private final com.worktogether.websocket.WorkspaceEventPublisher eventPublisher;
+    // --- Avatar, sicurezza WS e modalità nascosta ---
+    private final HiddenMemberRegistry hiddenMembers;
+    private final PresenceService presenceService;
+    private final com.worktogether.websocket.WorkspaceSubscriptionRegistry subscriptionRegistry;
 
     @Value("${app.upload.dir}")
     private String uploadDir;
@@ -71,11 +75,53 @@ public class WorkspaceService {
     // @Transactional: serve a tenere aperta la sessione anche quando il metodo è
     // invocato fuori da una richiesta HTTP (es. dal thread di background dell'agente
     // o dalle automazioni), così il caricamento lazy di member.getUser() non fallisce.
+    //
+    // Modalità invisibile: agli utenti non-admin gli admin nascosti NON vengono restituiti (liste
+    // membri, picker assegnatari/DM/menzioni, agente AI). Gli admin vedono tutti, con hidden=true.
     @Transactional(readOnly = true)
     public List<MemberResponse> getMembers(UUID workspaceId, User requester) {
-        assertMember(workspaceId, requester);
+        WorkspaceRole requesterRole = getUserRole(workspaceId, requester);
+        boolean seesHidden = requesterRole == WorkspaceRole.ADMIN;
         return memberRepository.findByWorkspaceId(workspaceId).stream()
+                .filter(m -> seesHidden || !m.isHidden() || m.getUser().getId().equals(requester.getId()))
                 .map(MemberResponse::from).toList();
+    }
+
+    /**
+     * Attiva/disattiva la modalità invisibile per SE STESSI (solo ADMIN). Dopo il commit: cache
+     * invalidata, presenza ridiffusa (l'admin sparisce/ricompare subito dagli "online") e un
+     * MEMBER_ADDED senza userId per far rifare a tutti le liste membri/canali (riuso dell'evento
+     * esistente: il frontend lo mappa già su ['members'] e ['channels']).
+     */
+    @Transactional
+    public MemberResponse setHidden(UUID workspaceId, User requester, boolean hidden) {
+        WorkspaceMember member = memberRepository.findByWorkspaceIdAndUserId(workspaceId, requester.getId())
+                .orElseThrow(() -> new AccessDeniedException("Not a member of this workspace"));
+        if (member.getRole() != WorkspaceRole.ADMIN) {
+            throw new AccessDeniedException("Solo gli amministratori possono usare la modalità invisibile");
+        }
+        member.setHidden(hidden);
+        memberRepository.save(member);
+        afterCommit(() -> {
+            hiddenMembers.evict(workspaceId);
+            presenceService.rebroadcast(workspaceId);
+        });
+        publishAfterCommit(workspaceId, "MEMBER_ADDED", Map.of("visibilityChanged", true));
+        return MemberResponse.from(member);
+    }
+
+    private static void afterCommit(Runnable r) {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            r.run();
+                        }
+                    });
+        } else {
+            r.run();
+        }
     }
 
     @Transactional
@@ -101,7 +147,16 @@ public class WorkspaceService {
         WorkspaceMember member = memberRepository.findByWorkspaceIdAndUserId(workspaceId, userId)
                 .orElseThrow(() -> new EntityNotFoundException("Member not found"));
         member.setRole(role);
+        // La modalità invisibile è riservata agli admin: un admin declassato torna visibile.
+        boolean wasHidden = member.isHidden();
+        if (role != WorkspaceRole.ADMIN && wasHidden) member.setHidden(false);
         memberRepository.save(member);
+        if (wasHidden && !member.isHidden()) {
+            afterCommit(() -> {
+                hiddenMembers.evict(workspaceId);
+                presenceService.rebroadcast(workspaceId);
+            });
+        }
         publishAfterCommit(workspaceId, "MEMBER_ROLE_CHANGED",
                 Map.of("userId", userId.toString(), "role", String.valueOf(role)));
     }
@@ -149,6 +204,14 @@ public class WorkspaceService {
         // Notifica realtime DOPO il commit: il client dell'utente rimosso esce subito dal
         // workspace e, rifacendo la lista, legge lo stato già aggiornato (niente race).
         publishAfterCommit(workspaceId, "MEMBER_REMOVED", Map.of("userId", userId.toString()));
+        // Revoca realtime: registrata DOPO il MEMBER_REMOVED (le sincronizzazioni girano in ordine
+        // di registrazione), così il client rimosso riceve ancora l'evento e poi le sue
+        // subscription a /topic/workspace/{id} vengono chiuse lato broker. Via anche dalla presenza.
+        afterCommit(() -> {
+            subscriptionRegistry.revoke(workspaceId, userId);
+            hiddenMembers.evict(workspaceId);
+            presenceService.forget(workspaceId, userId);
+        });
     }
 
     // Suffisso basato sull'id (sempre univoco per costruzione) per liberare display_name/email
@@ -237,6 +300,11 @@ public class WorkspaceService {
         // rifacendo la lista workspace, leggono lo stato già aggiornato (niente race con
         // un refetch che legge ancora la riga non ancora committata).
         publishAfterCommit(workspaceId, "WORKSPACE_DELETED", Map.of("workspaceId", workspaceId.toString()));
+        // Dopo l'evento: chiude lato broker tutte le subscription al topic del workspace eliminato.
+        afterCommit(() -> {
+            subscriptionRegistry.revokeAll(workspaceId);
+            hiddenMembers.evict(workspaceId);
+        });
     }
 
     // WorkspaceEventPublisher rimanda già l'invio a dopo il commit quando c'è una transazione attiva.

@@ -29,6 +29,12 @@ public class WorkspaceMember {
     @Column(nullable = false, length = 20)
     private WorkspaceRole role;
 
+    // Modalità invisibile (solo ADMIN): nascosto agli altri utenti non-admin (liste membri,
+    // presenza, stanze, digitazione). Vedi WorkspaceService#setHidden.
+    @Builder.Default
+    @Column(name = "hidden", nullable = false)
+    private boolean hidden = false;
+
     @Builder.Default
     @Column(name = "joined_at", nullable = false, updatable = false)
     private OffsetDateTime joinedAt = OffsetDateTime.now();

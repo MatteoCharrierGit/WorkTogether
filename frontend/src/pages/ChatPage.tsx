@@ -192,7 +192,7 @@ export default function ChatPage() {
       channelId,
       authorId: me.id,
       authorName: me.displayName,
-      authorAvatar: me.avatar,
+      authorAvatar: me.avatarUrl ?? me.avatar,
       content: text,
       createdAt: new Date().toISOString(),
       pending: true,
@@ -301,7 +301,7 @@ function ChannelHeader({ channel: c, meId, onBack }: { channel: Channel; meId?: 
     <header className="flex h-14 shrink-0 items-center gap-2 border-b px-2 sm:px-4">
       <IconButton label="Torna alle conversazioni" icon={<ArrowLeft />} className="md:hidden" onClick={onBack} />
       {c.type === 'DM' ? (
-        <UserAvatar name={peer?.displayName ?? c.name} avatar={peer?.avatar} size="sm" presence={peerOnline ? 'online' : 'offline'} />
+        <UserAvatar name={peer?.displayName ?? c.name} avatarUrl={peer?.avatarUrl} avatar={peer?.avatar} size="sm" presence={peerOnline ? 'online' : 'offline'} />
       ) : (
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">{channelIcon(c)}</span>
       )}
@@ -337,7 +337,7 @@ function MemberItem({ m }: { m: Channel['members'][number] }) {
   const online = useIsOnline(m.userId)
   return (
     <div className="flex items-center gap-2 rounded-md px-2 py-1.5">
-      <UserAvatar name={m.displayName} avatar={m.avatar} size="sm" presence={online ? 'online' : 'offline'} />
+      <UserAvatar name={m.displayName} avatarUrl={m.avatarUrl} avatar={m.avatar} size="sm" presence={online ? 'online' : 'offline'} />
       <span className={cn('min-w-0 flex-1 truncate text-body', !online && 'text-muted-foreground')}>{m.displayName}</span>
     </div>
   )
@@ -349,7 +349,7 @@ function ConversationStart({ channel: c, meId, standalone }: { channel: Channel;
   return (
     <div className={cn('px-4 pb-2 pt-8', standalone && 'flex h-full flex-col justify-end')}>
       {c.type === 'DM' ? (
-        <UserAvatar name={peer?.displayName ?? c.name} avatar={peer?.avatar} size="xl" />
+        <UserAvatar name={peer?.displayName ?? c.name} avatarUrl={peer?.avatarUrl} avatar={peer?.avatar} size="xl" />
       ) : (
         <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-muted text-muted-foreground">{channelIcon(c, 'h-6 w-6')}</span>
       )}

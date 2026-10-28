@@ -10,7 +10,7 @@ public record MessageResponse(
         UUID channelId,
         UUID authorId,
         String authorName,
-        String authorAvatar,
+        String authorAvatar,      // URL versionato della foto (prima: data URL base64)
         String content,
         OffsetDateTime createdAt,
         OffsetDateTime editedAt
@@ -21,7 +21,7 @@ public record MessageResponse(
                 m.getChannel().getId(),
                 m.getAuthor().getId(),
                 m.getAuthor().getDisplayName(),
-                m.getAuthor().getAvatar(),
+                m.getAuthor().getAvatarUrl(),
                 m.getContent(),
                 m.getCreatedAt(),
                 m.getEditedAt()

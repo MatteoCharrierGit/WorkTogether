@@ -11,7 +11,7 @@ public record AuthResponse(
         boolean mustResetPassword,
         boolean systemAdmin,
         boolean onboardingCompleted,
-        String avatar,
+        String avatar,            // URL versionato della foto (GET /api/users/{id}/avatar?v=N)
         // Primo accesso di un account creato col solo username: niente token reali,
         // il client deve passare alla schermata di onboarding usando onboardingToken.
         boolean onboardingRequired,

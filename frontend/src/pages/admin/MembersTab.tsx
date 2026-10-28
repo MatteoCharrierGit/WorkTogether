@@ -1,18 +1,19 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Mail, Search, Trash2, UserPlus, Users } from 'lucide-react'
-import { workspacesApi, invitationsApi } from '@/lib/api'
+import { EyeOff, Mail, Search, Trash2, UserPlus, Users } from 'lucide-react'
+import { workspacesApi, invitationsApi, visibilityApi } from '@/lib/api'
 import type { Invitation, Member, WorkspaceRole } from '@/types'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { toast } from '@/components/ui/toast'
-import { EmptyState, QueryState, UserAvatar, useConfirm } from '@/components/shared'
+import { Callout, EmptyState, QueryState, SettingRow, UserAvatar, useConfirm } from '@/components/shared'
 import { useAuthStore } from '@/store/authStore'
 import { formatDate } from '@/lib/utils'
 import { ListHeader, ROLE_LABELS, RoleSelectItems, SettingsSection, apiError } from './shared'
@@ -158,6 +159,54 @@ function InviteMemberDialog({ wsId, open, onClose }: { wsId: string; open: boole
   )
 }
 
+// ─── La tua visibilità (modalità invisibile, solo admin) ───────────────────────
+function VisibilityCard({ wsId, me }: { wsId: string; me: Member }) {
+  const queryClient = useQueryClient()
+  const [busy, setBusy] = useState(false)
+  const hidden = !!me.hidden
+
+  const toggle = async (next: boolean) => {
+    setBusy(true)
+    // Ottimistico: la lista membri dell'admin riflette subito il nuovo stato.
+    queryClient.setQueryData<Member[]>(['members', wsId], old =>
+      old?.map(m => (m.userId === me.userId ? { ...m, hidden: next } : m)))
+    try {
+      await visibilityApi.setHidden(wsId, next)
+      toast(next ? 'Modalità invisibile attiva' : 'Ora sei di nuovo visibile')
+    } catch (err) {
+      toast(apiError(err, 'Impossibile cambiare la visibilità'), 'destructive')
+    } finally {
+      setBusy(false)
+      queryClient.invalidateQueries({ queryKey: ['members', wsId] })
+      queryClient.invalidateQueries({ queryKey: ['channels', wsId] })
+    }
+  }
+
+  return (
+    <SettingsSection
+      icon={EyeOff}
+      title="La tua visibilità"
+      description="Resta nel workspace senza comparire agli altri utenti."
+      actions={hidden ? <Badge variant="warning" size="sm"><EyeOff className="h-3 w-3" /> Sei invisibile</Badge> : undefined}
+      contentClassName="space-y-3"
+    >
+      <SettingRow
+        htmlFor="vis-hidden"
+        label="Modalità invisibile"
+        description="I collaboratori e gli ospiti non ti vedranno negli elenchi dei membri, nei selettori (assegnatari, messaggi diretti), nelle stanze e tra gli utenti online o in chiamata; non vedranno quando stai scrivendo. Gli altri amministratori continuano a vederti qui con l'etichetta «Invisibile»."
+      >
+        <Switch id="vis-hidden" checked={hidden} disabled={busy} onCheckedChange={v => void toggle(v)} />
+      </SettingRow>
+      {hidden && (
+        <Callout variant="info">
+          Ciò che crei resta firmato col tuo nome: messaggi, commenti ed elementi mostrano l&apos;autore, e i task assegnati a te
+          continuano a mostrarti come assegnatario. Se entri in una chiamata vocale, gli altri partecipanti alla chiamata ti vedono.
+        </Callout>
+      )}
+    </SettingsSection>
+  )
+}
+
 // ─── Members Tab ──────────────────────────────────────────────────────────────
 const COLS = 'md:grid-cols-[minmax(0,1fr)_11rem_2rem]'
 
@@ -234,8 +283,12 @@ export function MembersTab({ wsId }: { wsId: string }) {
     }
   }, [wsId, queryClient, confirm])
 
+  const me = members?.find(m => m.userId === meId)
+
   return (
     <div className="space-y-6">
+      {me?.role === 'ADMIN' && <VisibilityCard wsId={wsId} me={me} />}
+
       <SettingsSection
         icon={Users}
         title="Membri"
@@ -284,11 +337,16 @@ export function MembersTab({ wsId }: { wsId: string }) {
                   className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-3 py-2.5 transition-colors hover:bg-accent/40 md:gap-4 md:px-4 ${COLS}`}
                 >
                   <div className="flex min-w-0 items-center gap-3">
-                    <UserAvatar name={m.displayName} avatar={m.avatar} size="md" />
+                    <UserAvatar name={m.displayName} avatarUrl={m.avatarUrl} avatar={m.avatar} size="md" />
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 truncate text-sm font-medium">
                         <span className="truncate">{m.displayName}</span>
                         {m.userId === meId && <Badge variant="muted" size="sm">Tu</Badge>}
+                        {m.hidden && (
+                          <Badge variant="warning" size="sm" title="Non visibile ai collaboratori e agli ospiti">
+                            <EyeOff className="h-3 w-3" /> Invisibile
+                          </Badge>
+                        )}
                       </div>
                       <p className="truncate text-caption text-muted-foreground">{m.email}</p>
                     </div>

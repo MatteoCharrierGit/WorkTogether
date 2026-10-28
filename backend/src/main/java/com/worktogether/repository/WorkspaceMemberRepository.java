@@ -21,4 +21,13 @@ public interface WorkspaceMemberRepository extends JpaRepository<WorkspaceMember
     List<WorkspaceMember> findByUserIdWithWorkspace(@Param("userId") UUID userId);
     boolean existsByWorkspaceIdAndUserIdAndRole(UUID workspaceId, UUID userId, WorkspaceRole role);
     long countByUserId(UUID userId);
+
+    // --- Avatar, sicurezza WS e modalità nascosta ---
+    /** userId dei membri in modalità invisibile nel workspace. */
+    @Query("SELECT m.user.id FROM WorkspaceMember m WHERE m.workspace.id = :workspaceId AND m.hidden = true")
+    List<UUID> findHiddenUserIds(@Param("workspaceId") UUID workspaceId);
+
+    /** Tutte le coppie (workspaceId, userId) invisibili: per la cache in memoria della presenza. */
+    @Query("SELECT m.workspace.id, m.user.id FROM WorkspaceMember m WHERE m.hidden = true")
+    List<Object[]> findAllHidden();
 }

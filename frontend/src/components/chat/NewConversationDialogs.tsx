@@ -14,7 +14,7 @@ import {
 import { useIsOnline } from '@/store/presenceStore'
 import { cn } from '@/lib/utils'
 
-export interface ChatMember { userId: string; displayName: string; email: string; avatar?: string }
+export interface ChatMember { userId: string; displayName: string; email: string; avatar?: string; avatarUrl?: string }
 
 function useFiltered(members: ChatMember[], q: string) {
   const s = q.trim().toLowerCase()
@@ -35,7 +35,7 @@ function MemberLine({ m, right }: { m: ChatMember; right?: React.ReactNode }) {
   const online = useIsOnline(m.userId)
   return (
     <>
-      <UserAvatar name={m.displayName} avatar={m.avatar} size="sm" presence={online ? 'online' : 'offline'} />
+      <UserAvatar name={m.displayName} avatarUrl={m.avatarUrl} avatar={m.avatar} size="sm" presence={online ? 'online' : 'offline'} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-body">{m.displayName}</span>
         {m.email && <span className="block truncate text-2xs text-muted-foreground">{m.email}</span>}

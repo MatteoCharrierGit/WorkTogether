@@ -3,6 +3,7 @@ package com.worktogether.config;
 import com.worktogether.repository.UserRepository;
 import com.worktogether.repository.WorkspaceMemberRepository;
 import com.worktogether.security.JwtUtil;
+import com.worktogether.websocket.WorkspaceSubscriptionRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;
@@ -34,6 +35,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
     private final WorkspaceMemberRepository memberRepository;
+    // Subscription ai topic di workspace, per revocarle alla rimozione del membro / eliminazione.
+    private final WorkspaceSubscriptionRegistry subscriptionRegistry;
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
@@ -61,6 +64,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
      *       {@code /user/queue/**} (code personali, già isolate per utente) sempre; il resto è negato.
      *       Una SUBSCRIBE negata viene scartata (nessun ERROR): un ERROR chiuderebbe l'intera
      *       connessione e il client, riconnettendosi, ripeterebbe la stessa subscription in loop.</li>
+     *   <li>Revoca: le SUBSCRIBE consentite a {@code /topic/workspace/{id}} sono tracciate in
+     *       {@link WorkspaceSubscriptionRegistry}; alla rimozione del membro / eliminazione del
+     *       workspace vengono chiuse lato broker (il controllo alla SUBSCRIBE da solo non basta).</li>
      * </ul>
      */
     @Override
@@ -78,7 +84,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                             log.debug("SUBSCRIBE {} negata: {}", accessor.getDestination(), denied);
                             return null; // non arriva al broker: nessuna subscription registrata
                         }
+                        trackWorkspaceSubscription(accessor);
                     }
+                    case UNSUBSCRIBE -> subscriptionRegistry.unregister(accessor.getSessionId(), accessor.getSubscriptionId());
                     case SEND -> {
                         if (accessor.getUser() == null) throw new MessageDeliveryException("Non autenticato");
                     }
@@ -104,6 +112,14 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         if (!current) throw new MessageDeliveryException("Sessione non valida");
         return new UsernamePasswordAuthenticationToken(
                 userId.toString(), null, List.of(new SimpleGrantedAuthority("ROLE_USER")));
+    }
+
+    private void trackWorkspaceSubscription(StompHeaderAccessor accessor) {
+        String dest = accessor.getDestination();
+        if (dest == null || !dest.startsWith(WORKSPACE_TOPIC) || accessor.getUser() == null) return;
+        subscriptionRegistry.register(accessor.getSessionId(), accessor.getSubscriptionId(),
+                UUID.fromString(accessor.getUser().getName()),
+                UUID.fromString(dest.substring(WORKSPACE_TOPIC.length())));
     }
 
     /** null se la SUBSCRIBE è consentita, altrimenti il motivo del rifiuto. */

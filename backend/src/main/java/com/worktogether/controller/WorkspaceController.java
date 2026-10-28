@@ -59,6 +59,17 @@ public class WorkspaceController {
         return ResponseEntity.noContent().build();
     }
 
+    // --- Avatar, sicurezza WS e modalità nascosta ---
+    /** Modalità invisibile per sé stessi (solo ADMIN). Body: {"hidden": true|false}. */
+    @PatchMapping("/{wsId}/members/me/hidden")
+    public ResponseEntity<MemberResponse> setHidden(
+            @PathVariable UUID wsId,
+            @RequestBody Map<String, Boolean> body,
+            @AuthenticationPrincipal User user) {
+        boolean hidden = body != null && Boolean.TRUE.equals(body.get("hidden"));
+        return ResponseEntity.ok(workspaceService.setHidden(wsId, user, hidden));
+    }
+
     @DeleteMapping("/{wsId}/members/{userId}")
     public ResponseEntity<Void> removeMember(
             @PathVariable UUID wsId,

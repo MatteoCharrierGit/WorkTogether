@@ -19,11 +19,14 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 @RequiredArgsConstructor
 public class PresenceService {
+    // Modalità invisibile: gli admin nascosti non compaiono MAI nella presenza diffusa (né online
+    // né "in chiamata"), per nessuno; il loro client si considera online da sé (PresenceManager).
 
     /** Un utente è "online" se ha mandato un heartbeat negli ultimi 30s. */
     private static final long ONLINE_TTL_MS = 30_000;
 
     private final WorkspaceEventPublisher eventPublisher;
+    private final HiddenMemberRegistry hiddenMembers;
 
     // workspaceId -> (userId -> stato)
     private final Map<UUID, Map<UUID, UserPresence>> presence = new ConcurrentHashMap<>();
@@ -44,7 +47,9 @@ public class PresenceService {
         cur.lastSeen = System.currentTimeMillis();
         cur.inCallChannelId = inCallChannelId;
 
-        if (!wasOnline || !Objects.equals(prevCall, inCallChannelId)) {
+        // Un utente invisibile non cambia ciò che vedono gli altri: nessun broadcast.
+        if ((!wasOnline || !Objects.equals(prevCall, inCallChannelId))
+                && !hiddenMembers.isHidden(workspaceId, userId)) {
             broadcast(workspaceId);
         }
     }
@@ -57,7 +62,21 @@ public class PresenceService {
     public void goOffline(UUID workspaceId, UUID userId) {
         Map<UUID, UserPresence> ws = presence.get(workspaceId);
         if (ws == null) return;
-        if (ws.remove(userId) != null) broadcast(workspaceId);
+        if (ws.remove(userId) != null && !hiddenMembers.isHidden(workspaceId, userId)) broadcast(workspaceId);
+    }
+
+    /**
+     * Ridiffonde lo snapshot (es. dopo l'attivazione/disattivazione della modalità invisibile o la
+     * rimozione di un membro): gli altri client vedono subito sparire/ricomparire l'utente.
+     */
+    public void rebroadcast(UUID workspaceId) {
+        if (presence.containsKey(workspaceId)) broadcast(workspaceId);
+    }
+
+    /** Toglie un utente dalla presenza del workspace (membro rimosso) e notifica. */
+    public void forget(UUID workspaceId, UUID userId) {
+        Map<UUID, UserPresence> ws = presence.get(workspaceId);
+        if (ws != null && ws.remove(userId) != null) broadcast(workspaceId);
     }
 
     /**
@@ -70,7 +89,7 @@ public class PresenceService {
         UserPresence p = ws.get(userId);
         if (p != null && p.inCallChannelId != null) {
             p.inCallChannelId = null;
-            broadcast(workspaceId);
+            if (!hiddenMembers.isHidden(workspaceId, userId)) broadcast(workspaceId);
         }
     }
 
@@ -79,8 +98,10 @@ public class PresenceService {
         Map<UUID, UserPresence> ws = presence.get(workspaceId);
         if (ws == null) return List.of();
         long now = System.currentTimeMillis();
+        Set<UUID> hidden = hiddenMembers.hiddenUsers(workspaceId);
         List<PresenceDto> out = new ArrayList<>();
         for (Map.Entry<UUID, UserPresence> e : ws.entrySet()) {
+            if (hidden.contains(e.getKey())) continue;
             if (now - e.getValue().lastSeen <= ONLINE_TTL_MS) {
                 UUID call = e.getValue().inCallChannelId;
                 out.add(new PresenceDto(e.getKey().toString(), call != null ? call.toString() : null));
@@ -94,7 +115,7 @@ public class PresenceService {
     }
 
     private void broadcast(UUID workspaceId) {
-        eventPublisher.publish(workspaceId, "PRESENCE", Map.of("online", snapshot(workspaceId)));
+        eventPublisher.publishNow(workspaceId, "PRESENCE", Map.of("online", snapshot(workspaceId)));
     }
 
     /** Espelle le voci scadute e notifica chi è andato offline. */
@@ -102,9 +123,14 @@ public class PresenceService {
     public void sweep() {
         long now = System.currentTimeMillis();
         for (Map.Entry<UUID, Map<UUID, UserPresence>> wsEntry : presence.entrySet()) {
-            boolean changed = wsEntry.getValue().entrySet()
-                    .removeIf(e -> now - e.getValue().lastSeen > ONLINE_TTL_MS);
-            if (changed) broadcast(wsEntry.getKey());
+            Set<UUID> hidden = hiddenMembers.hiddenUsers(wsEntry.getKey());
+            boolean[] visibleChanged = {false};
+            wsEntry.getValue().entrySet().removeIf(e -> {
+                boolean expired = now - e.getValue().lastSeen > ONLINE_TTL_MS;
+                if (expired && !hidden.contains(e.getKey())) visibleChanged[0] = true;
+                return expired;
+            });
+            if (visibleChanged[0]) broadcast(wsEntry.getKey());
         }
     }
 }

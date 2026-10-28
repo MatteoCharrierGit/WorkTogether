@@ -39,9 +39,11 @@ public class User {
     @Column(name = "onboarding_completed", nullable = false)
     private boolean onboardingCompleted = false;
 
-    // Foto profilo come data URI (es. "data:image/jpeg;base64,...")
-    @Column(columnDefinition = "text")
-    private String avatar;
+    // Foto profilo: i byte stanno in user_avatars (V22) e sono serviti da GET /api/users/{id}/avatar.
+    // Qui solo la versione, che finisce nell'URL (?v=) per cache lunga + invalidazione al cambio.
+    // null = nessuna foto. (La vecchia colonna users.avatar con il data URL non è più mappata.)
+    @Column(name = "avatar_version")
+    private Integer avatarVersion;
 
     // Sessione singola: incrementata a ogni login. Gli access token portano questa versione (claim
     // "sv"); se non combacia con quella corrente il token è di una sessione vecchia ⇒ rifiutato.
@@ -56,4 +58,21 @@ public class User {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private OffsetDateTime updatedAt;
+
+    /** URL versionato della foto profilo (relativo all'origine dell'app), null se assente. */
+    public String getAvatarUrl() {
+        return avatarUrl(id, avatarVersion);
+    }
+
+    /**
+     * Compatibilità: in passato era il data URL base64; ora restituisce lo stesso valore di
+     * {@link #getAvatarUrl()} (un URL leggero, usabile come src di &lt;img&gt;).
+     */
+    public String getAvatar() {
+        return getAvatarUrl();
+    }
+
+    public static String avatarUrl(UUID userId, Integer version) {
+        return (userId == null || version == null) ? null : "/api/users/" + userId + "/avatar?v=" + version;
+    }
 }

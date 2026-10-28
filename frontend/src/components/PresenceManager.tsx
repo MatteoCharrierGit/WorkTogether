@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { presenceApi } from '@/lib/api'
 import { useWorkspaceStore } from '@/store/workspaceStore'
-import { usePresenceStore } from '@/store/presenceStore'
+import { usePresenceStore, type PresenceEntry } from '@/store/presenceStore'
+import { useAuthStore } from '@/store/authStore'
 import { useVoiceActions, useVoiceStatus } from '@/contexts/VoiceSession'
 import { useWorkspaceEvents } from '@/lib/websocket'
 
@@ -13,7 +14,8 @@ const HEARTBEAT_MS = 20_000
  */
 export function PresenceManager() {
   const wsId = useWorkspaceStore(s => s.current?.id)
-  const setAll = usePresenceStore(s => s.setAll)
+  const meId = useAuthStore(s => s.user?.id)
+  const setAllRaw = usePresenceStore(s => s.setAll)
   const clear = usePresenceStore(s => s.clear)
   // Solo stato stabile + azioni: non si ri-renderizza a ogni cambio di speaker attivo.
   const voice = useVoiceStatus()
@@ -23,6 +25,19 @@ export function PresenceManager() {
   const inCall = voice.status === 'connected' && voice.wsId === wsId ? voice.channelId : null
   const inCallRef = useRef<string | null>(inCall)
   inCallRef.current = inCall
+
+  // Un admin in modalità invisibile non compare negli snapshot del server (per nessuno): il
+  // proprio client si considera comunque online (e nella call corrente) finché manda heartbeat.
+  const meIdRef = useRef(meId)
+  meIdRef.current = meId
+  const setAll = useCallback((entries: PresenceEntry[]) => {
+    const me = meIdRef.current
+    if (me && !entries.some(e => e.userId === me)) {
+      setAllRaw([...entries, { userId: me, inCallChannelId: inCallRef.current }])
+    } else {
+      setAllRaw(entries)
+    }
+  }, [setAllRaw])
 
   // Heartbeat periodico + snapshot iniziale.
   useEffect(() => {

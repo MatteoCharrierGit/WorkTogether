@@ -36,6 +36,7 @@ public class ChannelService {
     private final WorkspaceService workspaceService;
     private final WorkspaceEventPublisher eventPublisher;
     private final LiveKitService liveKit;
+    private final HiddenMemberRegistry hiddenMembers;
 
     // ---------------------------------------------------------------- Lettura
 
@@ -235,6 +236,8 @@ public class ChannelService {
     public void notifyTyping(UUID workspaceId, UUID channelId, User user) {
         Channel channel = loadChannel(workspaceId, channelId);
         assertChannelAccess(channel, user);
+        // Modalità invisibile: nessun indicatore "sta scrivendo" per gli admin nascosti.
+        if (hiddenMembers.isHidden(workspaceId, user.getId())) return;
         eventPublisher.publish(workspaceId, "TYPING", Map.of(
                 "channelId", channelId.toString(),
                 "userId", user.getId().toString(),
@@ -294,10 +297,22 @@ public class ChannelService {
             unreadByChannel.put(channelId, row[1] == null ? 0L : ((Number) row[1]).longValue());
         }
 
+        // Modalità invisibile: nelle stanze (ROOM) e chat sprint, dove le righe membro nascono anche
+        // solo leggendo, gli admin nascosti non compaiono agli utenti non-admin. In DM e gruppi,
+        // dove l'admin partecipa esplicitamente alla conversazione, resta visibile.
+        UUID workspaceId = channels.get(0).getWorkspace().getId();
+        Set<UUID> hidden = hiddenMembers.hiddenUsers(workspaceId);
+        boolean viewerSeesHidden = hidden.isEmpty()
+                || workspaceService.getUserRole(workspaceId, viewer) == WorkspaceRole.ADMIN;
+
         List<ChannelResponse> out = new ArrayList<>(channels.size());
         for (Channel c : channels) {
             List<ChannelMember> members = membersByChannel.getOrDefault(c.getId(), List.of());
+            boolean filterHidden = !viewerSeesHidden
+                    && (c.getType() == ChannelType.ROOM || c.getType() == ChannelType.SPRINT);
             List<ChannelMemberDto> memberDtos = members.stream()
+                    .filter(m -> !filterHidden || !hidden.contains(m.getUser().getId())
+                            || m.getUser().getId().equals(viewer.getId()))
                     .map(m -> ChannelMemberDto.from(m.getUser()))
                     .toList();
 

@@ -194,7 +194,7 @@ public class AuthService {
         return new AuthResponse(
                 accessToken, token.getToken(),
                 user.getId(), user.getEmail(), user.getDisplayName(),
-                user.isMustResetPassword(), user.isSystemAdmin(), user.isOnboardingCompleted(), user.getAvatar(),
+                user.isMustResetPassword(), user.isSystemAdmin(), user.isOnboardingCompleted(), user.getAvatarUrl(),
                 false, null
         );
     }
@@ -231,7 +231,7 @@ public class AuthService {
         return new AuthResponse(
                 accessToken, refreshToken,
                 user.getId(), user.getEmail(), user.getDisplayName(),
-                user.isMustResetPassword(), user.isSystemAdmin(), user.isOnboardingCompleted(), user.getAvatar(),
+                user.isMustResetPassword(), user.isSystemAdmin(), user.isOnboardingCompleted(), user.getAvatarUrl(),
                 false, null
         );
     }

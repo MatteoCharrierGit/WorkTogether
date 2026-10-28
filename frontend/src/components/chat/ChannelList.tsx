@@ -60,7 +60,7 @@ const ChannelRow = React.memo(function ChannelRow({ channel: c, active, meId, on
       )}
     >
       {c.type === 'DM' ? (
-        <UserAvatar name={peer?.displayName ?? c.name} avatar={peer?.avatar} size="xs" presence={peerOnline ? 'online' : 'offline'} />
+        <UserAvatar name={peer?.displayName ?? c.name} avatarUrl={peer?.avatarUrl} avatar={peer?.avatar} size="xs" presence={peerOnline ? 'online' : 'offline'} />
       ) : (
         <span className="flex w-5 justify-center text-muted-foreground">{channelIcon(c)}</span>
       )}

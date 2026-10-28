@@ -47,6 +47,10 @@ public class SecurityConfig {
                         // Webhook LiveKit: niente JWT dell'app; autenticato per firma nel controller.
                         .requestMatchers("/api/livekit/webhook").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
+                        // --- Avatar, sicurezza WS e modalità nascosta ---
+                        // Foto profilo caricate da <img> (senza header Authorization): pubbliche ma
+                        // raggiungibili solo conoscendo lo UUID dell'utente (vedi UserController#avatar).
+                        .requestMatchers(HttpMethod.GET, "/api/users/*/avatar").permitAll()
                         .anyRequest().authenticated()
                 )
                 // Senza questo, una richiesta non autenticata torna 403: il frontend

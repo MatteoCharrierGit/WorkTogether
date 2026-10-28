@@ -37,6 +37,17 @@ public class WorkspaceEventPublisher {
     }
 
     /**
+     * Invio immediato (nessun rinvio after-commit), per eventi che non dipendono da dati
+     * transazionali (es. PRESENCE, stato in memoria). Necessario anche quando si pubblica da una
+     * callback afterCommit: lì la sincronizzazione risulta ancora attiva e una nuova
+     * registrazione non verrebbe mai eseguita (evento perso).
+     */
+    public void publishNow(UUID workspaceId, String eventType, Object payload) {
+        Map<String, Object> message = envelope(eventType, payload);
+        safeSend(() -> messagingTemplate.convertAndSend("/topic/workspace/" + workspaceId, message));
+    }
+
+    /**
      * Evento destinato a un solo utente (tutte le sue sessioni STOMP autenticate), recapitato su
      * {@code /user/queue/events}. Richiede che la CONNECT STOMP porti il JWT (vedi WebSocketConfig).
      */

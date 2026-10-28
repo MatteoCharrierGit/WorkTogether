@@ -25,8 +25,24 @@ const PRESENCE_LABEL: Record<Presence, string> = {
   offline: 'Offline',
 }
 
+/**
+ * Sorgente dell'immagine: `avatarUrl` (URL versionato `/api/users/{id}/avatar?v=N`, cache HTTP)
+ * oppure il legacy `avatar` (oggi stesso URL; un vecchio data URL base64 funziona ancora).
+ * Con `VITE_API_URL` (API su altra origine) i path relativi `/api/...` vengono riscritti.
+ */
+export function resolveAvatarSrc(avatarUrl?: string | null, avatar?: string | null): string | undefined {
+  const src = avatarUrl || avatar
+  if (!src) return undefined
+  const base = import.meta.env.VITE_API_URL as string | undefined
+  if (base && src.startsWith('/api/')) return base.replace(/\/$/, '') + src.slice(4)
+  return src
+}
+
 export interface UserAvatarProps {
   name?: string
+  /** URL della foto (preferito). */
+  avatarUrl?: string | null
+  /** Legacy: URL o data URL. */
   avatar?: string | null
   size?: keyof typeof SIZES
   /** Pallino di presenza in basso a destra */
@@ -37,14 +53,15 @@ export interface UserAvatarProps {
 }
 
 /** Avatar utente: foto se presente, altrimenti iniziali su sfondo tinto deterministico. */
-export function UserAvatar({ name = 'Utente', avatar, size = 'md', presence, className, ring }: UserAvatarProps) {
+export function UserAvatar({ name = 'Utente', avatarUrl, avatar, size = 'md', presence, className, ring }: UserAvatarProps) {
   const s = SIZES[size]
+  const src = resolveAvatarSrc(avatarUrl, avatar)
   const p: Presence | null = presence === true ? 'online' : presence === false || presence == null ? null : presence
   const hue = hueFromString(name)
   return (
     <span className={cn('relative inline-flex shrink-0', className)}>
       <Avatar className={cn(s.box, 'bg-background', ring && 'ring-2 ring-background')}>
-        {avatar && <AvatarImage src={avatar} alt={name} />}
+        {src && <AvatarImage src={src} alt={name} decoding="async" />}
         <AvatarFallback
           className={cn('tinted font-semibold', s.text)}
           style={{ ['--tint-h' as string]: String(hue), ['--tint-s' as string]: '55%' } as React.CSSProperties}
@@ -81,7 +98,7 @@ export function AvatarStack({
   size = 'sm',
   className,
 }: {
-  users: { id: string; displayName: string; avatar?: string | null }[]
+  users: { id: string; displayName: string; avatar?: string | null; avatarUrl?: string | null }[]
   max?: number
   size?: keyof typeof SIZES
   className?: string
@@ -97,7 +114,7 @@ export function AvatarStack({
       title={users.map(u => u.displayName).join(', ')}
     >
       {shown.map(u => (
-        <UserAvatar key={u.id} name={u.displayName} avatar={u.avatar} size={size} ring />
+        <UserAvatar key={u.id} name={u.displayName} avatarUrl={u.avatarUrl} avatar={u.avatar} size={size} ring />
       ))}
       {rest > 0 && (
         <span className={cn('relative inline-flex items-center justify-center rounded-full bg-muted font-medium text-muted-foreground ring-2 ring-background', SIZES[size].box, SIZES[size].text)}>
