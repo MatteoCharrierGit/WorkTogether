@@ -38,7 +38,7 @@ Markdown/editor: `prose prose-sm dark:prose-invert max-w-none` usa già i token.
 
 ## Componenti condivisi (`components/shared`, import da `@/components/shared`)
 
-- `PageHeader` — `title`, `description`, `icon`, `actions`, `breadcrumb`, `children`.
+- `PageHeader` — `title`, `description`, `icon`, `actions`, `breadcrumb`, `children`, `hideTitleOnMobile` (sotto md nasconde icona+titolo, già nella top bar mobile).
 - `EmptyState` — `icon`, `title`, `description`, `action`, `size`, `bordered`.
 - `QueryState` — `query` (risultato di `useQuery`) oppure `isLoading/isError/error/onRetry`; `empty`, `isEmpty`, `skeleton`, `loading`; children o `(data) => …`.
 - `Callout` — `variant` `info|success|warning|destructive|neutral`, `title`, `action`.
@@ -46,6 +46,8 @@ Markdown/editor: `prose prose-sm dark:prose-invert max-w-none` usa già i token.
   `if (!(await confirm({ title, description, confirmLabel: 'Elimina', destructive: true }))) return`
 - `TagChip` / `TagList`, `TypeIcon`, `StatusIcon`, `StatusBadge`, `BlockedBadge`, `TYPE_META`, `STATUS_META`.
 - `UserAvatar` (`size`, `presence`), `AvatarStack`.
+- `SettingsSection` (Card con `title`, `description`, `icon`, `actions`, `tone="danger"`) e `SettingRow` (etichetta + descrizione a sinistra, controllo a destra) per le pagine di impostazioni.
+- `PasswordInput` — `Input` password con IconButton mostra/nascondi.
 - `TaskCard` — solo presentazione (`title`, `href`, `status`, `tags`, `assignees`, `dueDate`, `blocked`, `actions`, `footer`, `dragging`).
 
 ## Regole per chi scrive le pagine

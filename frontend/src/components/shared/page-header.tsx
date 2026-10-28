@@ -13,6 +13,8 @@ export interface PageHeaderProps {
   breadcrumb?: React.ReactNode
   /** Contenuto sotto il titolo (tabs, filtri, …) */
   children?: React.ReactNode
+  /** Sotto md nasconde icona e titolo (restano per gli screen reader): la top bar mobile mostra già il titolo della sezione */
+  hideTitleOnMobile?: boolean
   className?: string
 }
 
@@ -24,19 +26,24 @@ function renderIcon(icon: PageHeaderProps['icon']) {
 }
 
 /** Intestazione standard di pagina. */
-export function PageHeader({ title, description, icon, actions, breadcrumb, children, className }: PageHeaderProps) {
+export function PageHeader({ title, description, icon, actions, breadcrumb, children, hideTitleOnMobile = false, className }: PageHeaderProps) {
   return (
     <header className={cn('flex flex-col gap-3 pb-4 sm:pb-6', className)}>
       {breadcrumb && <div className="min-w-0 text-sm text-muted-foreground">{breadcrumb}</div>}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 items-start gap-3">
           {icon && (
-            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-surface-2 text-muted-foreground">
+            <span
+              className={cn(
+                'mt-0.5 h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-surface-2 text-muted-foreground',
+                hideTitleOnMobile ? 'hidden md:flex' : 'flex'
+              )}
+            >
               {renderIcon(icon)}
             </span>
           )}
           <div className="min-w-0 space-y-1">
-            <h1 className="truncate text-title">{title}</h1>
+            <h1 className={cn('truncate text-title', hideTitleOnMobile && 'max-md:sr-only')}>{title}</h1>
             {description && <p className="text-sm text-muted-foreground">{description}</p>}
           </div>
         </div>

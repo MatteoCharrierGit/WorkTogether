@@ -1,13 +1,18 @@
-import { useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { elementsApi, tagsApi } from '@/lib/api'
-import { ElementType } from '@/types'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { elementsApi } from '@/lib/api'
+import { Element, ElementType } from '@/types'
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Kbd } from '@/components/ui/kbd'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from '@/components/ui/toast'
+import { TypeIcon } from '@/components/shared'
+import { cn, getErrorMessage, TYPE_LABELS } from '@/lib/utils'
 
 interface Props {
   open: boolean
@@ -17,100 +22,172 @@ interface Props {
   defaultParentId?: string
 }
 
+const TYPES: ElementType[] = ['EPICA', 'STORIA', 'TASK', 'EVENTO']
+const NO_PARENT = '__none__'
+
+const TYPE_HINT: Record<ElementType, string> = {
+  EPICA: 'Un grande obiettivo che raggruppa più storie.',
+  STORIA: "Una funzionalità o un risultato: appartiene a un'epica e contiene task.",
+  TASK: 'Un lavoro concreto. Nel Kanban compare sotto la sua storia.',
+  EVENTO: 'Un appuntamento visibile nel calendario.',
+}
+
 export function CreateElementDialog({ open, onClose, workspaceId, defaultType = 'TASK', defaultParentId }: Props) {
   const queryClient = useQueryClient()
+  const uid = useId()
   const [title, setTitle] = useState('')
   const [type, setType] = useState<ElementType>(defaultType)
   const [parentId, setParentId] = useState(defaultParentId ?? '')
   const [loading, setLoading] = useState(false)
 
-  const { data: elements = [] } = useQuery({
+  // Ogni apertura riparte dai default (lo stesso dialog può essere riusato per storie diverse).
+  useEffect(() => {
+    if (!open) return
+    setTitle('')
+    setType(defaultType)
+    setParentId(defaultParentId ?? '')
+  }, [open, defaultType, defaultParentId])
+
+  const elementsQuery = useQuery<Element[]>({
     queryKey: ['elements', workspaceId],
     queryFn: () => elementsApi.list(workspaceId),
-    enabled: open,
+    enabled: open && !!workspaceId,
   })
+  const elements = elementsQuery.data
 
-  const epics = elements.filter((e: any) => e.type === 'EPICA')
-  const stories = elements.filter((e: any) => e.type === 'STORIA')
+  const parentType: ElementType | null = type === 'TASK' ? 'STORIA' : type === 'STORIA' ? 'EPICA' : null
+  // Elementi aperti prima, conclusi in fondo.
+  const parentOptions = useMemo(() => {
+    if (!parentType || !elements) return []
+    return elements
+      .filter(e => e.type === parentType && e.status !== 'ARCHIVIATO')
+      .sort((a, b) => (a.status === 'COMPLETATO' ? 1 : 0) - (b.status === 'COMPLETATO' ? 1 : 0))
+  }, [elements, parentType])
 
-  const parentOptions = type === 'TASK' ? stories : type === 'STORIA' ? epics : []
+  const changeType = (t: ElementType) => {
+    setType(t)
+    // Il genitore scelto non è più valido se cambia il livello.
+    if (t !== type) setParentId(t === defaultType ? (defaultParentId ?? '') : '')
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!title.trim()) return
+    if (!title.trim() || loading) return
     setLoading(true)
     try {
       await elementsApi.create(workspaceId, {
         title: title.trim(),
         type,
-        parentId: parentId || undefined,
+        parentId: parentType && parentId ? parentId : undefined,
       })
       queryClient.invalidateQueries({ queryKey: ['elements', workspaceId] })
-      toast('Elemento creato')
+      toast(`${TYPE_LABELS[type]} creat${type === 'TASK' || type === 'EVENTO' ? 'o' : 'a'}`, 'success')
       setTitle('')
       onClose()
-    } catch (err: any) {
-      toast(err.response?.data?.error ?? 'Errore nella creazione', 'destructive')
+    } catch (err) {
+      toast(getErrorMessage(err, 'Errore nella creazione'), 'destructive')
     } finally {
       setLoading(false)
     }
   }
 
+  const titleId = `${uid}-title`
+  const parentFieldId = `${uid}-parent`
+  const parentLabel = parentType === 'STORIA' ? 'Storia' : 'Epica'
+
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Nuovo elemento</DialogTitle>
+          <DialogDescription>{TYPE_HINT[type]}</DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label>Tipo</Label>
-            <Select value={type} onValueChange={v => setType(v as ElementType)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="EPICA">🚀 Epica</SelectItem>
-                <SelectItem value="STORIA">📂 Storia</SelectItem>
-                <SelectItem value="TASK">📝 Task</SelectItem>
-                <SelectItem value="EVENTO">📅 Evento</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">Tipo</legend>
+            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+              {TYPES.map(t => (
+                <label
+                  key={t}
+                  className={cn(
+                    'flex h-9 cursor-pointer items-center gap-2 rounded-md border bg-background px-2.5 text-sm transition-colors',
+                    'hover:bg-accent has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-background',
+                    type === t ? 'border-primary bg-primary/5 font-medium text-foreground' : 'text-muted-foreground'
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name={`${uid}-type`}
+                    value={t}
+                    checked={type === t}
+                    onChange={() => changeType(t)}
+                    className="sr-only"
+                  />
+                  <TypeIcon type={t} size="sm" />
+                  {TYPE_LABELS[t]}
+                </label>
+              ))}
+            </div>
+          </fieldset>
 
           <div className="space-y-2">
-            <Label>Titolo</Label>
+            <Label htmlFor={titleId}>Titolo</Label>
             <Input
+              id={titleId}
               value={title}
               onChange={e => setTitle(e.target.value)}
-              placeholder="Titolo..."
+              placeholder={type === 'TASK' ? 'Es. Aggiornare la pagina di login' : 'Titolo…'}
               autoFocus
               required
+              autoComplete="off"
             />
           </div>
 
-          {parentOptions.length > 0 && (
+          {parentType && (
             <div className="space-y-2">
-              <Label>{type === 'TASK' ? 'Storia' : 'Epica'} di appartenenza</Label>
-              <Select value={parentId} onValueChange={setParentId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Seleziona..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {parentOptions.map((p: any) => (
-                    <SelectItem key={p.id} value={p.id}>{p.title}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor={parentFieldId}>{parentLabel} di appartenenza</Label>
+              {elementsQuery.isLoading ? (
+                <Select disabled>
+                  <SelectTrigger id={parentFieldId}><SelectValue placeholder="Caricamento…" /></SelectTrigger>
+                </Select>
+              ) : parentOptions.length === 0 ? (
+                <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
+                  {parentType === 'STORIA'
+                    ? 'Nessuna storia disponibile: il task non comparirà nel Kanban finché non viene collegato a una storia.'
+                    : "Nessuna epica disponibile: la storia resterà nel gruppo «Senza epica»."}
+                </p>
+              ) : (
+                <Select value={parentId || NO_PARENT} onValueChange={v => setParentId(v === NO_PARENT ? '' : v)}>
+                  <SelectTrigger id={parentFieldId}>
+                    <SelectValue placeholder="Seleziona…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_PARENT}>
+                      <span className="text-muted-foreground">Nessuna</span>
+                    </SelectItem>
+                    {parentOptions.map(p => (
+                      <SelectItem key={p.id} value={p.id}>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <TypeIcon type={p.type} size="sm" />
+                          <span className={cn('truncate', p.status === 'COMPLETATO' && 'text-muted-foreground')}>{p.title}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           )}
 
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={onClose}>Annulla</Button>
-            <Button type="submit" disabled={loading}>
-              {loading ? 'Creazione...' : 'Crea'}
-            </Button>
-          </div>
+          <DialogFooter className="items-center gap-2 sm:justify-between">
+            <p className="hidden text-xs text-muted-foreground sm:block">
+              <Kbd>Invio</Kbd> per creare · <Kbd>Esc</Kbd> per annullare
+            </p>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <Button type="button" variant="outline" onClick={onClose}>Annulla</Button>
+              <Button type="submit" loading={loading} disabled={!title.trim()}>Crea</Button>
+            </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

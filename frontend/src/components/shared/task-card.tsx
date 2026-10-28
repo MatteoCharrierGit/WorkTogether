@@ -26,7 +26,7 @@ export interface TaskCardProps extends Omit<React.HTMLAttributes<HTMLDivElement>
   muted?: boolean
   /** Stato visivo durante il drag */
   dragging?: boolean
-  /** Azioni che compaiono in hover in alto a destra (es. <IconButton/>) */
+  /** Azioni in alto a destra (es. <IconButton/>): in hover/focus con il mouse, sempre visibili su touch */
   actions?: React.ReactNode
   /** Slot in fondo alla card (es. select di stato nella Sprint) */
   footer?: React.ReactNode
@@ -97,7 +97,7 @@ export const TaskCard = React.forwardRef<HTMLDivElement, TaskCardProps>(function
         {showType && type && <TypeIcon type={type} size="sm" className="mt-0.5" />}
         <div className={cn('min-w-0 flex-1 text-sm font-medium leading-snug line-clamp-2', done && 'text-muted-foreground')}>{titleNode}</div>
         {actions && (
-          <div className="relative z-[1] -mr-1 -mt-1 flex shrink-0 items-center opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+          <div className="relative z-[1] -mr-1 -mt-1 flex shrink-0 items-center opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
             {actions}
           </div>
         )}
