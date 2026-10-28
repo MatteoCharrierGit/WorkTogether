@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bot, FileText, Plug, Save, SlidersHorizontal } from 'lucide-react'
-import { aiApi } from '@/lib/api'
-import type { AiAutonomy, AiMemoryMode, AiSettings, AiTestResult } from '@/types'
+import { Bot, FileText, Gauge, Plug, Save, SlidersHorizontal } from 'lucide-react'
+import { aiApi, aiAdminApi } from '@/lib/api'
+import type { AiAutonomy, AiMemoryMode, AiModelCatalog, AiProvider, AiSettings, AiTestResult } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -12,6 +12,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from '@/components/ui/toast'
 import { QueryState } from '@/components/shared'
 import { SettingRow, SettingsSection, apiError } from './shared'
+import { AiUsersSection } from './AiUsersSection'
+
+const PROVIDER_LABELS: Record<AiProvider, string> = { OPENROUTER: 'OpenRouter', ANTHROPIC: 'Anthropic (Claude)' }
 
 // CodeMirror resta in un chunk separato: si scarica solo aprendo questa scheda.
 const CodeEditor = lazy(() => import('@/components/editor/CodeEditor'))
@@ -67,16 +70,19 @@ export function AiTab({ wsId }: { wsId: string }) {
   const settings = settingsQuery.data
   const [form, setForm] = useState<AiSettings | null>(null)
   const [newKey, setNewKey] = useState('')
+  const [newAnthropicKey, setNewAnthropicKey] = useState('')
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
 
-  const { data: models = [] } = useQuery<{ id: string; name: string }[]>({
-    queryKey: ['ai-models', wsId],
-    queryFn: () => aiApi.listModels(wsId),
-    enabled: !!wsId,
-    staleTime: 1000 * 60 * 30,
+  const provider: AiProvider = form?.provider ?? settings?.provider ?? 'OPENROUTER'
+  const catalogQuery = useQuery<AiModelCatalog>({
+    queryKey: ['ai-models', wsId, provider],
+    queryFn: () => aiAdminApi.models(wsId, provider),
+    enabled: !!wsId && !!settings,
+    staleTime: 1000 * 60 * 10,
     retry: false,
   })
+  const models = catalogQuery.data?.models ?? []
 
   useEffect(() => { if (settings) setForm(settings) }, [settings])
 
@@ -99,11 +105,19 @@ export function AiTab({ wsId }: { wsId: string }) {
         compactThresholdPct: form.compactThresholdPct, autonomy: form.autonomy,
         memoryMode: form.memoryMode, maxToolIterations: form.maxToolIterations,
         personalityMd: form.personalityMd, memoryMd: form.memoryMd, toolsMd: form.toolsMd,
+        provider: form.provider, anthropicModel: form.anthropicModel,
+        ratePerMinute: form.ratePerMinute, ratePerDay: form.ratePerDay,
+        maxConcurrent: form.maxConcurrent, automationDailyCap: form.automationDailyCap,
       }
       if (newKey.trim()) payload.apiKey = newKey.trim()
+      if (newAnthropicKey.trim()) payload.anthropicApiKey = newAnthropicKey.trim()
       const updated: AiSettings = await aiApi.updateSettings(wsId, payload)
       queryClient.setQueryData(['ai-settings', wsId], updated)
-      setForm(updated); setNewKey('')
+      setForm(updated); setNewKey(''); setNewAnthropicKey('')
+      // Provider/chiave/modello possono cambiare elenco modelli, assegnazioni e vista "me".
+      queryClient.invalidateQueries({ queryKey: ['ai-models', wsId] })
+      queryClient.invalidateQueries({ queryKey: ['ai-users', wsId] })
+      queryClient.invalidateQueries({ queryKey: ['ai-me', wsId] })
       toast('Impostazioni salvate')
     } catch (err) {
       toast(apiError(err), 'destructive')
@@ -115,7 +129,8 @@ export function AiTab({ wsId }: { wsId: string }) {
   const test = async () => {
     setTesting(true)
     try {
-      const res: AiTestResult = await aiApi.testConnection(wsId, newKey.trim() || undefined)
+      const typed = provider === 'ANTHROPIC' ? newAnthropicKey.trim() : newKey.trim()
+      const res: AiTestResult = await aiAdminApi.test(wsId, provider, typed || undefined)
       toast(res.message, res.ok ? undefined : 'destructive')
     } catch {
       toast('Errore nel test di connessione', 'destructive')
@@ -139,36 +154,88 @@ export function AiTab({ wsId }: { wsId: string }) {
 
       <SettingsSection
         icon={Plug}
-        title="Connessione OpenRouter"
-        description="La chiave è salvata cifrata e non viene mai mostrata in chiaro."
+        title="Provider e connessione"
+        description="Le chiavi sono salvate cifrate e non vengono mai mostrate in chiaro. Ogni provider ha la sua chiave e il suo modello predefinito."
         contentClassName="space-y-4"
       >
         <div className="space-y-1.5">
-          <Label htmlFor="ai-key">Chiave API OpenRouter</Label>
-          <Input
-            id="ai-key"
-            type="password"
-            autoComplete="off"
-            value={newKey}
-            onChange={e => setNewKey(e.target.value)}
-            placeholder={form.apiKeySet ? `Configurata (${form.apiKeyPreview}). Inserisci per sostituirla` : 'sk-or-...'}
-          />
+          <Label className="text-caption">Provider attivo</Label>
+          <Select value={provider} onValueChange={v => set({ provider: v as AiProvider })}>
+            <SelectTrigger aria-label="Provider attivo" className="sm:max-w-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="OPENROUTER">{PROVIDER_LABELS.OPENROUTER}</SelectItem>
+              <SelectItem value="ANTHROPIC">{PROVIDER_LABELS.ANTHROPIC}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
+
+        {provider === 'ANTHROPIC' ? (
+          <div className="space-y-1.5">
+            <Label htmlFor="ai-key-anthropic">Chiave API Anthropic</Label>
+            <Input
+              id="ai-key-anthropic"
+              type="password"
+              autoComplete="off"
+              value={newAnthropicKey}
+              onChange={e => setNewAnthropicKey(e.target.value)}
+              placeholder={form.anthropicApiKeySet ? `Configurata (${form.anthropicApiKeyPreview}). Inserisci per sostituirla` : 'sk-ant-...'}
+            />
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <Label htmlFor="ai-key">Chiave API OpenRouter</Label>
+            <Input
+              id="ai-key"
+              type="password"
+              autoComplete="off"
+              value={newKey}
+              onChange={e => setNewKey(e.target.value)}
+              placeholder={form.apiKeySet ? `Configurata (${form.apiKeyPreview}). Inserisci per sostituirla` : 'sk-or-...'}
+            />
+          </div>
+        )}
+
         <div className="space-y-1.5">
-          <Label htmlFor="ai-model">Modello</Label>
-          <Input id="ai-model" list="or-models" value={form.model} onChange={e => set({ model: e.target.value })} placeholder="openai/gpt-4o-mini" />
-          <datalist id="or-models">
+          <Label htmlFor="ai-model">Modello predefinito del workspace</Label>
+          <Input
+            id="ai-model"
+            list="ai-models-list"
+            value={provider === 'ANTHROPIC' ? form.anthropicModel : form.model}
+            onChange={e => set(provider === 'ANTHROPIC' ? { anthropicModel: e.target.value } : { model: e.target.value })}
+            placeholder={provider === 'ANTHROPIC' ? 'claude-opus-5-5' : 'openai/gpt-4o-mini'}
+          />
+          <datalist id="ai-models-list">
             {models.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
           </datalist>
           <p className="text-caption text-muted-foreground">
-            {models.length > 0
-              ? `${models.length} modelli disponibili — scrivi per filtrare o incolla uno slug.`
-              : 'Inserisci lo slug del modello (es. openai/gpt-4o-mini).'}
+            {catalogQuery.isLoading
+              ? 'Caricamento modelli…'
+              : catalogQuery.data?.live
+                ? `${models.length} modelli disponibili — scrivi per filtrare o incolla un id.`
+                : `Elenco di riserva (${catalogQuery.data?.error || 'provider non raggiungibile'}). Puoi comunque scrivere un id.`}
+            {' '}Si può assegnare un modello diverso ai singoli membri qui sotto.
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={test} loading={testing}>
-          {!testing && <Plug className="h-3.5 w-3.5" />} Testa connessione
+          {!testing && <Plug className="h-3.5 w-3.5" />} Testa connessione {PROVIDER_LABELS[provider]}
         </Button>
+      </SettingsSection>
+
+      <SettingsSection
+        icon={Gauge}
+        title="Limiti d'uso"
+        description="Valgono per ogni membro (sovrascrivibili per utente). Oltre il limite Akari risponde con un avviso e l'invio resta bloccato fino allo scadere."
+        contentClassName="space-y-3"
+      >
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <NumberField id="ai-rpm" label="Richieste al minuto" min="1" max="600" value={form.ratePerMinute} onChange={v => set({ ratePerMinute: num(v, form.ratePerMinute) })} />
+          <NumberField id="ai-rpd" label="Richieste al giorno" min="1" value={form.ratePerDay} onChange={v => set({ ratePerDay: num(v, form.ratePerDay) })} />
+          <NumberField id="ai-conc" label="Generazioni in parallelo" min="1" max="10" value={form.maxConcurrent} onChange={v => set({ maxConcurrent: num(v, form.maxConcurrent) })} />
+          <NumberField id="ai-auto" label="Automazioni IA al giorno" min="0" max="1000" value={form.automationDailyCap} onChange={v => set({ automationDailyCap: num(v, form.automationDailyCap) })} />
+        </div>
+        <p className="text-caption text-muted-foreground">
+          Le automazioni (recap del venerdì, digest del lunedì) non consumano i limiti dei membri ma hanno un tetto giornaliero per workspace.
+        </p>
       </SettingsSection>
 
       <SettingsSection icon={SlidersHorizontal} title="Comportamento" description="Quanto può fare l'agente e come gestisce contesto e memoria." contentClassName="space-y-4">
@@ -196,13 +263,15 @@ export function AiTab({ wsId }: { wsId: string }) {
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <NumberField id="ai-temp" label="Temperatura" step="0.1" min="0" max="2" value={form.temperature} onChange={v => set({ temperature: num(v, form.temperature) })} />
+          <NumberField id="ai-temp" label={provider === 'ANTHROPIC' ? 'Temperatura (solo OpenRouter)' : 'Temperatura'} step="0.1" min="0" max="2" value={form.temperature} onChange={v => set({ temperature: num(v, form.temperature) })} />
           <NumberField id="ai-maxtok" label="Max token risposta" min="1" value={form.maxTokens} onChange={v => set({ maxTokens: num(v, form.maxTokens) })} />
           <NumberField id="ai-ctx" label="Finestra contesto" min="1000" value={form.contextWindowTokens} onChange={v => set({ contextWindowTokens: num(v, form.contextWindowTokens) })} />
           <NumberField id="ai-compact" label="Soglia compacting (%)" min="10" max="95" value={form.compactThresholdPct} onChange={v => set({ compactThresholdPct: num(v, form.compactThresholdPct) })} />
           <NumberField id="ai-iter" label="Max passi tool/turno" min="1" max="20" value={form.maxToolIterations} onChange={v => set({ maxToolIterations: num(v, form.maxToolIterations) })} />
         </div>
       </SettingsSection>
+
+      <AiUsersSection wsId={wsId} provider={settings?.provider ?? 'OPENROUTER'} />
 
       <SettingsSection icon={FileText} title="File dell'agente" description="Istruzioni in markdown lette dall'agente a ogni conversazione." contentClassName="space-y-5">
         <MdEditorBox label="Personalità (personality.md)" hint="Chi è l'agente e come si comporta. Supporta {{workspaceName}}, {{userName}}, {{today}}." value={form.personalityMd} onChange={v => set({ personalityMd: v })} />

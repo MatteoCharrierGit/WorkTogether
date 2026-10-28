@@ -308,7 +308,7 @@ export const aiApi = {
     api.put(`/workspaces/${wsId}/ai/settings`, data).then(r => r.data),
   testConnection: (wsId: string, apiKey?: string) =>
     api.post(`/workspaces/${wsId}/ai/test`, apiKey ? { apiKey } : {}).then(r => r.data),
-  listModels: (wsId: string): Promise<{ id: string; name: string }[]> =>
+  listModels: (wsId: string): Promise<import('@/types').AiModelCatalog> =>
     api.get(`/workspaces/${wsId}/ai/models`).then(r => r.data),
   status: (wsId: string) => api.get(`/workspaces/${wsId}/ai/status`).then(r => r.data),
 
@@ -428,4 +428,48 @@ export const attachmentsApi = {
     a.remove()
     URL.revokeObjectURL(url)
   },
+}
+
+// --- Notifiche e priorità ---
+export const notificationsApi = {
+  list: (params: { unreadOnly?: boolean; limit?: number; before?: string } = {}) =>
+    api.get<import('@/types').AppNotification[]>('/notifications', { params }).then(r => r.data),
+  unreadCount: () => api.get<{ count: number }>('/notifications/unread-count').then(r => r.data.count),
+  markRead: (id: string) => api.post(`/notifications/${id}/read`).then(r => r.data),
+  markAllRead: () => api.post('/notifications/read-all').then(r => r.data),
+  getPreferences: () =>
+    api.get<import('@/types').NotificationPreferences>('/notifications/preferences').then(r => r.data),
+  updatePreferences: (changes: Partial<import('@/types').NotificationPreferences>) =>
+    api.put<import('@/types').NotificationPreferences>('/notifications/preferences', changes).then(r => r.data),
+}
+
+// --- Avatar, sicurezza WS e modalità nascosta ---
+export const visibilityApi = {
+  /** Modalità invisibile per sé stessi (solo ADMIN). */
+  setHidden: (wsId: string, hidden: boolean) =>
+    api.patch<import('@/types').Member>(`/workspaces/${wsId}/members/me/hidden`, { hidden }).then(r => r.data),
+}
+
+// --- AI (provider, modelli per utente, limiti, consumi) ---
+export const aiAdminApi = {
+  /** Modelli del provider indicato (default: attivo), con fallback statico se il provider non risponde. */
+  models: (wsId: string, provider?: import('@/types').AiProvider) =>
+    api.get<import('@/types').AiModelCatalog>(`/workspaces/${wsId}/ai/models`, { params: provider ? { provider } : {} }).then(r => r.data),
+  test: (wsId: string, provider: import('@/types').AiProvider, apiKey?: string) =>
+    api.post<import('@/types').AiTestResult>(`/workspaces/${wsId}/ai/test`, apiKey ? { provider, apiKey } : { provider }).then(r => r.data),
+  /** Modello effettivo (sola lettura), limiti e consumo di oggi dell'utente corrente. */
+  me: (wsId: string) => api.get<import('@/types').AiMe>(`/workspaces/${wsId}/ai/me`).then(r => r.data),
+  users: (wsId: string, days = 30) =>
+    api.get<import('@/types').AiUserRow[]>(`/workspaces/${wsId}/ai/users`, { params: { days } }).then(r => r.data),
+  updateUser: (wsId: string, userId: string, data: { openrouterModel?: string | null; anthropicModel?: string | null; ratePerMinute?: number | null; ratePerDay?: number | null }) =>
+    api.put<import('@/types').AiUserRow>(`/workspaces/${wsId}/ai/users/${userId}`, data).then(r => r.data),
+  /** Report consumi del workspace (per utente e per giorno). Usabile anche dalla dashboard. */
+  usage: (wsId: string, days = 30) =>
+    api.get<import('@/types').AiUsageReport>(`/workspaces/${wsId}/ai/usage`, { params: { days } }).then(r => r.data),
+}
+
+// --- Dashboard ---
+export const dashboardApi = {
+  get: (wsId: string) =>
+    api.get<import('@/types').DashboardData>(`/workspaces/${wsId}/dashboard`).then(r => r.data),
 }

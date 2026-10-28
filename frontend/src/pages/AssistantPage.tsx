@@ -1,8 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { aiApi, workspacesApi } from '@/lib/api'
-import { AiConversation, AiMessage, AiConversationScope } from '@/types'
+import { aiApi, aiAdminApi, workspacesApi } from '@/lib/api'
+import { aiStream, type AiStreamErrorInfo } from '@/lib/aiStream'
+import { AiConversation, AiMessage, AiConversationScope, AiMe } from '@/types'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { useAuthStore } from '@/store/authStore'
 import { useWorkspaceEvents } from '@/lib/websocket'
@@ -18,7 +19,7 @@ import { toast } from '@/components/ui/toast'
 import { Callout, UserAvatar, useConfirm } from '@/components/shared'
 import { ChatComposer, type ChatComposerHandle } from '@/components/chat/ChatComposer'
 import {
-  Flower2, SquarePen, Trash2, Lock, Users, Wrench, Terminal, X, PanelLeft, MessageSquareText,
+  Flower2, SquarePen, Trash2, Lock, Users, Wrench, Terminal, X, PanelLeft, MessageSquareText, Cpu, Timer,
 } from 'lucide-react'
 
 interface PendingAction { id: string; tool: string; summary: string }
@@ -29,7 +30,7 @@ const HELP_TEXT = `**Comandi disponibili**
 - \`/context\` — stato del contesto (token, riassunto, soglia)
 - \`/compact\` — riassume subito i messaggi vecchi
 - \`/memory\` — mostra la memoria del workspace
-- \`/model [slug]\` — mostra il modello; con argomento lo cambia (solo admin)
+- \`/model\` — mostra il modello che usi (lo assegna l'amministratore)
 - \`/clear\` — svuota la conversazione corrente`
 
 const TOOL_LABELS: Record<string, string> = {
@@ -93,6 +94,31 @@ export default function AssistantPage() {
   const [pending, setPending] = useState<PendingAction[] | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [listOpen, setListOpen] = useState(false)
+  // Limiti d'uso (429): messaggio + istante fino a cui l'invio resta bloccato.
+  const [limit, setLimit] = useState<{ message: string; until: number } | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+
+  // Modello effettivo dell'utente: deciso dall'admin, qui solo in lettura.
+  const meQuery = useQuery<AiMe>({
+    queryKey: ['ai-me', wsId],
+    queryFn: () => aiAdminApi.me(wsId!),
+    enabled: !!wsId,
+    staleTime: 60_000,
+  })
+  const aiMe = meQuery.data
+
+  useEffect(() => {
+    if (!limit) return
+    if (limit.until <= Date.now()) { setLimit(null); return }
+    const t = window.setInterval(() => {
+      const n = Date.now()
+      setNow(n)
+      if (n >= limit.until) setLimit(null)
+    }, 1000)
+    return () => window.clearInterval(t)
+  }, [limit])
+  const cooldownSec = limit ? Math.max(0, Math.ceil((limit.until - now) / 1000)) : 0
+  const cooldown = cooldownSec > 0
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<ChatComposerHandle>(null)
@@ -175,9 +201,25 @@ export default function AssistantPage() {
       setNotice(res.message)
       if (res.refreshMessages) queryClient.invalidateQueries({ queryKey: ['ai-messages', wsId, activeId] })
       if (res.refreshConversations) queryClient.invalidateQueries({ queryKey: ['ai-conversations', wsId, scope] })
+      if (cmd === 'model' || cmd === 'compact') queryClient.invalidateQueries({ queryKey: ['ai-me', wsId] })
     } catch (err: any) {
-      toast(err.response?.data?.error ?? 'Comando non riuscito', 'destructive')
+      const data = err.response?.data
+      const msg = data?.error ?? 'Comando non riuscito'
+      if (!handleLimit(msg, { status: err.response?.status, retryAfter: data?.retryAfter, code: data?.code })) {
+        toast(msg, 'destructive')
+      }
     }
+  }
+
+  // Errori di limite d'uso (429/503 con Retry-After): Callout con conto alla rovescia invece del toast.
+  const handleLimit = (m: string, info: AiStreamErrorInfo) => {
+    if ((info.status === 429 || info.status === 503) && info.retryAfter) {
+      const n = Date.now()
+      setNow(n)
+      setLimit({ message: m, until: n + info.retryAfter * 1000 })
+      return true
+    }
+    return false
   }
 
   const streamHandlers = (convId: string) => ({
@@ -187,10 +229,11 @@ export default function AssistantPage() {
     onDone: async () => {
       await queryClient.invalidateQueries({ queryKey: ['ai-messages', wsId, convId] })
       queryClient.invalidateQueries({ queryKey: ['ai-conversations', wsId, scope] })
+      queryClient.invalidateQueries({ queryKey: ['ai-me', wsId] })
       setSending(false); resetDraft()
     },
-    onError: async (m: string) => {
-      toast(m, 'destructive')
+    onError: async (m: string, info: AiStreamErrorInfo) => {
+      if (!handleLimit(m, info)) toast(m, 'destructive')
       await queryClient.invalidateQueries({ queryKey: ['ai-messages', wsId, convId] })
       setSending(false); resetDraft()
     },
@@ -198,8 +241,18 @@ export default function AssistantPage() {
 
   const resolve = async (ok: boolean) => {
     if (!wsId || !activeId) return
+    const prev = pending
     setPending(null); setToolActivity([]); setSending(true)
-    await aiApi.confirmActions(wsId, activeId, ok, streamHandlers(activeId))
+    await aiStream(`/workspaces/${wsId}/ai/conversations/${activeId}/confirm`, { confirm: ok }, {
+      ...streamHandlers(activeId),
+      // Se la conferma viene bloccata dai limiti, le azioni restano in attesa: ripropone il riquadro.
+      onError: async (m: string, info: AiStreamErrorInfo) => {
+        if (!handleLimit(m, info)) toast(m, 'destructive')
+        setSending(false)
+        if (info.status === 429 || info.status === 503) setPending(prev)
+        else await queryClient.invalidateQueries({ queryKey: ['ai-messages', wsId, activeId] })
+      },
+    })
   }
 
   const removeConversation = async (c: AiConversation) => {
@@ -221,7 +274,7 @@ export default function AssistantPage() {
   }
 
   const send = async (text: string) => {
-    if (sending || !wsId) return false
+    if (sending || cooldown || !wsId) return false
 
     // I comandi slash non vengono inviati al modello.
     if (text.startsWith('/')) { await handleCommand(text); return }
@@ -244,9 +297,23 @@ export default function AssistantPage() {
     setToolActivity([])
     setPending(null)
     setNotice(null)
+    setLimit(null)
     setSending(true)
 
-    await aiApi.streamMessage(wsId, convId, text, streamHandlers(convId))
+    const id = convId
+    await aiStream(`/workspaces/${wsId}/ai/conversations/${id}/messages`, { text }, {
+      ...streamHandlers(id),
+      onError: async (m: string, info: AiStreamErrorInfo) => {
+        if (handleLimit(m, info)) {
+          // Rifiutato prima di salvare: il testo resta visibile solo come bozza annullata.
+          setSending(false); resetDraft()
+          return
+        }
+        toast(m, 'destructive')
+        await queryClient.invalidateQueries({ queryKey: ['ai-messages', wsId, id] })
+        setSending(false); resetDraft()
+      },
+    })
   }
 
   const conversationList = (
@@ -291,6 +358,20 @@ export default function AssistantPage() {
               {workspaceName && <> · {workspaceName}</>}
             </p>
           </div>
+          {aiMe?.model && (
+            <Badge
+              variant="muted"
+              size="sm"
+              className="hidden max-w-[40%] gap-1 sm:inline-flex"
+              title={aiMe.modelSource === 'USER' ? 'Modello assegnato dall\'amministratore' : 'Modello predefinito del workspace'}
+            >
+              <Cpu className="h-3 w-3 shrink-0" />
+              <span className="truncate">
+                Modello: {aiMe.model}
+                {aiMe.modelSource === 'USER' ? ' (assegnato dall\'amministratore)' : ''}
+              </span>
+            </Badge>
+          )}
           <IconButton label="Nuova chat" icon={<SquarePen />} className="md:hidden" onClick={newChat} />
         </header>
 
@@ -314,7 +395,7 @@ export default function AssistantPage() {
                 </p>
                 <div className="mt-6 flex flex-wrap justify-center gap-2">
                   {SUGGESTIONS.map(s => (
-                    <Button key={s} size="sm" variant="outline" className="font-normal" onClick={() => send(s)} disabled={sending}>
+                    <Button key={s} size="sm" variant="outline" className="font-normal" onClick={() => send(s)} disabled={sending || cooldown}>
                       {s}
                     </Button>
                   ))}
@@ -322,6 +403,13 @@ export default function AssistantPage() {
                 <p className="mt-4 text-caption text-muted-foreground">
                   Scrivi <code className="rounded-sm bg-muted px-1 font-mono">/help</code> per i comandi.
                 </p>
+                {aiMe?.model && (
+                  <p className="mt-1 text-caption text-muted-foreground">
+                    Modello: <span className="font-mono">{aiMe.model}</span>
+                    {aiMe.modelSource === 'USER' ? ' (assegnato dall\'amministratore)' : ' (predefinito del workspace)'}
+                    {' · '}{aiMe.usageToday.requests}/{aiMe.limits.perDay} richieste oggi
+                  </p>
+                )}
               </div>
             )}
 
@@ -359,6 +447,18 @@ export default function AssistantPage() {
               </Callout>
             )}
 
+            {limit && (
+              <Callout
+                variant="warning"
+                icon={Timer}
+                title={cooldown && cooldownSec <= 120 ? `Limite raggiunto · riprova tra ${cooldownSec}s` : 'Limite di utilizzo raggiunto'}
+                className="ml-10"
+                action={<IconButton label="Chiudi" icon={<X />} size="xs" onClick={() => setLimit(null)} />}
+              >
+                <p className="text-body text-muted-foreground">{limit.message}</p>
+              </Callout>
+            )}
+
             {pending && pending.length > 0 && (
               <Callout variant="warning" title="Conferma richiesta" className="ml-10">
                 <p className="text-body text-muted-foreground">Akari vuole eseguire queste azioni:</p>
@@ -377,10 +477,10 @@ export default function AssistantPage() {
         <ChatComposer
           ref={composerRef}
           onSend={send}
-          busy={sending}
+          busy={sending || cooldown}
           resetKey={activeId ?? `new-${scope}`}
           innerClassName="mx-auto w-full max-w-3xl"
-          placeholder={sending ? 'Akari sta rispondendo…' : 'Scrivi ad Akari o un comando (/help)'}
+          placeholder={sending ? 'Akari sta rispondendo…' : cooldown ? 'Limite raggiunto: attendi prima di inviare' : 'Scrivi ad Akari o un comando (/help)'}
           aria-label="Messaggio per Akari"
         />
       </section>

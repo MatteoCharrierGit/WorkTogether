@@ -282,3 +282,168 @@ export interface Channel {
   createdAt: string
   updatedAt: string
 }
+
+// --- Notifiche e priorità ---
+
+export type ElementPriority = 'NONE' | 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
+
+// Declaration merging: aggiunge il campo priorità all'interfaccia Element sopra.
+export interface Element {
+  priority?: ElementPriority
+}
+
+export type NotificationType =
+  | 'ASSIGNED' | 'ELEMENT_STATUS' | 'DUE_SOON' | 'OVERDUE' | 'SPRINT_STARTED' | 'SPRINT_CLOSED' | 'MENTION'
+
+/** Eventi della coda personale aggiunti da questo pacchetto (payload: AppNotification / {ids}|{all}). */
+export type NotificationWsEventType = 'NOTIFICATION' | 'NOTIFICATIONS_READ'
+
+export interface AppNotification {
+  id: string
+  workspaceId?: string | null
+  type: NotificationType
+  title: string
+  body?: string | null
+  link?: string | null
+  actorId?: string | null
+  actorName?: string | null
+  actorAvatar?: string | null
+  elementId?: string | null
+  readAt?: string | null
+  createdAt: string
+}
+
+export type NotificationPreferences = Record<NotificationType, boolean>
+
+// --- Avatar, sicurezza WS e modalità nascosta ---
+// Le foto profilo non viaggiano più come data URL base64 nei JSON: `avatarUrl` (e l'alias legacy
+// `avatar`, stesso valore) è un URL versionato `/api/users/{id}/avatar?v=N` servito con cache.
+export interface User {
+  avatarUrl?: string
+}
+export interface AuthResponse {
+  avatarUrl?: string
+}
+export interface ChannelMemberDto {
+  avatarUrl?: string
+}
+export interface Member {
+  avatarUrl?: string
+  /** Admin in modalità invisibile (visibile solo agli admin e all'interessato). */
+  hidden?: boolean
+}
+
+// --- AI (provider, modelli per utente, limiti, consumi) ---
+export type AiProvider = 'OPENROUTER' | 'ANTHROPIC'
+
+export interface AiSettings {
+  provider: AiProvider
+  anthropicApiKeySet: boolean
+  anthropicApiKeyPreview?: string | null
+  anthropicModel: string
+  ratePerMinute: number
+  ratePerDay: number
+  maxConcurrent: number
+  automationDailyCap: number
+}
+
+export interface AiModelInfo { id: string; name: string }
+
+export interface AiModelCatalog {
+  provider: AiProvider
+  /** false = elenco statico di riserva (provider non raggiungibile o chiave mancante). */
+  live: boolean
+  error?: string | null
+  models: AiModelInfo[]
+}
+
+export interface AiUsageTotals {
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+}
+
+export interface AiLimits { perMinute: number; perDay: number; maxConcurrent: number }
+
+export interface AiMe {
+  enabled: boolean
+  provider: AiProvider
+  model: string
+  /** USER = assegnato dall'admin, WORKSPACE = predefinito del workspace. */
+  modelSource: 'USER' | 'WORKSPACE'
+  admin: boolean
+  limits: AiLimits
+  usageToday: AiUsageTotals
+  inFlight: number
+}
+
+export interface AiUserRow {
+  userId: string
+  displayName: string
+  email?: string | null
+  role: string
+  openrouterModel?: string | null
+  anthropicModel?: string | null
+  effectiveModel: string
+  modelSource: 'USER' | 'WORKSPACE'
+  ratePerMinute?: number | null
+  ratePerDay?: number | null
+  effectiveLimits: AiLimits
+  usageToday: AiUsageTotals
+  usagePeriod: AiUsageTotals
+}
+
+export interface AiUsageReport {
+  from: string
+  to: string
+  days: number
+  totalToday: AiUsageTotals
+  totalPeriod: AiUsageTotals
+  users: { userId: string; displayName: string; today: AiUsageTotals; period: AiUsageTotals }[]
+  automationsToday: AiUsageTotals
+  automationsPeriod: AiUsageTotals
+  daily: { day: string; requests: number; inputTokens: number; outputTokens: number }[]
+}
+
+// --- Dashboard ---
+/** GET /api/workspaces/{wsId}/dashboard — conteggi sui soli TASK non archiviati (fuso Europe/Rome). */
+export interface DashboardTaskItem {
+  id: string
+  title: string
+  status: ElementStatus
+  priority: ElementPriority
+  endDate?: string | null
+  blocked: boolean
+}
+
+export interface DashboardData {
+  generatedAt: string
+  counts: {
+    todo: number
+    inProgress: number
+    done: number
+    overdue: number
+    dueThisWeek: number
+    blocked: number
+    unassigned: number
+  }
+  openByPriority: { priority: ElementPriority; count: number }[]
+  me: { openCount: number; overdueCount: number; dueThisWeekCount: number; next: DashboardTaskItem[] }
+  activeSprint: {
+    id: string
+    name: string
+    goal?: string | null
+    startDate?: string | null
+    endDate?: string | null
+    total: number
+    done: number
+    inProgress: number
+    blocked: number
+    /** Giorni alla fine prevista (negativo = superata, null = senza data). */
+    daysLeft?: number | null
+  } | null
+  epics: { id: string; title: string; status: ElementStatus; endDate?: string | null; total: number; done: number }[]
+  throughput: { days: { date: string; count: number }[]; total: number; previousTotal: number }
+  workload: { userId: string; displayName: string; avatarUrl?: string | null; open: number; inProgress: number; overdue: number }[]
+}

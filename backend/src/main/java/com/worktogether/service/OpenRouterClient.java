@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.worktogether.domain.enums.AiProvider;
+import com.worktogether.service.ai.Llm;
+import com.worktogether.service.ai.LlmProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -20,10 +23,11 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Client OpenRouter: test chiave + chat completions in streaming con tool calling.
+ * Provider OpenRouter (API OpenAI-compatibile): test chiave, elenco modelli, chat completions in
+ * streaming con tool calling e usage (stream_options.include_usage).
  */
 @Component
-public class OpenRouterClient {
+public class OpenRouterClient implements LlmProvider {
 
     private final String baseUrl;
     private final ObjectMapper objectMapper;
@@ -36,20 +40,12 @@ public class OpenRouterClient {
         this.objectMapper = objectMapper;
     }
 
-    public record TestResult(boolean ok, String message) {}
-    public record ToolCall(String id, String name, String arguments) {}
-    public record StreamResult(String content, List<ToolCall> toolCalls) {}
-    public record Model(String id, String name) {}
+    @Override
+    public AiProvider type() { return AiProvider.OPENROUTER; }
 
-    /** Messaggio nel formato OpenAI. Usa i factory per i vari ruoli. */
-    public record ChatMsg(String role, String content, List<ToolCall> toolCalls, String toolCallId) {
-        public static ChatMsg of(String role, String content) { return new ChatMsg(role, content, null, null); }
-        public static ChatMsg assistantToolCalls(List<ToolCall> tc) { return new ChatMsg("assistant", null, tc, null); }
-        public static ChatMsg tool(String toolCallId, String content) { return new ChatMsg("tool", content, null, toolCallId); }
-    }
-
-    public TestResult testKey(String apiKey) {
-        if (apiKey == null || apiKey.isBlank()) return new TestResult(false, "Nessuna chiave configurata");
+    @Override
+    public Llm.TestResult testKey(String apiKey) {
+        if (apiKey == null || apiKey.isBlank()) return new Llm.TestResult(false, "Nessuna chiave configurata");
         try {
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + "/auth/key"))
@@ -58,11 +54,11 @@ public class OpenRouterClient {
                     .header("Accept", "application/json")
                     .GET().build();
             HttpResponse<String> res = http.send(req, HttpResponse.BodyHandlers.ofString());
-            if (res.statusCode() == 200) return new TestResult(true, "Chiave valida");
-            if (res.statusCode() == 401) return new TestResult(false, "Chiave non valida (401)");
-            return new TestResult(false, "OpenRouter ha risposto " + res.statusCode());
+            if (res.statusCode() == 200) return new Llm.TestResult(true, "Chiave OpenRouter valida");
+            if (res.statusCode() == 401) return new Llm.TestResult(false, "Chiave non valida (401)");
+            return new Llm.TestResult(false, "OpenRouter ha risposto " + res.statusCode());
         } catch (Exception e) {
-            return new TestResult(false, "Errore di connessione: " + e.getMessage());
+            return new Llm.TestResult(false, "Errore di connessione: " + e.getMessage());
         }
     }
 
@@ -70,7 +66,8 @@ public class OpenRouterClient {
      * Elenco modelli disponibili su OpenRouter (endpoint pubblico /models). La chiave è opzionale.
      * Ritorna id + nome leggibile, ordinati per id.
      */
-    public List<Model> listModels(String apiKey) {
+    @Override
+    public List<Llm.ModelInfo> listModels(String apiKey) {
         try {
             HttpRequest.Builder b = HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + "/models"))
@@ -84,16 +81,16 @@ public class OpenRouterClient {
                         "OpenRouter /models ha risposto " + res.statusCode());
             }
             JsonNode data = objectMapper.readTree(res.body()).path("data");
-            List<Model> models = new ArrayList<>();
+            List<Llm.ModelInfo> models = new ArrayList<>();
             if (data.isArray()) {
                 for (JsonNode m : data) {
                     String id = m.path("id").asText(null);
                     if (id == null || id.isBlank()) continue;
                     String name = m.path("name").asText(id);
-                    models.add(new Model(id, name));
+                    models.add(new Llm.ModelInfo(id, name));
                 }
             }
-            models.sort(Comparator.comparing(Model::id));
+            models.sort(Comparator.comparing(Llm.ModelInfo::id));
             return models;
         } catch (ResponseStatusException e) {
             throw e;
@@ -105,45 +102,66 @@ public class OpenRouterClient {
 
     /**
      * Chat completion in streaming con eventuale tool calling. Invoca onToken sui delta di testo;
-     * ritorna il testo accumulato + le eventuali chiamate a tool richieste dal modello.
+     * ritorna il testo accumulato + le eventuali chiamate a tool richieste dal modello + usage.
      * Bloccante: eseguire su un thread dedicato.
      */
-    public StreamResult streamChat(String apiKey, String model, List<ChatMsg> messages, JsonNode tools,
-                                   double temperature, int maxTokens, Consumer<String> onToken) {
+    @Override
+    public Llm.Result chat(String apiKey, Llm.Request request, Consumer<String> onToken) {
         try {
             ObjectNode body = objectMapper.createObjectNode();
-            body.put("model", model);
-            body.put("temperature", temperature);
-            body.put("max_tokens", maxTokens);
+            body.put("model", request.model());
+            body.put("temperature", request.temperature());
+            body.put("max_tokens", request.maxTokens());
             body.put("stream", true);
+            body.putObject("stream_options").put("include_usage", true);
             ArrayNode msgs = body.putArray("messages");
-            for (ChatMsg m : messages) {
+            String system = request.systemFull();
+            if (!system.isBlank()) {
+                ObjectNode sn = msgs.addObject();
+                sn.put("role", "system");
+                sn.put("content", system);
+            }
+            for (Llm.Message m : request.messages()) {
                 ObjectNode mn = msgs.addObject();
-                mn.put("role", m.role());
-                if (m.toolCallId() != null) mn.put("tool_call_id", m.toolCallId());
-                if (m.toolCalls() != null && !m.toolCalls().isEmpty()) {
-                    mn.putNull("content");
-                    ArrayNode tcs = mn.putArray("tool_calls");
-                    for (ToolCall tc : m.toolCalls()) {
-                        ObjectNode tn = tcs.addObject();
-                        tn.put("id", tc.id());
-                        tn.put("type", "function");
-                        ObjectNode fn = tn.putObject("function");
-                        fn.put("name", tc.name());
-                        fn.put("arguments", tc.arguments() == null ? "{}" : tc.arguments());
+                switch (m.role()) {
+                    case USER -> {
+                        mn.put("role", "user");
+                        mn.put("content", m.text() == null ? "" : m.text());
                     }
-                } else {
-                    mn.put("content", m.content() == null ? "" : m.content());
+                    case TOOL -> {
+                        mn.put("role", "tool");
+                        mn.put("tool_call_id", m.toolCallId());
+                        mn.put("content", m.text() == null ? "" : m.text());
+                    }
+                    case ASSISTANT -> {
+                        mn.put("role", "assistant");
+                        if (m.hasToolCalls()) {
+                            if (m.text() != null && !m.text().isBlank()) mn.put("content", m.text());
+                            else mn.putNull("content");
+                            ArrayNode tcs = mn.putArray("tool_calls");
+                            for (Llm.ToolCall tc : m.toolCalls()) {
+                                ObjectNode tn = tcs.addObject();
+                                tn.put("id", tc.id());
+                                tn.put("type", "function");
+                                ObjectNode fn = tn.putObject("function");
+                                fn.put("name", tc.name());
+                                fn.put("arguments", tc.arguments() == null ? "{}" : tc.arguments());
+                            }
+                        } else {
+                            mn.put("content", m.text() == null ? "" : m.text());
+                        }
+                    }
                 }
             }
-            if (tools != null && tools.isArray() && tools.size() > 0) {
+            JsonNode tools = request.tools();
+            if (tools != null && tools.isArray() && tools.size() > 0 && !request.noToolUse()) {
                 body.set("tools", tools);
                 body.put("tool_choice", "auto");
             }
 
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + "/chat/completions"))
-                    .timeout(Duration.ofSeconds(120))
+                    .timeout(Duration.ofSeconds(180))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
                     .header("Accept", "text/event-stream")
@@ -153,12 +171,15 @@ public class OpenRouterClient {
             HttpResponse<Stream<String>> res = http.send(req, HttpResponse.BodyHandlers.ofLines());
             if (res.statusCode() != 200) {
                 String raw = res.body().collect(Collectors.joining("\n"));
-                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                HttpStatus status = res.statusCode() == 429 ? HttpStatus.TOO_MANY_REQUESTS : HttpStatus.BAD_GATEWAY;
+                throw new ResponseStatusException(status,
                         "OpenRouter " + res.statusCode() + ": " + extractError(raw));
             }
 
             StringBuilder full = new StringBuilder();
             Map<Integer, TcBuilder> builders = new TreeMap<>();
+            long[] usage = new long[3];
+            String[] finish = new String[1];
             try (Stream<String> lines = res.body()) {
                 lines.forEach(line -> {
                     if (line == null) return;
@@ -168,9 +189,17 @@ public class OpenRouterClient {
                     if (data.isEmpty() || data.equals("[DONE]")) return;
                     try {
                         JsonNode node = objectMapper.readTree(data);
+                        JsonNode u = node.path("usage");
+                        if (u.isObject()) {
+                            usage[0] = u.path("prompt_tokens").asLong(usage[0]);
+                            usage[1] = u.path("completion_tokens").asLong(usage[1]);
+                            usage[2] = u.path("prompt_tokens_details").path("cached_tokens").asLong(usage[2]);
+                        }
                         JsonNode choices = node.path("choices");
                         if (!choices.isArray() || choices.isEmpty()) return;
-                        JsonNode delta = choices.get(0).path("delta");
+                        JsonNode choice = choices.get(0);
+                        if (choice.hasNonNull("finish_reason")) finish[0] = choice.get("finish_reason").asText();
+                        JsonNode delta = choice.path("delta");
                         String content = delta.path("content").asText("");
                         if (!content.isEmpty()) {
                             full.append(content);
@@ -193,12 +222,16 @@ public class OpenRouterClient {
                 });
             }
 
-            List<ToolCall> calls = builders.values().stream()
+            List<Llm.ToolCall> calls = builders.values().stream()
                     .filter(b -> b.name != null)
-                    .map(b -> new ToolCall(b.id != null ? b.id : UUID.randomUUID().toString(),
+                    .map(b -> new Llm.ToolCall(b.id != null ? b.id : "call_" + UUID.randomUUID().toString().replace("-", ""),
                             b.name, b.args.length() == 0 ? "{}" : b.args.toString()))
                     .toList();
-            return new StreamResult(full.toString(), calls);
+            Llm.StopReason stop = !calls.isEmpty() ? Llm.StopReason.TOOL_USE
+                    : "length".equals(finish[0]) ? Llm.StopReason.MAX_TOKENS
+                    : "content_filter".equals(finish[0]) ? Llm.StopReason.REFUSAL
+                    : Llm.StopReason.END;
+            return new Llm.Result(full.toString(), calls, new Llm.Usage(usage[0], usage[1], usage[2]), stop, null);
         } catch (ResponseStatusException e) {
             throw e;
         } catch (Exception e) {

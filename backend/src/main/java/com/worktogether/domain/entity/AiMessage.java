@@ -36,6 +36,17 @@ public class AiMessage {
     @Column(name = "tool_call_id", length = 80)
     private String toolCallId;
 
+    /**
+     * Contenuto nativo del provider per i messaggi assistant (es. array di blocchi Anthropic con
+     * thinking/text/tool_use), ri-inviato invariato finché {@link #providerBinding} combacia.
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "provider_content", columnDefinition = "jsonb")
+    private String providerContent;
+
+    @Column(name = "provider_binding", length = 200)
+    private String providerBinding;
+
     @Column(name = "author_user_id")
     private UUID authorUserId;
 

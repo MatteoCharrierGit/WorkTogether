@@ -3,10 +3,14 @@ package com.worktogether.service;
 import com.worktogether.domain.entity.AiSettings;
 import com.worktogether.domain.entity.User;
 import com.worktogether.domain.enums.AiMemoryMode;
+import com.worktogether.domain.enums.AiProvider;
 import com.worktogether.domain.enums.WorkspaceRole;
 import com.worktogether.dto.request.UpdateAiSettingsRequest;
 import com.worktogether.dto.response.AiSettingsResponse;
 import com.worktogether.repository.AiSettingsRepository;
+import com.worktogether.service.ai.AiModelCatalog;
+import com.worktogether.service.ai.Llm;
+import com.worktogether.service.ai.LlmProvider;
 import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -20,7 +24,8 @@ public class AiSettingsService {
     private final AiSettingsRepository repository;
     private final WorkspaceService workspaceService;
     private final AiKeyCipher cipher;
-    private final OpenRouterClient openRouter;
+    private final AiModelCatalog modelCatalog;
+    private final java.util.List<LlmProvider> providers;
 
     private static final String DEFAULT_PERSONALITY = """
             Sei "Akari" 🌸, l'assistente del workspace "{{workspaceName}}".
@@ -54,6 +59,7 @@ public class AiSettingsService {
         });
     }
 
+    @Transactional
     public AiSettingsResponse get(UUID workspaceId, User user) {
         workspaceService.assertRole(workspaceId, user, WorkspaceRole.ADMIN);
         return toResponse(getOrCreate(workspaceId));
@@ -86,7 +92,7 @@ public class AiSettingsService {
         AiSettings s = getOrCreate(workspaceId);
 
         if (req.enabled() != null) s.setEnabled(req.enabled());
-        if (req.model() != null) s.setModel(req.model().trim());
+        if (req.model() != null && !req.model().isBlank()) s.setModel(req.model().trim());
         if (req.temperature() != null) s.setTemperature(clamp(req.temperature(), 0.0, 2.0));
         if (req.maxTokens() != null) s.setMaxTokens(Math.max(1, req.maxTokens()));
         if (req.contextWindowTokens() != null) s.setContextWindowTokens(Math.max(1000, req.contextWindowTokens()));
@@ -97,34 +103,50 @@ public class AiSettingsService {
         if (req.personalityMd() != null) s.setPersonalityMd(req.personalityMd());
         if (req.memoryMd() != null) s.setMemoryMd(req.memoryMd());
         if (req.toolsMd() != null) s.setToolsMd(req.toolsMd());
-        // La chiave si aggiorna solo se fornita; altrimenti resta invariata.
+        // Le chiavi si aggiornano solo se fornite; altrimenti restano invariate.
         if (req.apiKey() != null && !req.apiKey().isBlank()) {
             s.setOpenrouterApiKey(cipher.encrypt(req.apiKey().trim()));
         }
+        // --- V20: provider, Anthropic, limiti ---
+        if (req.provider() != null) s.setProvider(req.provider());
+        if (req.anthropicApiKey() != null && !req.anthropicApiKey().isBlank()) {
+            s.setAnthropicApiKey(cipher.encrypt(req.anthropicApiKey().trim()));
+        }
+        if (req.anthropicModel() != null && !req.anthropicModel().isBlank()) s.setAnthropicModel(req.anthropicModel().trim());
+        if (req.ratePerMinute() != null) s.setRatePerMinute((int) clamp(req.ratePerMinute(), 1, 600));
+        if (req.ratePerDay() != null) s.setRatePerDay((int) clamp(req.ratePerDay(), 1, 100_000));
+        if (req.maxConcurrent() != null) s.setMaxConcurrent((int) clamp(req.maxConcurrent(), 1, 10));
+        if (req.automationDailyCap() != null) s.setAutomationDailyCap((int) clamp(req.automationDailyCap(), 0, 1000));
 
         return toResponse(repository.save(s));
     }
 
-    /** Elenco dei modelli disponibili su OpenRouter (per il dropdown in Admin). */
-    public java.util.List<OpenRouterClient.Model> listModels(UUID workspaceId, User user) {
+    /**
+     * Elenco dei modelli del provider indicato (default: quello attivo), per i Select dell'Admin.
+     * Letto dal provider con cache breve; se non raggiungibile ritorna una lista statica (live=false).
+     */
+    public AiModelCatalog.Catalog listModels(UUID workspaceId, AiProvider provider, User user) {
         workspaceService.assertRole(workspaceId, user, WorkspaceRole.ADMIN);
-        String key = cipher.decrypt(getOrCreate(workspaceId).getOpenrouterApiKey());
-        return openRouter.listModels(key);
+        AiSettings s = getOrCreate(workspaceId);
+        AiProvider p = provider != null ? provider : s.getProvider();
+        return modelCatalog.list(p, cipher.decrypt(s.encryptedKeyFor(p)));
     }
 
-    /** Testa la chiave: quella passata nel body, oppure quella salvata. */
-    public OpenRouterClient.TestResult testConnection(UUID workspaceId, String apiKeyOverride, User user) {
+    /** Testa la chiave del provider indicato (default: attivo): quella passata nel body, oppure quella salvata. */
+    public Llm.TestResult testConnection(UUID workspaceId, AiProvider provider, String apiKeyOverride, User user) {
         workspaceService.assertRole(workspaceId, user, WorkspaceRole.ADMIN);
+        AiSettings s = getOrCreate(workspaceId);
+        AiProvider p = provider != null ? provider : s.getProvider();
         String key = (apiKeyOverride != null && !apiKeyOverride.isBlank())
                 ? apiKeyOverride.trim()
-                : cipher.decrypt(getOrCreate(workspaceId).getOpenrouterApiKey());
-        return openRouter.testKey(key);
+                : cipher.decrypt(s.encryptedKeyFor(p));
+        return providers.stream().filter(lp -> lp.type() == p).findFirst()
+                .map(lp -> lp.testKey(key))
+                .orElse(new Llm.TestResult(false, "Provider non supportato"));
     }
 
     private AiSettingsResponse toResponse(AiSettings s) {
-        String plain = cipher.decrypt(s.getOpenrouterApiKey());
-        boolean set = plain != null && !plain.isBlank();
-        return AiSettingsResponse.of(s, set, set ? AiKeyCipher.mask(plain) : null);
+        return AiSettingsResponse.of(s, cipher.decrypt(s.getOpenrouterApiKey()), cipher.decrypt(s.getAnthropicApiKey()));
     }
 
     private double clamp(double v, double min, double max) {

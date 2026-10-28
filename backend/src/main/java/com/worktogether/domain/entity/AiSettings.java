@@ -2,6 +2,7 @@ package com.worktogether.domain.entity;
 
 import com.worktogether.domain.enums.AiAutonomy;
 import com.worktogether.domain.enums.AiMemoryMode;
+import com.worktogether.domain.enums.AiProvider;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.UpdateTimestamp;
@@ -72,6 +73,51 @@ public class AiSettings {
     @Builder.Default
     @Column(name = "tools_md", nullable = false, columnDefinition = "text")
     private String toolsMd = "";
+
+    // ---- Provider (V20) ----
+
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private AiProvider provider = AiProvider.OPENROUTER;
+
+    // Chiave Anthropic cifrata (AES-GCM, base64). Mai esposta in chiaro via API.
+    @Column(name = "anthropic_api_key", columnDefinition = "text")
+    private String anthropicApiKey;
+
+    /** Modello predefinito quando il provider è ANTHROPIC ({@link #model} vale per OPENROUTER). */
+    @Builder.Default
+    @Column(name = "anthropic_model", nullable = false, length = 120)
+    private String anthropicModel = "claude-opus-5-5";
+
+    // ---- Limiti d'uso per utente (default del workspace, V20) ----
+
+    @Builder.Default
+    @Column(name = "rate_per_minute", nullable = false)
+    private int ratePerMinute = 10;
+
+    @Builder.Default
+    @Column(name = "rate_per_day", nullable = false)
+    private int ratePerDay = 200;
+
+    @Builder.Default
+    @Column(name = "max_concurrent", nullable = false)
+    private int maxConcurrent = 1;
+
+    /** Massimo di generazioni IA al giorno per le automazioni (recap/digest) del workspace. */
+    @Builder.Default
+    @Column(name = "automation_daily_cap", nullable = false)
+    private int automationDailyCap = 10;
+
+    /** Modello predefinito del workspace per il provider attivo. */
+    public String defaultModelFor(AiProvider p) {
+        return p == AiProvider.ANTHROPIC ? anthropicModel : model;
+    }
+
+    /** Chiave cifrata del provider indicato. */
+    public String encryptedKeyFor(AiProvider p) {
+        return p == AiProvider.ANTHROPIC ? anthropicApiKey : openrouterApiKey;
+    }
 
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)

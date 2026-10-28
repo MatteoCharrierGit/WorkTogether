@@ -2,7 +2,6 @@ package com.worktogether.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.worktogether.domain.entity.AiSettings;
 import com.worktogether.domain.entity.User;
 import com.worktogether.domain.entity.Workspace;
 import com.worktogether.domain.enums.WorkspaceRole;
@@ -12,7 +11,8 @@ import com.worktogether.dto.response.EmailDraftResponse;
 import com.worktogether.dto.response.MemberResponse;
 import com.worktogether.dto.response.SendEmailResponse;
 import com.worktogether.repository.WorkspaceRepository;
-import com.worktogether.service.OpenRouterClient.ChatMsg;
+import com.worktogether.service.ai.AiGateway;
+import com.worktogether.service.ai.AiRateLimiter;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,9 +35,7 @@ public class WorkspaceEmailService {
     private final JavaMailSender mailSender;
     private final WorkspaceService workspaceService;
     private final WorkspaceRepository workspaceRepository;
-    private final AiSettingsService aiSettingsService;
-    private final AiKeyCipher cipher;
-    private final OpenRouterClient openRouter;
+    private final AiGateway aiGateway;
     private final ObjectMapper objectMapper;
     private final MarkdownEmailRenderer markdownRenderer;
 
@@ -127,11 +125,10 @@ public class WorkspaceEmailService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Descrivi cosa scrivere nell'email");
         }
 
-        AiSettings settings = aiSettingsService.getOrCreate(workspaceId);
-        String apiKey = cipher.decrypt(settings.getOpenrouterApiKey());
-        if (apiKey == null || apiKey.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Configura prima la chiave OpenRouter nel tab Agente AI");
+        // Provider/chiave/modello effettivi dell'admin (risolti lato server) + limiti d'uso.
+        AiGateway.Resolved ai = aiGateway.resolve(workspaceId, user.getId());
+        if (!ai.hasKey()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, AiGateway.missingKeyMessage(ai.provider()));
         }
         String wsName = workspaceRepository.findById(workspaceId).map(Workspace::getName).orElse("");
         String roles = (req.roles() == null || req.roles().isEmpty())
@@ -147,12 +144,11 @@ public class WorkspaceEmailService {
         String userPrompt = "Workspace: " + wsName + ". Destinatari: " + roles + ".\n"
                 + "Richiesta: " + req.prompt().trim();
 
-        OpenRouterClient.StreamResult r = openRouter.streamChat(
-                apiKey, settings.getModel(),
-                List.of(ChatMsg.of("system", system), ChatMsg.of("user", userPrompt)),
-                null, 0.4, Math.max(settings.getMaxTokens(), 800), t -> { /* no stream */ });
-
-        return parseDraft(r.content());
+        String content;
+        try (AiRateLimiter.Permit ignored = aiGateway.acquire(ai)) {
+            content = aiGateway.complete(ai, system, userPrompt, 0.4, Math.max(ai.settings().getMaxTokens(), 800));
+        }
+        return parseDraft(content);
     }
 
     /** Estrae subject/body dal JSON del modello, con fallback robusto se non è JSON pulito. */

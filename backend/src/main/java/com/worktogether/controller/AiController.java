@@ -11,7 +11,10 @@ import com.worktogether.service.AiChatService;
 import com.worktogether.service.AiCommandService;
 import com.worktogether.service.AiConversationService;
 import com.worktogether.service.AiSettingsService;
-import com.worktogether.service.OpenRouterClient;
+import com.worktogether.domain.enums.AiProvider;
+import com.worktogether.service.ai.AiAdminService;
+import com.worktogether.service.ai.AiModelCatalog;
+import com.worktogether.service.ai.Llm;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -32,6 +35,7 @@ public class AiController {
     private final AiConversationService conversationService;
     private final AiChatService chatService;
     private final AiCommandService commandService;
+    private final AiAdminService adminService;
 
     // ---- Stato & impostazioni ----
 
@@ -57,20 +61,71 @@ public class AiController {
         return ResponseEntity.ok(aiSettingsService.update(wsId, req, user));
     }
 
+    /** Test chiave. Body opzionale: {apiKey?, provider?} (default: provider attivo e chiave salvata). */
     @PostMapping("/test")
-    public ResponseEntity<OpenRouterClient.TestResult> testConnection(
+    public ResponseEntity<Llm.TestResult> testConnection(
             @PathVariable UUID wsId,
             @RequestBody(required = false) Map<String, String> body,
             @AuthenticationPrincipal User user) {
         String apiKey = body != null ? body.get("apiKey") : null;
-        return ResponseEntity.ok(aiSettingsService.testConnection(wsId, apiKey, user));
+        AiProvider provider = parseProvider(body != null ? body.get("provider") : null);
+        return ResponseEntity.ok(aiSettingsService.testConnection(wsId, provider, apiKey, user));
     }
 
+    /** Modelli del provider (admin): {provider, live, error, models:[{id,name}]}. Cache 10 min, fallback statico. */
     @GetMapping("/models")
-    public ResponseEntity<List<OpenRouterClient.Model>> listModels(
+    public ResponseEntity<AiModelCatalog.Catalog> listModels(
+            @PathVariable UUID wsId,
+            @RequestParam(required = false) String provider,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(aiSettingsService.listModels(wsId, parseProvider(provider), user));
+    }
+
+    // ---- Utente corrente, modelli per utente, consumi ----
+
+    /** Modello effettivo (sola lettura), limiti e consumo di oggi dell'utente corrente. Tutti i membri. */
+    @GetMapping("/me")
+    public ResponseEntity<AiAdminService.MeResponse> me(
             @PathVariable UUID wsId,
             @AuthenticationPrincipal User user) {
-        return ResponseEntity.ok(aiSettingsService.listModels(wsId, user));
+        return ResponseEntity.ok(adminService.me(wsId, user));
+    }
+
+    /** Admin: membri con modello assegnato, override limiti e consumi (oggi / ultimi `days` giorni). */
+    @GetMapping("/users")
+    public ResponseEntity<List<AiAdminService.UserRow>> listUsers(
+            @PathVariable UUID wsId,
+            @RequestParam(defaultValue = "30") int days,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(adminService.listUsers(wsId, user, days));
+    }
+
+    /** Admin: assegna modello/limiti a un membro (campi null = default del workspace). */
+    @PutMapping("/users/{userId}")
+    public ResponseEntity<AiAdminService.UserRow> updateUser(
+            @PathVariable UUID wsId,
+            @PathVariable UUID userId,
+            @RequestBody AiAdminService.UpdateUserRequest req,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(adminService.updateUser(wsId, userId, req, user));
+    }
+
+    /** Admin: report consumi del workspace per utente e per giorno (ultimi `days` giorni, max 365). */
+    @GetMapping("/usage")
+    public ResponseEntity<AiAdminService.UsageReport> usage(
+            @PathVariable UUID wsId,
+            @RequestParam(defaultValue = "30") int days,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(adminService.usage(wsId, user, days));
+    }
+
+    private static AiProvider parseProvider(String p) {
+        if (p == null || p.isBlank()) return null;
+        try {
+            return AiProvider.valueOf(p.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_REQUEST, "Provider non valido: " + p);
+        }
     }
 
     // ---- Conversazioni ----

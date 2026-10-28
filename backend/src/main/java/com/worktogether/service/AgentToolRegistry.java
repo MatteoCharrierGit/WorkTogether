@@ -77,6 +77,7 @@ public class AgentToolRegistry {
                         p.set("title", strProp("Titolo (obbligatorio)"));
                         p.set("type", enumProp("Tipo (obbligatorio)", "EPICA", "STORIA", "TASK", "EVENTO"));
                         p.set("status", enumProp("Stato", "DA_FARE", "IN_CORSO", "COMPLETATO", "ARCHIVIATO"));
+                        p.set("priority", enumProp("Priorità (task/storie)", "NONE", "LOW", "MEDIUM", "HIGH", "URGENT"));
                         p.set("parentId", strProp("Id dell'elemento padre"));
                         p.set("body", strProp("Descrizione (testo semplice)"));
                         p.set("startDate", strProp("Data dell'evento, formato YYYY-MM-DD (es. 2026-06-25). Obbligatorio per gli EVENTO. Accetta anche ISO 8601 con offset."));
@@ -89,6 +90,7 @@ public class AgentToolRegistry {
                         p.set("id", strProp("Id dell'elemento (obbligatorio)"));
                         p.set("title", strProp("Nuovo titolo"));
                         p.set("status", enumProp("Nuovo stato", "DA_FARE", "IN_CORSO", "COMPLETATO", "ARCHIVIATO"));
+                        p.set("priority", enumProp("Nuova priorità", "NONE", "LOW", "MEDIUM", "HIGH", "URGENT"));
                         p.set("body", strProp("Nuova descrizione (testo semplice)"));
                         p.set("startDate", strProp("Nuova data inizio ISO 8601 con offset, es. 2026-06-20T16:00:00+02:00"));
                         p.set("endDate", strProp("Nuova data fine ISO 8601 con offset, es. 2026-06-20T17:00:00+02:00"));
@@ -329,6 +331,7 @@ public class AgentToolRegistry {
             m.put("id", e.id());
             m.put("type", e.type());
             m.put("status", e.status());
+            m.put("priority", e.priority());
             m.put("title", e.title());
             m.put("parentId", e.parentId());
             m.put("parentTitle", e.parentId() == null ? null : titleById.get(e.parentId().toString()));
@@ -418,6 +421,7 @@ public class AgentToolRegistry {
         m.put("id", e.id());
         m.put("type", e.type());
         m.put("status", e.status());
+        m.put("priority", e.priority());
         m.put("title", e.title());
         m.put("parentId", e.parentId());
         m.put("startDate", e.startDate());

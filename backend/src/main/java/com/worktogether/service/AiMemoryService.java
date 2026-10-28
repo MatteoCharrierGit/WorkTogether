@@ -6,7 +6,7 @@ import com.worktogether.domain.entity.AiSettings;
 import com.worktogether.domain.enums.AiMessageRole;
 import com.worktogether.repository.AiConversationRepository;
 import com.worktogether.repository.AiMessageRepository;
-import com.worktogether.service.OpenRouterClient.ChatMsg;
+import com.worktogether.service.ai.AiGateway;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,8 +24,8 @@ import java.util.List;
  * {@code archived=true}, così escono dal contesto attivo restando in DB per lo storico.
  *
  * Il taglio avviene SEMPRE a un confine di turno (prima di un messaggio USER), per non
- * spezzare le sequenze {@code assistant tool_calls → tool result} richieste dal protocollo
- * OpenAI. L'ultimo turno non viene mai archiviato.
+ * spezzare le sequenze {@code assistant tool_calls → tool result} richieste dai protocolli
+ * OpenAI/Anthropic. L'ultimo turno non viene mai archiviato.
  */
 @Service
 @RequiredArgsConstructor
@@ -40,15 +40,15 @@ public class AiMemoryService {
 
     private final AiMessageRepository messageRepository;
     private final AiConversationRepository conversationRepository;
-    private final OpenRouterClient openRouter;
+    private final AiGateway gateway;
 
     /**
      * Compatta la conversazione se necessario (automatico, a inizio turno). Idempotente: se il
      * contesto è sotto soglia non fa nulla. Best-effort: un errore non interrompe il turno di chat.
      */
-    public void maybeCompact(AiConversation conv, AiSettings settings, String apiKey) {
+    public void maybeCompact(AiConversation conv, AiGateway.Resolved ai) {
         try {
-            compactInternal(conv, settings, apiKey, false);
+            compactInternal(conv, ai, false);
         } catch (Exception e) {
             log.warn("Compacting saltato per la conversazione {}: {}", conv.getId(), e.getMessage());
         }
@@ -59,11 +59,12 @@ public class AiMemoryService {
      * a prescindere dalla soglia. Ritorna il numero di messaggi archiviati (0 = niente da fare).
      * A differenza di {@link #maybeCompact} propaga eventuali errori, per poterli mostrare in chat.
      */
-    public int compactNow(AiConversation conv, AiSettings settings, String apiKey) {
-        return compactInternal(conv, settings, apiKey, true);
+    public int compactNow(AiConversation conv, AiGateway.Resolved ai) {
+        return compactInternal(conv, ai, true);
     }
 
-    private int compactInternal(AiConversation conv, AiSettings settings, String apiKey, boolean force) {
+    private int compactInternal(AiConversation conv, AiGateway.Resolved ai, boolean force) {
+        AiSettings settings = ai.settings();
         List<AiMessage> active = messageRepository
                 .findByConversationIdAndArchivedFalseOrderByCreatedAtAsc(conv.getId());
         if (active.isEmpty()) return 0;
@@ -101,7 +102,7 @@ public class AiMemoryService {
         String transcript = buildTranscript(toArchive);
         if (transcript.isBlank()) return 0;
 
-        String newSummary = summarize(conv.getSummary(), transcript, settings, apiKey);
+        String newSummary = summarize(conv.getSummary(), transcript, ai);
         if (newSummary == null || newSummary.isBlank()) {
             if (force) throw new IllegalStateException("Il modello non ha prodotto un riassunto");
             return 0; // best-effort: se il modello fallisce, non perdiamo nulla
@@ -145,7 +146,7 @@ public class AiMemoryService {
     }
 
     /** Chiede al modello di estendere il riassunto esistente con i nuovi scambi (chiamata non-stream). */
-    private String summarize(String existing, String transcript, AiSettings settings, String apiKey) {
+    private String summarize(String existing, String transcript, AiGateway.Resolved ai) {
         String system = """
                 Sei un assistente che mantiene un riassunto conciso di una conversazione di lavoro.
                 Aggiorna il RIASSUNTO ESISTENTE integrando i NUOVI SCAMBI, senza perdere informazioni importanti già presenti.
@@ -157,10 +158,8 @@ public class AiMemoryService {
                 + "\n\nNUOVI SCAMBI DA INTEGRARE:\n" + transcript
                 + "\n\nProduci il riassunto aggiornato e completo.";
 
-        List<ChatMsg> msgs = List.of(ChatMsg.of("system", system), ChatMsg.of("user", user));
-        OpenRouterClient.StreamResult r = openRouter.streamChat(
-                apiKey, settings.getModel(), msgs, null, 0.2, SUMMARY_MAX_TOKENS, t -> { /* no stream verso UI */ });
-        return r.content();
+        // Chiamata senza tool né streaming verso la UI; i token sono registrati sull'utente del turno.
+        return gateway.complete(ai, system, user, 0.2, SUMMARY_MAX_TOKENS);
     }
 
     private int estimateTokens(String s) {
