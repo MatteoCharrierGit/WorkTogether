@@ -1,242 +1,258 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { subscribeWorkspace } from '@/lib/websocket'
-import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { CalendarRange, ChevronsDownUp, ChevronsUpDown, Map as MapIcon, Plus, Rocket } from 'lucide-react'
 import { elementsApi } from '@/lib/api'
-import { useElementDelete } from '@/lib/useElementDelete'
-import { Element } from '@/types'
-import { cn, formatDate, TYPE_ICONS } from '@/lib/utils'
-import { Progress } from '@/components/ui/progress'
+import type { Element } from '@/types'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { EmptyState, PageHeader, QueryState } from '@/components/shared'
 import { CreateElementDialog } from '@/components/CreateElementDialog'
 import { useWorkspaceStore } from '@/store/workspaceStore'
+import { useDeleteElement } from '@/components/calendar/use-delete-element'
+import { useMediaQuery } from '@/components/calendar/use-media-query'
+import {
+  buildScale, buildTree, collectDates, flattenTree, headerSegments, type TreeNode, type Zoom,
+} from '@/components/roadmap/roadmap-utils'
+import { TimelineGrid, TimelineHeader, TimelineRow } from '@/components/roadmap/RoadmapTimeline'
 
-function GanttBar({ element, minDate, maxDate, totalDays }: {
-  element: Element
-  minDate: Date
-  maxDate: Date
-  totalDays: number
-}) {
-  if (!element.startDate || !element.endDate) return null
-  const start = new Date(element.startDate)
-  const end = new Date(element.endDate)
-  const left = Math.max(0, (start.getTime() - minDate.getTime()) / (totalDays * 86400000)) * 100
-  const width = Math.max(1, (end.getTime() - start.getTime()) / (totalDays * 86400000)) * 100
-
-  const isEpic = element.type === 'EPICA'
-
-  return (
-    <div
-      className={cn(
-        'absolute top-1/2 -translate-y-1/2 h-5 rounded-full flex items-center px-2 overflow-hidden',
-        isEpic ? 'bg-primary/80 text-primary-foreground' : 'bg-blue-400/70 text-white'
-      )}
-      style={{ left: `${Math.min(left, 95)}%`, width: `${Math.min(width, 100 - left)}%`, minWidth: '4px' }}
-      title={`${element.title}\n${formatDate(element.startDate)} → ${formatDate(element.endDate)}`}
-    >
-      <span className="text-[10px] font-medium truncate">{element.title}</span>
-    </div>
-  )
+const ZOOM_KEY = 'wt.roadmap.zoom'
+function readZoom(): Zoom {
+  try {
+    const v = localStorage.getItem(ZOOM_KEY)
+    return v === 'week' || v === 'month' || v === 'quarter' ? v : 'month'
+  } catch {
+    return 'month'
+  }
 }
 
-function EpicRow({ epic, stories, allElements, minDate, maxDate, totalDays }: {
-  epic: Element
-  stories: Element[]
-  allElements: Element[]
-  minDate: Date
-  maxDate: Date
-  totalDays: number
-}) {
-  const [open, setOpen] = useState(true)
-  const { canDelete, remove } = useElementDelete(epic.workspaceId)
-
-  return (
-    <>
-      {/* Epic row */}
-      <div className="flex items-center border-b hover:bg-muted/30 transition-colors group">
-        <div className="w-64 shrink-0 flex items-center gap-1.5 px-3 py-2.5 border-r">
-          <button onClick={() => setOpen(o => !o)} className="shrink-0 text-muted-foreground">
-            {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-          </button>
-          <span className="text-xs">{TYPE_ICONS['EPICA']}</span>
-          <a
-            href={`/workspace/${epic.workspaceId}/element/${epic.id}`}
-            className="flex-1 text-sm font-semibold truncate hover:text-primary transition-colors"
-          >
-            {epic.title}
-          </a>
-          {canDelete(epic) && (
-            <button
-              onClick={() => remove(epic)}
-              className="shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition"
-              title="Elimina"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
-        <div className="w-28 shrink-0 px-3 py-2.5 border-r">
-          <div className="flex items-center gap-2">
-            <Progress value={epic.progress ?? 0} className="h-1.5 flex-1" />
-            <span className="text-xs text-muted-foreground w-8 text-right">{epic.progress ?? 0}%</span>
-          </div>
-        </div>
-        <div className="flex-1 relative h-10">
-          <GanttBar element={epic} minDate={minDate} maxDate={maxDate} totalDays={totalDays} />
-        </div>
-      </div>
-
-      {/* Story rows */}
-      {open && stories.map(story => (
-        <div key={story.id} className="flex items-center border-b bg-muted/10 hover:bg-muted/30 transition-colors group">
-          <div className="w-64 shrink-0 flex items-center gap-1.5 px-3 py-2 border-r pl-9">
-            <span className="text-xs">{TYPE_ICONS['STORIA']}</span>
-            <a
-              href={`/workspace/${story.workspaceId}/element/${story.id}`}
-              className="flex-1 text-sm truncate hover:text-primary transition-colors text-muted-foreground"
-            >
-              {story.title}
-            </a>
-            {canDelete(story) && (
-              <button
-                onClick={() => remove(story)}
-                className="shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition"
-                title="Elimina"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-          <div className="w-28 shrink-0 border-r" />
-          <div className="flex-1 relative h-9">
-            <GanttBar element={story} minDate={minDate} maxDate={maxDate} totalDays={totalDays} />
-          </div>
-        </div>
-      ))}
-    </>
-  )
-}
+/** Di default sono aperte solo le epiche (si vedono le storie); storie e gruppi chiusi. */
+const defaultOpen = (n: TreeNode) => n.el?.type === 'EPICA' || (!n.el && !!n.groupLabel)
 
 export default function RoadmapPage() {
   const { wsId } = useParams<{ wsId: string }>()
-  const queryClient = useQueryClient()
   const workspace = useWorkspaceStore(s => s.current)
+  const isAdmin = workspace?.myRole === 'ADMIN'
+  // Sotto md la barra superiore mostra già il titolo della sezione.
+  const showTitle = useMediaQuery('(min-width: 768px)')
   const [createOpen, setCreateOpen] = useState(false)
+  const [zoom, setZoomState] = useState<Zoom>(readZoom)
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({})
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const cornerRef = useRef<HTMLDivElement>(null)
 
-  const { data: elements = [] } = useQuery<Element[]>({
+  const setZoom = (z: Zoom) => {
+    setZoomState(z)
+    try {
+      localStorage.setItem(ZOOM_KEY, z)
+    } catch {
+      /* preferenza solo per la sessione */
+    }
+  }
+
+  const query = useQuery<Element[]>({
     queryKey: ['elements', wsId],
     queryFn: () => elementsApi.list(wsId!),
     enabled: !!wsId,
   })
+  const elements = query.data
 
-  // Aggiornamento in tempo reale: la roadmap si riallinea da sola quando gli elementi cambiano
-  // (creazione da API/assistente, modifiche di stato), senza bisogno di ricaricare la pagina.
-  useEffect(() => {
-    if (!wsId) return
-    return subscribeWorkspace(wsId, ev => {
-      if (ev.type.startsWith('ELEMENT_')) {
-        queryClient.invalidateQueries({ queryKey: ['elements', wsId] })
-      }
-    })
-  }, [wsId, queryClient])
+  // Il tempo reale (ELEMENT_*) è gestito globalmente da useRealtimeSync.
 
-  const epics = elements.filter(e => e.type === 'EPICA')
-  const stories = elements.filter(e => e.type === 'STORIA')
+  const { canDelete, remove } = useDeleteElement(wsId)
+  const onDelete = useCallback((el: Element) => void remove(el), [remove])
+  const onToggle = useCallback(
+    (key: string) =>
+      setOverrides(o => {
+        // Il valore corrente dipende dal default del nodo: lo ricaviamo dalle righe visibili.
+        const cur = key in o ? o[key] : undefined
+        return { ...o, [key]: cur === undefined ? !openByDefault.current.has(key) : !cur }
+      }),
+    []
+  )
 
-  // Compute timeline range
-  const dated = elements.filter(e => e.startDate && e.endDate)
-  const minDate = dated.length > 0
-    ? new Date(Math.min(...dated.map(e => new Date(e.startDate!).getTime())))
-    : new Date()
-  const maxDate = dated.length > 0
-    ? new Date(Math.max(...dated.map(e => new Date(e.endDate!).getTime())))
-    : new Date(Date.now() + 90 * 86400000)
+  const tree = useMemo(() => buildTree(elements ?? []), [elements])
+  const openByDefault = useRef(new Set<string>())
+  openByDefault.current = useMemo(() => {
+    const s = new Set<string>()
+    const walk = (n: TreeNode) => {
+      if (defaultOpen(n)) s.add(n.key)
+      n.children.forEach(walk)
+    }
+    tree.forEach(walk)
+    return s
+  }, [tree])
 
-  const totalDays = Math.max(30, (maxDate.getTime() - minDate.getTime()) / 86400000)
+  const rows = useMemo(
+    () => flattenTree(tree, n => (n.key in overrides ? overrides[n.key] : defaultOpen(n))),
+    [tree, overrides]
+  )
+  const dates = useMemo(() => collectDates(tree), [tree])
+  const scale = useMemo(() => buildScale(dates, zoom), [dates, zoom])
+  const [top, bottom] = useMemo(() => headerSegments(scale, zoom), [scale, zoom])
+  const now = new Date()
+  const todayX = now >= scale.start ? scale.x(now) + scale.ppd / 2 : null
 
-  // Build month headers
-  const months: { label: string; left: number; width: number }[] = []
-  let cursor = new Date(minDate.getFullYear(), minDate.getMonth(), 1)
-  while (cursor <= maxDate) {
-    const next = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
-    const l = Math.max(0, (cursor.getTime() - minDate.getTime()) / (totalDays * 86400000)) * 100
-    const segEnd = Math.min(next.getTime(), maxDate.getTime())
-    const segStart = Math.max(cursor.getTime(), minDate.getTime())
-    const w = ((segEnd - segStart) / (totalDays * 86400000)) * 100
-    months.push({
-      label: cursor.toLocaleDateString('it-IT', { month: 'short', year: '2-digit' }),
-      left: l,
-      width: w,
-    })
-    cursor = next
+  const scrollToToday = useCallback(
+    (smooth = false) => {
+      const el = scrollRef.current
+      if (!el || todayX == null) return
+      const leftW = cornerRef.current?.offsetWidth ?? 0
+      const visible = el.clientWidth - leftW
+      el.scrollTo({ left: Math.max(0, todayX - visible / 3), behavior: smooth ? 'smooth' : 'auto' })
+    },
+    [todayX]
+  )
+
+  // Al primo render e a ogni cambio di zoom porta "oggi" in vista.
+  const hasData = !!elements
+  useLayoutEffect(() => {
+    if (hasData) scrollToToday()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom, hasData])
+
+  const anyExpandable = rows.some(r => r.childCount > 0)
+  const allOpen = rows.filter(r => r.childCount > 0).every(r => r.open)
+  const setAll = (open: boolean) => {
+    const next: Record<string, boolean> = {}
+    const walk = (n: TreeNode) => {
+      if (n.children.length) next[n.key] = open
+      n.children.forEach(walk)
+    }
+    tree.forEach(walk)
+    setOverrides(next)
   }
 
+  const epicCount = tree.filter(n => n.el?.type === 'EPICA').length
+
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
-        <div>
-          <h1 className="text-lg font-semibold">Roadmap</h1>
-          <p className="text-xs text-muted-foreground">{workspace?.name}</p>
-        </div>
-        {workspace?.myRole === 'ADMIN' && (
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4 mr-1" /> Nuova epica
-          </Button>
-        )}
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="shrink-0 px-4 pt-4 sm:px-6 sm:pt-6">
+        <PageHeader
+          title={showTitle ? 'Roadmap' : <span className="sr-only">Roadmap</span>}
+          description={showTitle ? workspace?.name : undefined}
+          icon={showTitle ? MapIcon : undefined}
+          className="pb-3 sm:pb-4"
+          actions={
+            isAdmin && (
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <Plus className="h-4 w-4" /> Nuova epica
+              </Button>
+            )
+          }
+        >
+          {tree.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="sm" onClick={() => scrollToToday(true)} disabled={todayX == null}>
+                  Oggi
+                </Button>
+                {anyExpandable && (
+                  <IconButton
+                    label={allOpen ? 'Comprimi tutto' : 'Espandi tutto'}
+                    icon={allOpen ? <ChevronsDownUp /> : <ChevronsUpDown />}
+                    onClick={() => setAll(!allOpen)}
+                  />
+                )}
+                <div className="ml-2 hidden items-center gap-3 text-xs text-muted-foreground md:flex" aria-label="Legenda">
+                  <Legend className="border-primary/45 bg-primary/10" label="Epica" />
+                  <Legend className="border-border-strong bg-muted" label="Da fare" />
+                  <Legend className="border-info/45 bg-info-subtle" label="In corso" />
+                  <Legend className="border-success/45 bg-success-subtle" label="Completato" />
+                </div>
+              </div>
+              <Tabs value={zoom} onValueChange={v => setZoom(v as Zoom)}>
+                <TabsList className="h-8" aria-label="Scala temporale">
+                  <TabsTrigger value="week" className="px-2.5 text-xs">Settimane</TabsTrigger>
+                  <TabsTrigger value="month" className="px-2.5 text-xs">Mesi</TabsTrigger>
+                  <TabsTrigger value="quarter" className="px-2.5 text-xs">Trimestri</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+          )}
+        </PageHeader>
       </div>
 
-      <div className="flex-1 overflow-auto">
-        {/* Table header */}
-        <div className="flex items-center border-b bg-muted/20 sticky top-0 z-10">
-          <div className="w-64 shrink-0 px-3 py-2 border-r text-xs font-medium text-muted-foreground">Elemento</div>
-          <div className="w-28 shrink-0 px-3 py-2 border-r text-xs font-medium text-muted-foreground">Progresso</div>
-          <div className="flex-1 relative h-8 overflow-hidden">
-            {months.map((m, i) => (
-              <div
-                key={i}
-                className="absolute top-0 h-full flex items-center px-2 border-r last:border-r-0"
-                style={{ left: `${m.left}%`, width: `${m.width}%` }}
-              >
-                <span className="text-xs text-muted-foreground whitespace-nowrap overflow-hidden">{m.label}</span>
+      <div className="flex min-h-0 flex-1 flex-col px-4 pb-4 sm:px-6 sm:pb-6">
+        <QueryState
+          query={query}
+          isEmpty={tree.length === 0}
+          loading={<Skeleton className="h-80 w-full rounded-lg" />}
+          errorTitle="Impossibile caricare la roadmap"
+          empty={{
+            icon: Rocket,
+            title: 'Nessuna epica',
+            description: 'Le epiche raggruppano storie e task: crea la prima per pianificare il lavoro nel tempo.',
+            bordered: true,
+            action: isAdmin && (
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <Plus className="h-4 w-4" /> Crea la prima epica
+              </Button>
+            ),
+          }}
+        >
+          {dates.length === 0 && (
+            <EmptyState
+              size="sm"
+              bordered
+              icon={CalendarRange}
+              title="Nessun elemento pianificato"
+              description="Imposta data di inizio e fine su epiche, storie o task per vederli sulla timeline."
+              className="mb-3"
+            />
+          )}
+          <div
+            ref={scrollRef}
+            role="grid"
+            aria-label={`Roadmap: ${epicCount} epiche`}
+            className="relative min-h-0 overflow-auto overscroll-x-contain rounded-lg border bg-background shadow-xs [--left-w:9.5rem] sm:[--left-w:16rem] lg:[--left-w:19rem]"
+          >
+            <div className="relative" style={{ width: `calc(var(--left-w) + ${scale.width}px)` }}>
+              <TimelineHeader
+                ref={cornerRef}
+                top={top}
+                bottom={bottom}
+                scale={scale}
+                todayX={todayX}
+                label="Elemento"
+              />
+              <div className="relative">
+                <TimelineGrid bottom={bottom} todayX={todayX} />
+                {rows.map(row => (
+                  <TimelineRow
+                    key={row.key}
+                    row={row}
+                    scale={scale}
+                    canDelete={canDelete}
+                    onDelete={onDelete}
+                    onToggle={onToggle}
+                  />
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Rows */}
-        {epics.map(epic => (
-          <EpicRow
-            key={epic.id}
-            epic={epic}
-            stories={stories.filter(s => s.parentId === epic.id)}
-            allElements={elements}
-            minDate={minDate}
-            maxDate={maxDate}
-            totalDays={totalDays}
-          />
-        ))}
-
-        {epics.length === 0 && (
-          <div className="flex items-center justify-center h-64 text-center">
-            <div>
-              <p className="text-muted-foreground text-sm">Nessuna epica trovata.</p>
-              {workspace?.myRole === 'ADMIN' && (
-                <Button variant="link" size="sm" onClick={() => setCreateOpen(true)}>
-                  Crea la prima epica →
-                </Button>
-              )}
             </div>
           </div>
-        )}
+        </QueryState>
       </div>
 
-      <CreateElementDialog
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        workspaceId={wsId!}
-        defaultType="EPICA"
-      />
+      {wsId && (
+        <CreateElementDialog
+          open={createOpen}
+          onClose={() => setCreateOpen(false)}
+          workspaceId={wsId}
+          defaultType="EPICA"
+        />
+      )}
     </div>
+  )
+}
+
+function Legend({ className, label }: { className: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={`h-2.5 w-4 rounded-sm border ${className}`} aria-hidden="true" />
+      {label}
+    </span>
   )
 }
