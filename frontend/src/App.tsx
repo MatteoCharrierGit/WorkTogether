@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from '@/components/layout/ThemeProvider'
 import { Layout } from '@/components/layout/Layout'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { ConfirmProvider } from '@/components/shared'
 
 // Pagine caricate on-demand (code-splitting): ogni route diventa un chunk separato,
 // così l'avvio non scarica tutto il codice di tutte le pagine in un colpo solo.
@@ -31,6 +33,8 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 1000 * 30,
       retry: 1,
+      // Gli aggiornamenti arrivano via WebSocket: il refetch al focus è ridondante.
+      refetchOnWindowFocus: false,
     },
   },
 })
@@ -39,6 +43,8 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
+        <TooltipProvider delayDuration={300}>
+        <ConfirmProvider>
         <BrowserRouter>
           <Suspense fallback={<RouteFallback />}>
           <Routes>
@@ -73,6 +79,8 @@ export default function App() {
           </Routes>
           </Suspense>
         </BrowserRouter>
+        </ConfirmProvider>
+        </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>
   )

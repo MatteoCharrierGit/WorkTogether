@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { usersApi, authApi } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
-import { useTheme, THEMES } from '@/components/layout/ThemeProvider'
+import { useTheme, THEMES, ACCENTS } from '@/components/layout/ThemeProvider'
 import { UserAvatar } from '@/components/UserAvatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,7 +12,7 @@ import {
   notificationsSupported, notificationsEnabled, setNotificationsEnabled,
   notificationPermission, requestNotificationPermission,
 } from '@/lib/notifications'
-import { Camera, Check, Trash2, Palette, UserCircle, Lock, Bell } from 'lucide-react'
+import { Camera, Check, Trash2, Palette, UserCircle, Lock, Bell, Sun, Moon, Monitor } from 'lucide-react'
 
 // Ridimensiona un'immagine lato client e la restituisce come data URI JPEG.
 function fileToResizedDataUrl(file: File, max = 256): Promise<string> {
@@ -42,7 +42,7 @@ function fileToResizedDataUrl(file: File, max = 256): Promise<string> {
 
 export default function SettingsPage() {
   const { user, updateUser, setTokens } = useAuthStore()
-  const { theme, setTheme } = useTheme()
+  const { theme, setTheme, accent, setAccent } = useTheme()
   const fileRef = useRef<HTMLInputElement>(null)
 
   const [displayName, setDisplayName] = useState(user?.displayName ?? '')
@@ -199,20 +199,56 @@ export default function SettingsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {THEMES.map(t => (
-                <button
-                  key={t.value}
-                  onClick={() => setTheme(t.value)}
-                  className={`flex items-center gap-2 rounded-lg border p-3 text-sm transition-colors ${
-                    theme === t.value ? 'border-primary ring-1 ring-primary' : 'hover:bg-accent/50'
-                  }`}
-                >
-                  <span className="h-5 w-5 rounded-full border border-border shrink-0" style={{ backgroundColor: t.swatch }} />
-                  <span className="flex-1 text-left">{t.label}</span>
-                  {theme === t.value && <Check className="h-4 w-4 text-primary" />}
-                </button>
-              ))}
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <Label>Tema</Label>
+                <div role="radiogroup" aria-label="Tema" className="grid grid-cols-3 gap-2">
+                  {THEMES.map(t => {
+                    const Icon = t.value === 'light' ? Sun : t.value === 'dark' ? Moon : Monitor
+                    const active = theme === t.value
+                    return (
+                      <button
+                        key={t.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setTheme(t.value)}
+                        className={`focus-ring flex flex-col items-center gap-1.5 rounded-md border px-3 py-3 text-sm transition-colors sm:flex-row sm:justify-center ${
+                          active ? 'border-primary bg-primary/5 text-foreground ring-1 ring-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                        }`}
+                      >
+                        <Icon className="h-4 w-4" />
+                        <span>{t.label}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Colore d'accento</Label>
+                <div role="radiogroup" aria-label="Colore d'accento" className="flex flex-wrap gap-2.5">
+                  {ACCENTS.map(a => {
+                    const active = accent === a.value
+                    return (
+                      <button
+                        key={a.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        aria-label={a.label}
+                        title={a.label}
+                        onClick={() => setAccent(a.value)}
+                        className={`focus-ring flex h-8 w-8 items-center justify-center rounded-full transition-transform hover:scale-110 ${
+                          active ? 'ring-2 ring-offset-2 ring-offset-background' : ''
+                        }`}
+                        style={{ backgroundColor: a.swatch, ...(active ? { ['--tw-ring-color' as string]: a.swatch } : {}) }}
+                      >
+                        {active && <Check className="h-4 w-4 text-white" />}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>
