@@ -4,8 +4,8 @@ import { authApi } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
+import { PasswordInput } from '@/components/shared'
+import { AuthField, AuthLayout, FormError } from './auth/AuthLayout'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -13,10 +13,13 @@ export default function LoginPage() {
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [idError, setIdError] = useState('')
   const [loading, setLoading] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!identifier.trim()) { setIdError('Inserisci username o email'); return }
+    setIdError('')
     setError('')
     setLoading(true)
     try {
@@ -46,58 +49,45 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">WorkTogether</h1>
-          <p className="text-sm text-muted-foreground mt-1">Accedi al tuo account</p>
-        </div>
-        <Card>
-          <CardContent className="pt-6">
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="identifier">Username o email</Label>
-                <Input
-                  id="identifier"
-                  type="text"
-                  placeholder="mario.rossi o tu@esempio.it"
-                  value={identifier}
-                  onChange={e => setIdentifier(e.target.value)}
-                  required
-                  autoFocus
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder="Lascia vuoto al primo accesso"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Primo accesso? Inserisci solo lo username: imposterai email e password al passo successivo.
-                </p>
-              </div>
-              {error && (
-                <p className="text-sm text-destructive">{error}</p>
-              )}
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Accesso in corso...' : 'Accedi'}
-              </Button>
-              <div className="text-center">
-                <Link to="/forgot-password" className="text-xs text-muted-foreground hover:text-foreground underline-offset-4 hover:underline">
-                  Password dimenticata?
-                </Link>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-        <p className="mt-4 text-center text-xs text-muted-foreground">
-          Nessuna registrazione pubblica. Contatta il tuo admin.
-        </p>
-      </div>
-    </div>
+    <AuthLayout
+      title="Accedi"
+      description="Bentornato. Entra nel tuo spazio di lavoro."
+      footer="Nessuna registrazione pubblica: per un account contatta il tuo admin."
+    >
+      <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+        <AuthField id="identifier" label="Username o email" error={idError}>
+          <Input
+            type="text"
+            placeholder="mario.rossi o tu@esempio.it"
+            value={identifier}
+            onChange={e => { setIdentifier(e.target.value); if (idError) setIdError('') }}
+            autoComplete="username"
+            autoCapitalize="none"
+            autoFocus
+          />
+        </AuthField>
+        <AuthField
+          id="password"
+          label="Password"
+          hint="Primo accesso? Inserisci solo lo username: imposterai email e password al passo successivo."
+          aside={
+            <Link to="/forgot-password" className="focus-ring rounded-sm text-caption text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+              Password dimenticata?
+            </Link>
+          }
+        >
+          <PasswordInput
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            placeholder="Lascia vuoto al primo accesso"
+            autoComplete="current-password"
+          />
+        </AuthField>
+        <FormError>{error}</FormError>
+        <Button type="submit" className="w-full" loading={loading}>
+          {loading ? 'Accesso in corso…' : 'Accedi'}
+        </Button>
+      </form>
+    </AuthLayout>
   )
 }

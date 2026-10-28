@@ -1,10 +1,16 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Building2, MailX } from 'lucide-react'
 import { invitationsApi } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import { InvitationPreview } from '@/types'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Badge } from '@/components/ui/badge'
+import { EmptyState } from '@/components/shared'
+import { AuthLayout, FormError } from './auth/AuthLayout'
+
+const ROLE_LABELS: Record<string, string> = { ADMIN: 'Admin', COLLABORATORE: 'Collaboratore', GUEST: 'Guest' }
 
 /**
  * Schermata di accettazione di un invito (link ricevuto via email: /invite/:token).
@@ -45,54 +51,63 @@ export default function AcceptInvitePage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <h1 className="text-2xl font-semibold">Invito a un workspace</h1>
+    <AuthLayout title="Invito a un workspace" description="Unisciti al team su WorkTogether.">
+      {loading ? (
+        <div className="space-y-3 rounded-lg border bg-card p-5" aria-busy="true">
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-10 w-10 rounded-lg" />
+            <div className="flex-1 space-y-1.5">
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-3 w-2/3" />
+            </div>
+          </div>
+          <Skeleton className="h-9 w-full" />
         </div>
-        <Card>
-          <CardContent className="pt-6 space-y-4">
-            {loading ? (
-              <p className="text-sm text-muted-foreground text-center">Caricamento…</p>
-            ) : error && !preview ? (
-              <>
-                <p className="text-sm text-destructive text-center">{error}</p>
-                <Link to="/" className="block text-center text-xs text-muted-foreground hover:text-foreground underline-offset-4 hover:underline">
-                  Vai alla home
-                </Link>
-              </>
-            ) : preview ? (
-              <>
-                <p className="text-sm text-center">
-                  <strong>{preview.inviterName}</strong> ti ha invitato a unirti a{' '}
-                  <strong>{preview.workspaceName}</strong> con il ruolo{' '}
-                  <strong>{preview.role.toLowerCase()}</strong>.
-                </p>
-                {error && <p className="text-sm text-destructive text-center">{error}</p>}
-                {isAuthed ? (
-                  <>
-                    <Button className="w-full" onClick={accept} disabled={accepting}>
-                      {accepting ? 'Accetto…' : 'Accetta invito'}
-                    </Button>
-                    <p className="text-xs text-muted-foreground text-center">
-                      Stai accedendo come {user?.displayName}. L&apos;invito è per {preview.email}.
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-xs text-muted-foreground text-center">
-                      Accedi con l&apos;account <strong>{preview.email}</strong> per accettare.
-                    </p>
-                    <Button className="w-full" asChild>
-                      <Link to="/login">Accedi per accettare</Link>
-                    </Button>
-                  </>
-                )}
-              </>
-            ) : null}
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+      ) : error && !preview ? (
+        <EmptyState
+          icon={MailX}
+          title="Invito non disponibile"
+          description={error}
+          bordered
+          size="sm"
+          action={<Button variant="outline" size="sm" asChild><Link to="/">Vai alla home</Link></Button>}
+        />
+      ) : preview ? (
+        <div className="space-y-4">
+          <div className="rounded-lg border bg-card p-4 shadow-xs">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Building2 className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-heading font-semibold">{preview.workspaceName}</p>
+                <p className="truncate text-caption text-muted-foreground">Invitato da {preview.inviterName}</p>
+              </div>
+              <Badge variant="primary">{ROLE_LABELS[preview.role] ?? preview.role.toLowerCase()}</Badge>
+            </div>
+          </div>
+          <FormError>{error}</FormError>
+          {isAuthed ? (
+            <>
+              <Button className="w-full" onClick={accept} loading={accepting}>
+                {accepting ? 'Accetto…' : 'Accetta invito'}
+              </Button>
+              <p className="text-center text-caption text-muted-foreground">
+                Stai accedendo come <strong className="text-foreground">{user?.displayName}</strong>. L&apos;invito è per {preview.email}.
+              </p>
+            </>
+          ) : (
+            <>
+              <Button className="w-full" asChild>
+                <Link to="/login">Accedi per accettare</Link>
+              </Button>
+              <p className="text-center text-caption text-muted-foreground">
+                Accedi con l&apos;account <strong className="text-foreground">{preview.email}</strong> per accettare.
+              </p>
+            </>
+          )}
+        </div>
+      ) : null}
+    </AuthLayout>
   )
 }

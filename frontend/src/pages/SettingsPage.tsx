@@ -2,46 +2,23 @@ import { useRef, useState } from 'react'
 import { usersApi, authApi } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import { useTheme, THEMES, ACCENTS } from '@/components/layout/ThemeProvider'
-import { UserAvatar } from '@/components/UserAvatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Switch } from '@/components/ui/switch'
 import { toast } from '@/components/ui/toast'
+import { Callout, PageHeader, PasswordInput, SettingRow, SettingsSection, UserAvatar } from '@/components/shared'
+import { resizeImageToDataUrl } from '@/lib/utils'
 import {
   notificationsSupported, notificationsEnabled, setNotificationsEnabled,
   notificationPermission, requestNotificationPermission,
 } from '@/lib/notifications'
-import { Camera, Check, Trash2, Palette, UserCircle, Lock, Bell, Sun, Moon, Monitor } from 'lucide-react'
-
-// Ridimensiona un'immagine lato client e la restituisce come data URI JPEG.
-function fileToResizedDataUrl(file: File, max = 256): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const img = new Image()
-      img.onload = () => {
-        const scale = Math.min(1, max / Math.max(img.width, img.height))
-        const w = Math.round(img.width * scale)
-        const h = Math.round(img.height * scale)
-        const canvas = document.createElement('canvas')
-        canvas.width = w
-        canvas.height = h
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return reject(new Error('no ctx'))
-        ctx.drawImage(img, 0, 0, w, h)
-        resolve(canvas.toDataURL('image/jpeg', 0.85))
-      }
-      img.onerror = reject
-      img.src = reader.result as string
-    }
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
-}
+import { Camera, Check, Trash2, Palette, UserCircle, Lock, Bell, Sun, Moon, Monitor, Settings } from 'lucide-react'
 
 export default function SettingsPage() {
-  const { user, updateUser, setTokens } = useAuthStore()
+  const user = useAuthStore(s => s.user)
+  const updateUser = useAuthStore(s => s.updateUser)
+  const setTokens = useAuthStore(s => s.setTokens)
   const { theme, setTheme, accent, setAccent } = useTheme()
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -64,7 +41,7 @@ export default function SettingsPage() {
     if (!file.type.startsWith('image/')) { toast("Seleziona un'immagine", 'destructive'); return }
     setAvatarBusy(true)
     try {
-      const dataUrl = await fileToResizedDataUrl(file)
+      const dataUrl = await resizeImageToDataUrl(file)
       const updated = await usersApi.updateProfile({ avatar: dataUrl })
       updateUser({ avatar: updated.avatar })
       toast('Foto aggiornata')
@@ -89,7 +66,8 @@ export default function SettingsPage() {
     }
   }
 
-  const handleSaveName = async () => {
+  const handleSaveName = async (e?: React.FormEvent) => {
+    e?.preventDefault()
     if (!displayName.trim()) return
     setSavingName(true)
     try {
@@ -115,8 +93,8 @@ export default function SettingsPage() {
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (next.length < 8) { setPwError('La nuova password deve avere almeno 8 caratteri'); return }
     if (next !== confirm) { setPwError('Le password non coincidono'); return }
-    if (next.length < 8) { setPwError('Almeno 8 caratteri'); return }
     setPwError('')
     setPwBusy(true)
     try {
@@ -131,74 +109,52 @@ export default function SettingsPage() {
     }
   }
 
+  const nameUnchanged = !displayName.trim() || displayName.trim() === user?.displayName
+  const mismatch = confirm.length > 0 && next !== confirm
+
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <div className="px-6 py-4 border-b shrink-0">
-        <h1 className="text-lg font-semibold">Impostazioni</h1>
-        <p className="text-xs text-muted-foreground">Profilo, aspetto e sicurezza</p>
-      </div>
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto w-full max-w-2xl space-y-6 px-4 pb-10 pt-5 sm:px-6 lg:pt-8">
+        <PageHeader icon={Settings} title="Impostazioni" description="Profilo, aspetto, notifiche e sicurezza del tuo account" className="pb-0 sm:pb-0" />
 
-      <div className="flex-1 overflow-y-auto p-6 max-w-2xl w-full mx-auto space-y-6">
         {/* Profilo */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <UserCircle className="h-4 w-4" /> Profilo
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="flex items-center gap-4">
-              <UserAvatar
-                name={user?.displayName}
-                avatar={user?.avatar}
-                className="h-16 w-16"
-                fallbackClassName="text-lg"
-              />
-              <div className="flex flex-col gap-2">
-                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatar} />
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" disabled={avatarBusy} onClick={() => fileRef.current?.click()}>
-                    <Camera className="h-3.5 w-3.5 mr-1.5" />
-                    {avatarBusy ? 'Attendere...' : 'Cambia foto'}
-                  </Button>
-                  {user?.avatar && (
-                    <Button size="sm" variant="ghost" disabled={avatarBusy} onClick={handleRemoveAvatar}>
-                      <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Rimuovi
-                    </Button>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground">JPG o PNG. L'immagine viene ridimensionata automaticamente.</p>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Nome visualizzato</Label>
-              <div className="flex gap-2">
-                <Input value={displayName} onChange={e => setDisplayName(e.target.value)} />
-                <Button
-                  onClick={handleSaveName}
-                  disabled={savingName || !displayName.trim() || displayName.trim() === user?.displayName}
-                >
-                  {savingName ? 'Salvataggio...' : 'Salva'}
+        <SettingsSection icon={UserCircle} title="Profilo" description="Come ti vedono gli altri membri." contentClassName="space-y-5">
+          <div className="flex items-center gap-4">
+            <UserAvatar name={user?.displayName} avatar={user?.avatar} size="xl" />
+            <div className="min-w-0 space-y-2">
+              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatar} />
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" loading={avatarBusy} onClick={() => fileRef.current?.click()}>
+                  {!avatarBusy && <Camera className="h-3.5 w-3.5" />} Cambia foto
                 </Button>
+                {user?.avatar && (
+                  <Button size="sm" variant="ghost" disabled={avatarBusy} onClick={handleRemoveAvatar}>
+                    <Trash2 className="h-3.5 w-3.5" /> Rimuovi
+                  </Button>
+                )}
               </div>
+              <p className="text-caption text-muted-foreground">JPG o PNG. L&apos;immagine viene ridimensionata automaticamente.</p>
             </div>
+          </div>
 
-            <div className="space-y-1">
-              <Label className="text-muted-foreground">Email</Label>
-              <p className="text-sm">{user?.email}</p>
+          <form onSubmit={handleSaveName} className="space-y-1.5">
+            <Label htmlFor="settings-name">Nome visualizzato</Label>
+            <div className="flex gap-2">
+              <Input id="settings-name" value={displayName} onChange={e => setDisplayName(e.target.value)} autoComplete="name" />
+              <Button type="submit" variant="secondary" loading={savingName} disabled={nameUnchanged}>
+                Salva
+              </Button>
             </div>
-          </CardContent>
-        </Card>
+          </form>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="settings-email" className="text-muted-foreground">Email</Label>
+            <Input id="settings-email" value={user?.email ?? ''} readOnly disabled />
+          </div>
+        </SettingsSection>
 
         {/* Aspetto */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Palette className="h-4 w-4" /> Aspetto
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+        <SettingsSection icon={Palette} title="Aspetto" description="Tema e colore d'accento valgono solo su questo dispositivo.">
             <div className="space-y-5">
               <div className="space-y-2">
                 <Label>Tema</Label>
@@ -250,75 +206,72 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
-          </CardContent>
-        </Card>
+        </SettingsSection>
 
         {/* Notifiche */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Bell className="h-4 w-4" /> Notifiche
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <label className="flex items-center justify-between gap-4 cursor-pointer select-none">
-              <span className="space-y-0.5">
-                <span className="block text-sm font-medium">Notifiche dei nuovi messaggi</span>
-                <span className="block text-xs text-muted-foreground">
-                  Avviso quando ricevi un messaggio mentre l'app non è in primo piano.
-                </span>
-              </span>
-              <input
-                type="checkbox"
-                checked={notifyOn}
-                onChange={e => handleToggleNotifications(e.target.checked)}
-                className="h-5 w-5 rounded border-input shrink-0"
-              />
-            </label>
-            {!notificationsSupported() && (
-              <p className="text-xs text-amber-600 dark:text-amber-400">
-                Questo browser non supporta le notifiche desktop.
-              </p>
-            )}
-            {notificationsSupported() && notifyOn && perm === 'denied' && (
-              <p className="text-xs text-amber-600 dark:text-amber-400">
-                Le notifiche sono bloccate nelle impostazioni del browser per questo sito: sbloccale per riceverle.
-              </p>
-            )}
-            {notificationsSupported() && notifyOn && perm === 'default' && (
-              <Button size="sm" variant="outline" onClick={() => requestNotificationPermission().then(setPerm)}>
-                Consenti le notifiche
-              </Button>
-            )}
-          </CardContent>
-        </Card>
+        <SettingsSection icon={Bell} title="Notifiche" contentClassName="space-y-3">
+          <SettingRow
+            htmlFor="settings-notify"
+            label="Notifiche dei nuovi messaggi"
+            description="Avviso quando ricevi un messaggio mentre l'app non è in primo piano."
+          >
+            <Switch
+              id="settings-notify"
+              checked={notifyOn}
+              onCheckedChange={handleToggleNotifications}
+              disabled={!notificationsSupported()}
+            />
+          </SettingRow>
+          {!notificationsSupported() && (
+            <Callout variant="warning">Questo browser non supporta le notifiche desktop.</Callout>
+          )}
+          {notificationsSupported() && notifyOn && perm === 'denied' && (
+            <Callout variant="warning">
+              Le notifiche sono bloccate nelle impostazioni del browser per questo sito: sbloccale per riceverle.
+            </Callout>
+          )}
+          {notificationsSupported() && notifyOn && perm === 'default' && (
+            <Callout
+              variant="info"
+              action={
+                <Button size="sm" variant="outline" onClick={() => requestNotificationPermission().then(setPerm)}>
+                  Consenti le notifiche
+                </Button>
+              }
+            >
+              Il browser non ha ancora concesso il permesso per le notifiche.
+            </Callout>
+          )}
+        </SettingsSection>
 
         {/* Sicurezza */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Lock className="h-4 w-4" /> Sicurezza
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleChangePassword} className="space-y-3 max-w-sm">
-              <div className="space-y-1.5">
-                <Label>Password attuale</Label>
-                <Input type="password" value={current} onChange={e => setCurrent(e.target.value)} required />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Nuova password</Label>
-                <Input type="password" value={next} onChange={e => setNext(e.target.value)} required />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Conferma nuova password</Label>
-                <Input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required />
-              </div>
-              {pwError && <p className="text-sm text-destructive">{pwError}</p>}
-              <Button type="submit" disabled={pwBusy}>{pwBusy ? 'Aggiornamento...' : 'Cambia password'}</Button>
-            </form>
-          </CardContent>
-        </Card>
+        <SettingsSection icon={Lock} title="Sicurezza" description="Cambia la password di accesso. Almeno 8 caratteri.">
+          <form onSubmit={handleChangePassword} className="max-w-sm space-y-3" noValidate>
+            <div className="space-y-1.5">
+              <Label htmlFor="pw-current">Password attuale</Label>
+              <PasswordInput id="pw-current" value={current} onChange={e => setCurrent(e.target.value)} required autoComplete="current-password" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pw-next">Nuova password</Label>
+              <PasswordInput id="pw-next" value={next} onChange={e => setNext(e.target.value)} required minLength={8} autoComplete="new-password" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pw-confirm">Conferma nuova password</Label>
+              <PasswordInput
+                id="pw-confirm"
+                value={confirm}
+                onChange={e => setConfirm(e.target.value)}
+                required
+                autoComplete="new-password"
+                aria-invalid={mismatch || undefined}
+                aria-describedby={mismatch ? 'pw-confirm-err' : undefined}
+              />
+              {mismatch && <p id="pw-confirm-err" className="text-caption text-destructive">Le password non coincidono</p>}
+            </div>
+            {pwError && <p role="alert" className="text-sm text-destructive">{pwError}</p>}
+            <Button type="submit" loading={pwBusy} disabled={!current || !next || !confirm}>Cambia password</Button>
+          </form>
+        </SettingsSection>
       </div>
     </div>
   )

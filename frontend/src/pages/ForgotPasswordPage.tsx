@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
 import { authApi } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
+import { Callout, PasswordInput } from '@/components/shared'
+import { AuthField, AuthLayout, FormError } from './auth/AuthLayout'
 
 /**
  * Reset password via OTP email.
@@ -22,6 +23,7 @@ export default function ForgotPasswordPage() {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<{ password?: string; confirm?: string }>({})
   const [loading, setLoading] = useState(false)
 
   const requestCode = async (e: React.FormEvent) => {
@@ -40,8 +42,11 @@ export default function ForgotPasswordPage() {
 
   const resetPassword = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (password !== confirm) { setError('Le password non coincidono'); return }
-    if (password.length < 8) { setError('La password deve essere di almeno 8 caratteri'); return }
+    const fe: typeof fieldErrors = {}
+    if (password.length < 8) fe.password = 'La password deve essere di almeno 8 caratteri'
+    if (password !== confirm) fe.confirm = 'Le password non coincidono'
+    setFieldErrors(fe)
+    if (fe.password || fe.confirm) return
     setError('')
     setLoading(true)
     try {
@@ -60,61 +65,58 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <h1 className="text-2xl font-semibold">Reimposta la password</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {step === 1
-              ? 'Inserisci username o email: ti invieremo un codice.'
-              : 'Inserisci il codice ricevuto via email e la nuova password.'}
-          </p>
-        </div>
-        <Card>
-          <CardContent className="pt-6">
-            {step === 1 ? (
-              <form onSubmit={requestCode} className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Username o email</Label>
-                  <Input type="text" value={identifier} onChange={e => setIdentifier(e.target.value)} required autoFocus placeholder="mario.rossi o tu@esempio.it" />
-                </div>
-                {error && <p className="text-sm text-destructive">{error}</p>}
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? 'Invio...' : 'Invia codice'}
-                </Button>
-              </form>
-            ) : (
-              <form onSubmit={resetPassword} className="space-y-4">
-                <p className="text-xs text-muted-foreground">
-                  Se esiste un account con questi dati, hai ricevuto un codice via email.
-                </p>
-                <div className="space-y-2">
-                  <Label>Codice di verifica</Label>
-                  <Input inputMode="numeric" autoComplete="one-time-code" maxLength={6}
-                    value={code} onChange={e => setCode(e.target.value)} required autoFocus placeholder="123456" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Nuova password</Label>
-                  <Input type="password" value={password} onChange={e => setPassword(e.target.value)} required />
-                </div>
-                <div className="space-y-2">
-                  <Label>Conferma password</Label>
-                  <Input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required />
-                </div>
-                {error && <p className="text-sm text-destructive">{error}</p>}
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? 'Salvataggio...' : 'Reimposta password'}
-                </Button>
-              </form>
-            )}
-            <div className="mt-4 text-center">
-              <Link to="/login" className="text-xs text-muted-foreground hover:text-foreground underline-offset-4 hover:underline">
-                Torna al login
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+    <AuthLayout
+      title="Reimposta la password"
+      description={step === 1
+        ? 'Inserisci username o email: ti invieremo un codice.'
+        : 'Inserisci il codice ricevuto via email e la nuova password.'}
+      footer={
+        <Link to="/login" className="focus-ring inline-flex items-center gap-1.5 rounded-sm underline-offset-4 hover:text-foreground hover:underline">
+          <ArrowLeft className="h-3.5 w-3.5" /> Torna al login
+        </Link>
+      }
+    >
+      {step === 1 ? (
+        <form onSubmit={requestCode} className="space-y-4">
+          <AuthField id="fp-id" label="Username o email">
+            <Input type="text" value={identifier} onChange={e => setIdentifier(e.target.value)} required autoFocus placeholder="mario.rossi o tu@esempio.it" autoComplete="username" autoCapitalize="none" />
+          </AuthField>
+          <FormError>{error}</FormError>
+          <Button type="submit" className="w-full" loading={loading}>
+            {loading ? 'Invio…' : 'Invia codice'}
+          </Button>
+        </form>
+      ) : (
+        <form onSubmit={resetPassword} className="space-y-4">
+          <Callout variant="info">Se esiste un account con questi dati, hai ricevuto un codice via email.</Callout>
+          <AuthField id="fp-code" label="Codice di verifica">
+            <Input
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              value={code}
+              onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
+              required
+              autoFocus
+              placeholder="123456"
+              className="h-11 text-center font-mono text-heading tracking-[0.5em]"
+            />
+          </AuthField>
+          <AuthField id="fp-password" label="Nuova password" hint="Almeno 8 caratteri." error={fieldErrors.password}>
+            <PasswordInput value={password} onChange={e => setPassword(e.target.value)} required autoComplete="new-password" />
+          </AuthField>
+          <AuthField id="fp-confirm" label="Conferma password" error={fieldErrors.confirm}>
+            <PasswordInput value={confirm} onChange={e => setConfirm(e.target.value)} required autoComplete="new-password" />
+          </AuthField>
+          <FormError>{error}</FormError>
+          <Button type="submit" className="w-full" loading={loading}>
+            {loading ? 'Salvataggio…' : 'Reimposta password'}
+          </Button>
+          <Button type="button" variant="ghost" size="sm" className="w-full" onClick={() => { setStep(1); setCode(''); setError('') }}>
+            Non hai ricevuto il codice? Richiedine un altro
+          </Button>
+        </form>
+      )}
+    </AuthLayout>
   )
 }
