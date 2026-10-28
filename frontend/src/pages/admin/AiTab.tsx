@@ -264,7 +264,7 @@ export function AiTab({ wsId }: { wsId: string }) {
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <NumberField id="ai-temp" label={provider === 'ANTHROPIC' ? 'Temperatura (solo OpenRouter)' : 'Temperatura'} step="0.1" min="0" max="2" value={form.temperature} onChange={v => set({ temperature: num(v, form.temperature) })} />
-          <NumberField id="ai-maxtok" label="Max token risposta" min="1" value={form.maxTokens} onChange={v => set({ maxTokens: num(v, form.maxTokens) })} />
+          <NumberField id="ai-maxtok" label="Max token risposta" min="64" max="128000" value={form.maxTokens} onChange={v => set({ maxTokens: num(v, form.maxTokens) })} />
           <NumberField id="ai-ctx" label="Finestra contesto" min="1000" value={form.contextWindowTokens} onChange={v => set({ contextWindowTokens: num(v, form.contextWindowTokens) })} />
           <NumberField id="ai-compact" label="Soglia compacting (%)" min="10" max="95" value={form.compactThresholdPct} onChange={v => set({ compactThresholdPct: num(v, form.compactThresholdPct) })} />
           <NumberField id="ai-iter" label="Max passi tool/turno" min="1" max="20" value={form.maxToolIterations} onChange={v => set({ maxToolIterations: num(v, form.maxToolIterations) })} />

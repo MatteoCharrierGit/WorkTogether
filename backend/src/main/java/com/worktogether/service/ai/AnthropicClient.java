@@ -47,13 +47,14 @@ public class AnthropicClient implements LlmProvider {
 
     /** Risposta minima consigliata con thinking adattivo attivo (il thinking consuma max_tokens). */
     static final int MIN_MAX_TOKENS = 16000;
-    /** Messaggio sintetico per tool_use rimasti senza risultato (es. azione in attesa poi ignorata). */
-    static final String MISSING_TOOL_RESULT = "Azione non eseguita (in attesa di conferma o annullata).";
+    /** Messaggio sintetico per tool_use rimasti senza risultato (es. azione in attesa poi annullata). */
+    static final String MISSING_TOOL_RESULT = "Azione non eseguita: annullata dall'utente o interrotta.";
 
     private final String baseUrl;
     private final String apiVersion;
     private final boolean fallbacksEnabled;
     private final ObjectMapper mapper;
+    private final com.fasterxml.jackson.databind.ObjectReader strictReader;
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -66,6 +67,7 @@ public class AnthropicClient implements LlmProvider {
         this.apiVersion = apiVersion;
         this.fallbacksEnabled = fallbacksEnabled;
         this.mapper = mapper;
+        this.strictReader = mapper.reader().with(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     }
 
     @Override
@@ -107,7 +109,9 @@ public class AnthropicClient implements LlmProvider {
                 for (JsonNode m : root.path("data")) {
                     String id = m.path("id").asText(null);
                     if (id == null || id.isBlank()) continue;
-                    out.add(new Llm.ModelInfo(id, m.path("display_name").asText(id)));
+                    long mt = m.path("max_tokens").asLong(0);
+                    if (mt > 0) maxOutput.put(id, new MaxOut((int) Math.min(mt, Integer.MAX_VALUE), System.currentTimeMillis()));
+                    out.add(new Llm.ModelInfo(id, m.path("display_name").asText(id), mt > 0 ? mt : null));
                 }
                 if (!root.path("has_more").asBoolean(false)) break;
                 after = root.path("last_id").asText(null);
@@ -160,40 +164,83 @@ public class AnthropicClient implements LlmProvider {
     // ---- Chat in streaming ----
 
     @Override
-    public Llm.Result chat(String apiKey, Llm.Request request, Consumer<String> onToken) {
-        ObjectNode body = buildBody(request);
-        HttpResponse<Stream<String>> res;
+    public Llm.Result chat(String apiKey, Llm.Request request, Consumer<String> onToken, Llm.Cancellation cancel) {
+        ObjectNode body = buildBody(request, maxOutputFor(apiKey, request.model()));
+        HttpRequest req;
         try {
             HttpRequest.Builder rb = HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + "/v1/messages"))
-                    .timeout(Duration.ofSeconds(180))
+                    .timeout(Duration.ofSeconds(180)) // fino agli header; il corpo è sorvegliato dal watchdog
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", apiVersion)
                     .header("Content-Type", "application/json")
                     .header("Accept", "text/event-stream");
             if (body.has("fallbacks")) rb.header("anthropic-beta", "server-side-fallback-2026-07-01");
             rb.POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)));
-            res = http.send(rb.build(), HttpResponse.BodyHandlers.ofLines());
+            req = rb.build();
         } catch (Exception e) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Errore di connessione ad Anthropic: " + e.getMessage());
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Richiesta Anthropic non valida: " + e.getMessage());
         }
-        if (res.statusCode() != 200) {
-            String raw = res.body().collect(Collectors.joining("\n"));
-            throw httpError(res.statusCode(), raw);
-        }
-        try (Stream<String> lines = res.body()) {
-            return parseStream(lines, onToken);
+        try (SseLines sse = SseLines.open(http, req, cancel, SseLines.IDLE_TIMEOUT, "Anthropic")) {
+            if (sse.status() != 200) throw httpError(sse.status(), sse.readAll(64_000));
+            return parseStream(sse.stream(), onToken);
         }
     }
 
+    // ---- Output massimo per modello (Models API) ----
+
+    /** Output massimo dei modelli Claude attuali, usato se la Models API non lo indica. */
+    static final int DEFAULT_MAX_OUTPUT = 128_000;
+    private static final long MAX_OUTPUT_TTL_MS = 6 * 3_600_000L;
+    private record MaxOut(int value, long at) {}
+    private final Map<String, MaxOut> maxOutput = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** max_tokens del modello da GET /v1/models/{id} (cache 6h; default 128000 se non disponibile). */
+    int maxOutputFor(String apiKey, String model) {
+        if (model == null || model.isBlank()) return DEFAULT_MAX_OUTPUT;
+        MaxOut c = maxOutput.get(model);
+        long now = System.currentTimeMillis();
+        if (c != null && now - c.at() < MAX_OUTPUT_TTL_MS) return c.value();
+        int v = DEFAULT_MAX_OUTPUT;
+        try {
+            HttpRequest r = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/v1/models/" + URLEncoder.encode(model, StandardCharsets.UTF_8)))
+                    .timeout(Duration.ofSeconds(5))
+                    .header("x-api-key", apiKey)
+                    .header("anthropic-version", apiVersion)
+                    .header("Accept", "application/json")
+                    .GET().build();
+            HttpResponse<String> res = http.send(r, HttpResponse.BodyHandlers.ofString());
+            if (res.statusCode() == 200) {
+                long mt = mapper.readTree(res.body()).path("max_tokens").asLong(0);
+                if (mt > 0) v = (int) Math.min(mt, Integer.MAX_VALUE);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            log.debug("max_tokens di {} non disponibile: {}", model, e.getMessage());
+        }
+        maxOutput.put(model, new MaxOut(v, now));
+        return v;
+    }
+
+    /** max_tokens effettivo: almeno 16000 (thinking adattivo), mai oltre l'output massimo del modello. */
+    static int effectiveMaxTokens(int setting, int modelMax) {
+        int cap = modelMax > 0 ? modelMax : DEFAULT_MAX_OUTPUT;
+        return Math.min(Math.max(setting, MIN_MAX_TOKENS), cap);
+    }
+
     /** Corpo della richiesta Messages API (package-private per i test). */
-    ObjectNode buildBody(Llm.Request request) {
+    ObjectNode buildBody(Llm.Request request) { return buildBody(request, DEFAULT_MAX_OUTPUT); }
+
+    ObjectNode buildBody(Llm.Request request, int modelMaxOutput) {
         ObjectNode body = mapper.createObjectNode();
         body.put("model", request.model());
-        body.put("max_tokens", Math.max(request.maxTokens(), MIN_MAX_TOKENS));
+        body.put("max_tokens", effectiveMaxTokens(request.maxTokens(), modelMaxOutput));
         body.put("stream", true);
 
-        // System: blocco stabile (cacheabile) + blocco variabile (data/ora, interlocutore, riassunto).
+        // System: blocco stabile (cacheabile) + eventuale riassunto (cambia solo al compacting).
+        // Data/ora e interlocutore NON stanno qui ma nel messaggio utente del turno (prefisso stabile).
         ArrayNode system = mapper.createArrayNode();
         if (notBlank(request.systemStable())) {
             ObjectNode b = system.addObject();
@@ -249,95 +296,65 @@ public class AnthropicClient implements LlmProvider {
     }
 
     /**
-     * Converte la cronologia normalizzata nel formato Anthropic:
-     * TOOL → blocchi tool_result in un messaggio user; messaggi consecutivi dello stesso ruolo uniti;
-     * tool_use senza risultato completati con un tool_result sintetico; tool_result orfani scartati.
+     * Converte la cronologia normalizzata nel formato Anthropic, garantendo sempre una sequenza valida
+     * anche se la cronologia salvata è "sporca":
+     * <ul>
+     *   <li>ogni messaggio assistant con tool_use è seguito da UN messaggio user che inizia con TUTTI i
+     *       relativi tool_result (risultati paralleli insieme, nell'ordine dei tool_use);</li>
+     *   <li>i tool_result che non rispondono a un tool_use dell'assistant immediatamente precedente
+     *       (orfani, duplicati o arrivati dopo un nuovo messaggio utente) vengono scartati;</li>
+     *   <li>solo i tool_use rimasti senza risposta ricevono un risultato sintetico "non eseguita";</li>
+     *   <li>id tool_use duplicati vengono omessi; il primo messaggio è sempre dell'utente.</li>
+     * </ul>
      */
     ArrayNode convertMessages(List<Llm.Message> messages) {
         List<ObjectNode> out = new ArrayList<>();
-        Set<String> knownToolUseIds = new HashSet<>();
+        Set<String> seenToolUseIds = new HashSet<>();
+        // tool_use dell'ultimo assistant ancora in attesa di risultato: id → tool_result (null = non ancora risposto)
+        LinkedHashMap<String, ObjectNode> open = null;
 
         for (Llm.Message m : messages) {
             switch (m.role()) {
+                case TOOL -> {
+                    String id = m.toolCallId() == null ? null : sanitizeId(m.toolCallId());
+                    // Valido solo se risponde all'assistant immediatamente precedente (e una sola volta).
+                    if (open == null || id == null || !open.containsKey(id) || open.get(id) != null) continue;
+                    open.put(id, toolResult(id, m.text()));
+                }
                 case USER -> {
                     if (!notBlank(m.text())) continue;
+                    open = closeOpen(out, open);
                     ArrayNode content = mapper.createArrayNode();
-                    ObjectNode tb = content.addObject();
-                    tb.put("type", "text");
-                    tb.put("text", m.text());
-                    appendTo(out, "user", content);
-                }
-                case TOOL -> {
-                    if (m.toolCallId() == null || !knownToolUseIds.contains(m.toolCallId())) continue; // orfano
-                    ArrayNode content = mapper.createArrayNode();
-                    ObjectNode tr = content.addObject();
-                    tr.put("type", "tool_result");
-                    tr.put("tool_use_id", m.toolCallId());
-                    tr.put("content", notBlank(m.text()) ? m.text() : "(nessun risultato)");
+                    if (notBlank(m.context())) {
+                        content.addObject().put("type", "text")
+                                .put("text", "<contesto_turno>\n" + m.context().strip() + "\n</contesto_turno>");
+                    }
+                    content.addObject().put("type", "text").put("text", m.text());
                     appendTo(out, "user", content);
                 }
                 case ASSISTANT -> {
-                    ArrayNode content = nativeBlocks(m.nativeContent());
-                    if (content == null) {
-                        content = mapper.createArrayNode();
-                        if (notBlank(m.text())) {
-                            ObjectNode tb = content.addObject();
-                            tb.put("type", "text");
-                            tb.put("text", m.text().stripTrailing());
-                        }
-                        if (m.hasToolCalls()) {
-                            for (Llm.ToolCall tc : m.toolCalls()) {
-                                ObjectNode tu = content.addObject();
-                                tu.put("type", "tool_use");
-                                tu.put("id", sanitizeId(tc.id()));
-                                tu.put("name", tc.name());
-                                tu.set("input", parseObject(tc.arguments()));
-                            }
-                        }
-                    }
-                    if (content.isEmpty()) continue;
+                    ArrayNode content = assistantContent(m);
+                    ArrayNode filtered = mapper.createArrayNode();
+                    List<String> ids = new ArrayList<>();
                     for (JsonNode b : content) {
-                        if ("tool_use".equals(b.path("type").asText())) knownToolUseIds.add(b.path("id").asText());
+                        if ("tool_use".equals(b.path("type").asText())) {
+                            String id = b.path("id").asText();
+                            if (!seenToolUseIds.add(id)) continue; // id duplicato: l'API lo rifiuterebbe
+                            ids.add(id);
+                        }
+                        filtered.add(b);
                     }
-                    appendTo(out, "assistant", content);
+                    if (filtered.isEmpty()) continue;
+                    open = closeOpen(out, open);
+                    appendTo(out, "assistant", filtered);
+                    if (!ids.isEmpty()) {
+                        open = new LinkedHashMap<>();
+                        for (String id : ids) open.put(id, null);
+                    }
                 }
             }
         }
-
-        // Ogni tool_use deve avere il suo tool_result nel messaggio user successivo.
-        for (int i = 0; i < out.size(); i++) {
-            ObjectNode msg = out.get(i);
-            if (!"assistant".equals(msg.path("role").asText())) continue;
-            List<String> ids = new ArrayList<>();
-            for (JsonNode b : msg.path("content")) {
-                if ("tool_use".equals(b.path("type").asText())) ids.add(b.path("id").asText());
-            }
-            if (ids.isEmpty()) continue;
-            ObjectNode next = (i + 1 < out.size() && "user".equals(out.get(i + 1).path("role").asText())) ? out.get(i + 1) : null;
-            if (next == null) {
-                next = mapper.createObjectNode();
-                next.put("role", "user");
-                next.putArray("content");
-                out.add(i + 1, next);
-            }
-            ArrayNode content = (ArrayNode) next.get("content");
-            Set<String> answered = new HashSet<>();
-            for (JsonNode b : content) {
-                if ("tool_result".equals(b.path("type").asText())) answered.add(b.path("tool_use_id").asText());
-            }
-            // I tool_result devono precedere eventuale testo: ricostruisco l'ordine.
-            ArrayNode reordered = mapper.createArrayNode();
-            for (String id : ids) {
-                if (answered.contains(id)) continue;
-                ObjectNode tr = reordered.addObject();
-                tr.put("type", "tool_result");
-                tr.put("tool_use_id", id);
-                tr.put("content", MISSING_TOOL_RESULT);
-            }
-            for (JsonNode b : content) if ("tool_result".equals(b.path("type").asText())) reordered.add(b);
-            for (JsonNode b : content) if (!"tool_result".equals(b.path("type").asText())) reordered.add(b);
-            next.set("content", reordered);
-        }
+        closeOpen(out, open);
 
         // Il primo messaggio deve essere dell'utente.
         if (!out.isEmpty() && !"user".equals(out.get(0).path("role").asText())) {
@@ -349,6 +366,51 @@ public class AnthropicClient implements LlmProvider {
         ArrayNode arr = mapper.createArrayNode();
         out.forEach(arr::add);
         return arr;
+    }
+
+    /** Contenuto assistant: blocchi nativi se presenti, altrimenti testo + tool_use ricostruiti. */
+    private ArrayNode assistantContent(Llm.Message m) {
+        ArrayNode content = nativeBlocks(m.nativeContent());
+        if (content != null) return content;
+        content = mapper.createArrayNode();
+        if (notBlank(m.text())) {
+            ObjectNode tb = content.addObject();
+            tb.put("type", "text");
+            tb.put("text", m.text().stripTrailing());
+        }
+        if (m.hasToolCalls()) {
+            for (Llm.ToolCall tc : m.toolCalls()) {
+                ObjectNode tu = content.addObject();
+                tu.put("type", "tool_use");
+                tu.put("id", sanitizeId(tc.id()));
+                tu.put("name", tc.name());
+                String args = tc.arguments();
+                tu.set("input", args != null && args.startsWith(Llm.INVALID_JSON_PREFIX) ? mapper.createObjectNode() : parseObject(args));
+            }
+        }
+        return content;
+    }
+
+    /** Chiude i tool_use aperti: un messaggio user con tutti i tool_result (sintetici per quelli mancanti). */
+    private LinkedHashMap<String, ObjectNode> closeOpen(List<ObjectNode> out, LinkedHashMap<String, ObjectNode> open) {
+        if (open == null || open.isEmpty()) return null;
+        ArrayNode content = mapper.createArrayNode();
+        open.forEach((id, tr) -> content.add(tr != null ? tr : toolResult(id, MISSING_TOOL_RESULT)));
+        ObjectNode msg = mapper.createObjectNode();
+        msg.put("role", "user");
+        msg.set("content", content);
+        out.add(msg);
+        return null;
+    }
+
+    private ObjectNode toolResult(String id, String text) {
+        ObjectNode tr = mapper.createObjectNode();
+        tr.put("type", "tool_result");
+        tr.put("tool_use_id", id);
+        String t = notBlank(text) ? text : "(nessun risultato)";
+        tr.put("content", t);
+        if (t.startsWith(Llm.INVALID_JSON_PREFIX) || t.startsWith("ERRORE")) tr.put("is_error", true);
+        return tr;
     }
 
     private void appendTo(List<ObjectNode> out, String role, ArrayNode content) {
@@ -390,13 +452,28 @@ public class AnthropicClient implements LlmProvider {
 
     // ---- Parsing SSE ----
 
-    /** Parsing dello stream SSE (package-private per i test). */
+    /**
+     * Parsing dello stream SSE (package-private per i test).
+     * <ul>
+     *   <li>TOOL_USE solo se lo stream è terminato con message_stop e stop_reason=tool_use; stream chiuso
+     *       prima di message_stop → INCOMPLETE (i tool non vanno eseguiti).</li>
+     *   <li>Input dei tool letto in modo stretto: JSON non valido → argomenti {@code {"INVALID_JSON": ...}}
+     *       (il chiamante risponde con un tool_result is_error senza eseguire il tool).</li>
+     *   <li>Fallback lato server ({@code fallbacks}): un blocco {@code fallback} marca il passaggio a un altro
+     *       modello. Dei blocchi precedenti all'ultimo confine restano solo i {@code text} (il modello di
+     *       fallback prosegue da quel testo); thinking/tool_use/altro prima del confine non vengono né
+     *       eseguiti né re-inviati. Il blocco fallback stesso viene omesso.</li>
+     * </ul>
+     */
     Llm.Result parseStream(Stream<String> lines, Consumer<String> onToken) {
         TreeMap<Integer, ObjectNode> blocks = new TreeMap<>();
         Map<Integer, StringBuilder> partialJson = new HashMap<>();
+        Map<Integer, String> invalidInput = new HashMap<>();
         long[] usage = new long[4]; // input, cache_creation, cache_read, output
-        String[] stopReason = new String[1];
+        String stopReason = null;
         String[] error = new String[2];
+        boolean messageStop = false;
+        int boundary = -1; // indice dell'ultimo blocco "fallback"
 
         Iterator<String> it = lines.iterator();
         while (it.hasNext()) {
@@ -417,8 +494,14 @@ public class AnthropicClient implements LlmProvider {
                 case "content_block_start" -> {
                     int idx = ev.path("index").asInt();
                     JsonNode cb = ev.path("content_block");
+                    String type = cb.path("type").asText();
                     blocks.put(idx, cb.isObject() ? ((ObjectNode) cb).deepCopy() : mapper.createObjectNode());
-                    if ("tool_use".equals(cb.path("type").asText())) partialJson.put(idx, new StringBuilder());
+                    if ("tool_use".equals(type)) partialJson.put(idx, new StringBuilder());
+                    if ("fallback".equals(type)) {
+                        boundary = Math.max(boundary, idx);
+                        log.info("Anthropic: fallback lato server {} → {}", cb.path("from").path("model").asText("?"),
+                                cb.path("to").path("model").asText("?"));
+                    }
                 }
                 case "content_block_delta" -> {
                     int idx = ev.path("index").asInt();
@@ -443,24 +526,25 @@ public class AnthropicClient implements LlmProvider {
                     int idx = ev.path("index").asInt();
                     StringBuilder pj = partialJson.remove(idx);
                     ObjectNode block = blocks.get(idx);
-                    if (pj != null && block != null) block.set("input", parseObject(pj.toString()));
+                    if (pj != null && block != null) finalizeToolInput(idx, block, pj.toString(), invalidInput);
                 }
                 case "message_delta" -> {
-                    if (ev.path("delta").hasNonNull("stop_reason")) stopReason[0] = ev.path("delta").path("stop_reason").asText();
+                    if (ev.path("delta").hasNonNull("stop_reason")) stopReason = ev.path("delta").path("stop_reason").asText();
                     readUsage(ev.path("usage"), usage);
                 }
+                case "message_stop" -> messageStop = true;
                 case "error" -> {
                     error[0] = ev.path("error").path("type").asText("error");
                     error[1] = ev.path("error").path("message").asText("errore");
                 }
-                default -> { /* ping, message_stop */ }
+                default -> { /* ping */ }
             }
-            if (error[0] != null) break;
+            if (error[0] != null || messageStop) break;
         }
-        // Blocchi tool_use mai chiusi (stream interrotto): finalizza l'input accumulato.
+        // Blocchi tool_use mai chiusi (stream interrotto): input non affidabile.
         partialJson.forEach((idx, pj) -> {
             ObjectNode block = blocks.get(idx);
-            if (block != null) block.set("input", parseObject(pj.toString()));
+            if (block != null) finalizeToolInput(idx, block, pj.toString(), invalidInput);
         });
 
         if (error[0] != null) {
@@ -476,24 +560,35 @@ public class AnthropicClient implements LlmProvider {
         ArrayNode content = mapper.createArrayNode();
         StringBuilder text = new StringBuilder();
         List<Llm.ToolCall> calls = new ArrayList<>();
-        for (ObjectNode b : blocks.values()) {
+        for (Map.Entry<Integer, ObjectNode> e : blocks.entrySet()) {
+            ObjectNode b = e.getValue();
             String type = b.path("type").asText();
+            if ("fallback".equals(type)) continue;
+            // Prima dell'ultimo confine di fallback: solo testo (continuazione per il modello di fallback).
+            if (e.getKey() < boundary && !"text".equals(type)) continue;
             if ("text".equals(type)) {
                 text.append(b.path("text").asText(""));
             } else if ("tool_use".equals(type)) {
-                if (!b.has("input")) b.set("input", mapper.createObjectNode());
-                calls.add(new Llm.ToolCall(b.path("id").asText(), b.path("name").asText(), b.get("input").toString()));
+                if (!b.has("input") || !b.get("input").isObject()) b.set("input", mapper.createObjectNode());
+                String raw = invalidInput.get(e.getKey());
+                String args = raw != null ? invalidJsonArgs(raw) : b.get("input").toString();
+                calls.add(new Llm.ToolCall(b.path("id").asText(), b.path("name").asText(), args));
             }
             content.add(b);
         }
 
-        Llm.StopReason stop = switch (stopReason[0] == null ? "" : stopReason[0]) {
-            case "end_turn", "stop_sequence" -> Llm.StopReason.END;
-            case "tool_use" -> Llm.StopReason.TOOL_USE;
-            case "max_tokens", "model_context_window_exceeded" -> Llm.StopReason.MAX_TOKENS;
-            case "refusal" -> Llm.StopReason.REFUSAL;
-            default -> calls.isEmpty() ? Llm.StopReason.OTHER : Llm.StopReason.TOOL_USE;
-        };
+        Llm.StopReason stop;
+        if (!messageStop) {
+            stop = "refusal".equals(stopReason) ? Llm.StopReason.REFUSAL : Llm.StopReason.INCOMPLETE;
+        } else {
+            stop = switch (stopReason == null ? "" : stopReason) {
+                case "end_turn", "stop_sequence" -> Llm.StopReason.END;
+                case "tool_use" -> calls.isEmpty() ? Llm.StopReason.OTHER : Llm.StopReason.TOOL_USE;
+                case "max_tokens", "model_context_window_exceeded" -> Llm.StopReason.MAX_TOKENS;
+                case "refusal" -> Llm.StopReason.REFUSAL;
+                default -> Llm.StopReason.OTHER; // pause_turn ecc.: mai eseguire tool
+            };
+        }
         Llm.Usage u = new Llm.Usage(usage[0] + usage[1] + usage[2], usage[3], usage[2]);
         String nativeContent;
         try {
@@ -502,6 +597,35 @@ public class AnthropicClient implements LlmProvider {
             nativeContent = null;
         }
         return new Llm.Result(text.toString(), calls, u, stop, nativeContent);
+    }
+
+    /** Parse stretto dell'input del tool: oggetto JSON valido, senza token in coda; vuoto = {}. */
+    private void finalizeToolInput(int idx, ObjectNode block, String raw, Map<Integer, String> invalid) {
+        if (raw == null || raw.isBlank()) {
+            if (!block.has("input") || !block.get("input").isObject()) block.set("input", mapper.createObjectNode());
+            return;
+        }
+        try {
+            JsonNode n = strictReader.readTree(raw);
+            if (n != null && n.isObject()) {
+                block.set("input", n);
+                return;
+            }
+        } catch (Exception ignored) {
+            // JSON non valido
+        }
+        block.set("input", mapper.createObjectNode());
+        invalid.put(idx, raw);
+    }
+
+    private String invalidJsonArgs(String raw) {
+        ObjectNode o = mapper.createObjectNode();
+        o.put("INVALID_JSON", truncate(raw, 4000));
+        try {
+            return mapper.writeValueAsString(o);
+        } catch (Exception e) {
+            return Llm.INVALID_JSON_PREFIX + ":\"\"}";
+        }
     }
 
     private static void readUsage(JsonNode u, long[] usage) {

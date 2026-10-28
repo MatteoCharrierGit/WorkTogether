@@ -25,6 +25,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AiGateway {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AiGateway.class);
+
     private final AiSettingsService aiSettingsService;
     private final AiUserSettingsRepository userSettingsRepository;
     private final AiKeyCipher cipher;
@@ -103,8 +105,18 @@ public class AiGateway {
 
     /** Chiamata al provider con registrazione dei token consumati (sull'utente, o sul workspace se userId null). */
     public Llm.Result chat(Resolved r, Llm.Request request, java.util.function.Consumer<String> onToken) {
-        Llm.Result res = r.client().chat(r.apiKey(), request, onToken);
-        usageService.addTokens(r.workspaceId(), r.userId(), res.usage());
+        return chat(r, request, onToken, Llm.Cancellation.none());
+    }
+
+    /** Come sopra, annullabile. La registrazione dei consumi è best-effort: non fa mai fallire il turno. */
+    public Llm.Result chat(Resolved r, Llm.Request request, java.util.function.Consumer<String> onToken,
+                           Llm.Cancellation cancel) {
+        Llm.Result res = r.client().chat(r.apiKey(), request, onToken, cancel);
+        try {
+            usageService.addTokens(r.workspaceId(), r.userId(), res.usage());
+        } catch (RuntimeException e) {
+            log.warn("Registrazione consumi IA fallita (ws {}, user {}): {}", r.workspaceId(), r.userId(), e.getMessage());
+        }
         return res;
     }
 

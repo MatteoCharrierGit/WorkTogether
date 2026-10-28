@@ -224,6 +224,7 @@ export default function AssistantPage() {
 
   const streamHandlers = (convId: string) => ({
     onToken: (t: string) => setDraftAssistant(p => p + t),
+    onReset: () => setDraftAssistant(''),
     onTool: (name: string) => setToolActivity(a => [...a, name]),
     onConfirm: (actions: PendingAction[]) => { setPending(actions); setSending(false) },
     onDone: async () => {

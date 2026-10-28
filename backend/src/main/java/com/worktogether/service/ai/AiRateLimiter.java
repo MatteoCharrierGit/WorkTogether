@@ -49,15 +49,36 @@ public class AiRateLimiter {
         return new Limits(clamp(perMinute, 1, 600), clamp(perDay, 1, 100_000), clamp(s.getMaxConcurrent(), 1, 10));
     }
 
-    /** Permesso per una generazione: va chiuso a fine generazione (idempotente). */
+    /**
+     * Permesso per una generazione: va chiuso a fine generazione (idempotente). Tiene il riferimento al
+     * proprio contatore, così il rilascio non dipende da cosa c'è nella mappa in quel momento.
+     */
     public final class Permit implements AutoCloseable {
         private final String key;
+        private final UUID workspaceId;
+        private final UUID userId;
+        private final AtomicInteger counter;
         private final AtomicBoolean released = new AtomicBoolean(false);
-        private Permit(String key) { this.key = key; }
+        private final AtomicBoolean refunded = new AtomicBoolean(false);
+        private Permit(String key, UUID workspaceId, UUID userId, AtomicInteger counter) {
+            this.key = key;
+            this.workspaceId = workspaceId;
+            this.userId = userId;
+            this.counter = counter;
+        }
         @Override public void close() {
-            if (released.compareAndSet(false, true)) {
-                AtomicInteger c = inFlight.get(key);
-                if (c != null) c.updateAndGet(v -> Math.max(0, v - 1));
+            if (released.compareAndSet(false, true)) releaseSlot(key, counter);
+        }
+        /**
+         * Restituisce la richiesta al contatore giornaliero (generazione non avvenuta: pool saturo, errore del
+         * provider prima di qualunque token). Idempotente, best-effort.
+         */
+        public void refund() {
+            if (!refunded.compareAndSet(false, true)) return;
+            try {
+                usageService.decrementRequests(workspaceId, userId);
+            } catch (RuntimeException e) {
+                log.warn("Rimborso quota IA fallito (ws {}, user {}): {}", workspaceId, userId, e.getMessage());
             }
         }
     }
@@ -65,13 +86,15 @@ public class AiRateLimiter {
     /**
      * Acquisisce un permesso per una generazione (chat, conferma, /compact, bozza email...).
      * Controlla minuto → concorrenza → giorno; lancia {@link AiRateLimitException} (429) se un limite è superato.
+     * Tutte le modifiche a finestre e contatori avvengono dentro compute* della mappa (atomiche per chiave),
+     * così la pulizia periodica non può rimuovere una struttura in uso.
      */
     public Permit acquire(UUID workspaceId, UUID userId, Limits limits) {
         String key = workspaceId + ":" + userId;
         long now = System.currentTimeMillis();
 
-        Deque<Long> window = minuteWindows.computeIfAbsent(key, k -> new ArrayDeque<>());
-        synchronized (window) {
+        minuteWindows.compute(key, (k, window) -> {
+            if (window == null) window = new ArrayDeque<>();
             prune(window, now);
             if (window.size() >= limits.perMinute()) {
                 long retry = (WINDOW_MS - (now - window.peekFirst())) / 1000 + 1;
@@ -80,12 +103,20 @@ public class AiRateLimiter {
                                 + "Riprova tra " + retry + " secondi.", retry);
             }
             window.addLast(now); // prenotato; rimosso se un controllo successivo fallisce
-        }
+            return window;
+        });
 
-        AtomicInteger counter = inFlight.computeIfAbsent(key, k -> new AtomicInteger());
-        if (counter.incrementAndGet() > limits.maxConcurrent()) {
-            counter.decrementAndGet();
-            unreserve(window, now);
+        AtomicInteger[] ref = new AtomicInteger[1];
+        int current = inFlight.compute(key, (k, c) -> {
+            if (c == null) c = new AtomicInteger();
+            c.incrementAndGet();
+            ref[0] = c;
+            return c;
+        }).get();
+        AtomicInteger counter = ref[0];
+        if (current > limits.maxConcurrent()) {
+            releaseSlot(key, counter);
+            unreserve(key, now);
             throw new AiRateLimitException(HttpStatus.TOO_MANY_REQUESTS, "AI_CONCURRENT",
                     limits.maxConcurrent() == 1
                             ? "Akari sta già generando una risposta per te: attendi che finisca prima di inviare un'altra richiesta."
@@ -97,19 +128,19 @@ public class AiRateLimiter {
         try {
             today = usageService.incrementRequests(workspaceId, userId);
         } catch (RuntimeException e) {
-            counter.decrementAndGet();
-            unreserve(window, now);
+            releaseSlot(key, counter);
+            unreserve(key, now);
             throw e;
         }
         if (today > limits.perDay()) {
             try { usageService.decrementRequests(workspaceId, userId); } catch (RuntimeException ignored) { /* best-effort */ }
-            counter.decrementAndGet();
-            unreserve(window, now);
+            releaseSlot(key, counter);
+            unreserve(key, now);
             throw new AiRateLimitException(HttpStatus.TOO_MANY_REQUESTS, "AI_RATE_DAY",
                     "Hai raggiunto il limite giornaliero di " + limits.perDay() + " richieste ad Akari. "
                             + "Il contatore si azzera a mezzanotte.", secondsToMidnight());
         }
-        return new Permit(key);
+        return new Permit(key, workspaceId, userId, counter);
     }
 
     /**
@@ -119,8 +150,8 @@ public class AiRateLimiter {
     public void checkMinute(UUID workspaceId, UUID userId, Limits limits) {
         String key = workspaceId + ":" + userId;
         long now = System.currentTimeMillis();
-        Deque<Long> window = minuteWindows.computeIfAbsent(key, k -> new ArrayDeque<>());
-        synchronized (window) {
+        minuteWindows.compute(key, (k, window) -> {
+            if (window == null) window = new ArrayDeque<>();
             prune(window, now);
             // Margine doppio per i comandi leggeri: bloccano solo lo spam evidente.
             if (window.size() >= limits.perMinute() * 2) {
@@ -129,7 +160,17 @@ public class AiRateLimiter {
                         "Troppi comandi in poco tempo. Riprova tra " + retry + " secondi.", retry);
             }
             window.addLast(now);
-        }
+            return window;
+        });
+    }
+
+    private void releaseSlot(String key, AtomicInteger counter) {
+        // Decremento sotto il lock della chiave: la pulizia non può rimuovere il contatore a metà.
+        AtomicInteger present = inFlight.computeIfPresent(key, (k, c) -> {
+            counter.updateAndGet(v -> Math.max(0, v - 1));
+            return c;
+        });
+        if (present == null) counter.updateAndGet(v -> Math.max(0, v - 1));
     }
 
     /** Numero di generazioni in corso per l'utente (per la UI). */
@@ -149,25 +190,30 @@ public class AiRateLimiter {
         return true;
     }
 
-    /** Pulizia periodica delle finestre vuote (evita la crescita della mappa). */
+    /** Pulizia periodica: rimuove finestre vuote e contatori a zero, solo dentro computeIfPresent. */
     @Scheduled(fixedDelay = 300_000)
     public void cleanup() {
         long now = System.currentTimeMillis();
-        minuteWindows.entrySet().removeIf(e -> {
-            synchronized (e.getValue()) {
-                prune(e.getValue(), now);
-                return e.getValue().isEmpty();
-            }
-        });
-        inFlight.entrySet().removeIf(e -> e.getValue().get() == 0);
+        for (String key : minuteWindows.keySet()) {
+            minuteWindows.computeIfPresent(key, (k, w) -> {
+                prune(w, now);
+                return w.isEmpty() ? null : w;
+            });
+        }
+        for (String key : inFlight.keySet()) {
+            inFlight.computeIfPresent(key, (k, c) -> c.get() == 0 ? null : c);
+        }
     }
 
     private static void prune(Deque<Long> window, long now) {
         while (!window.isEmpty() && now - window.peekFirst() >= WINDOW_MS) window.pollFirst();
     }
 
-    private static void unreserve(Deque<Long> window, long ts) {
-        synchronized (window) { window.removeLastOccurrence(ts); }
+    private void unreserve(String key, long ts) {
+        minuteWindows.computeIfPresent(key, (k, w) -> {
+            w.removeLastOccurrence(ts);
+            return w;
+        });
     }
 
     private static long secondsToMidnight() {

@@ -27,6 +27,10 @@ public class AiSettingsService {
     private final AiModelCatalog modelCatalog;
     private final java.util.List<LlmProvider> providers;
 
+    /** Intervallo ammesso per max token (128000 = output massimo dei modelli Claude attuali). */
+    static final int MIN_MAX_TOKENS = 64;
+    static final int MAX_MAX_TOKENS = 128_000;
+
     private static final String DEFAULT_PERSONALITY = """
             Sei "Akari" 🌸, l'assistente del workspace "{{workspaceName}}".
             Sei l'assistente personale di Charrier Matteo (Admin): cordiale, gentile, sempre pronta ad aiutare e professionale.
@@ -94,7 +98,14 @@ public class AiSettingsService {
         if (req.enabled() != null) s.setEnabled(req.enabled());
         if (req.model() != null && !req.model().isBlank()) s.setModel(req.model().trim());
         if (req.temperature() != null) s.setTemperature(clamp(req.temperature(), 0.0, 2.0));
-        if (req.maxTokens() != null) s.setMaxTokens(Math.max(1, req.maxTokens()));
+        if (req.maxTokens() != null) {
+            // Con Anthropic il valore effettivo è min(max(valore, 16000), output massimo del modello).
+            if (req.maxTokens() < MIN_MAX_TOKENS || req.maxTokens() > MAX_MAX_TOKENS) {
+                throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                        "Max token risposta deve essere tra " + MIN_MAX_TOKENS + " e " + MAX_MAX_TOKENS);
+            }
+            s.setMaxTokens(req.maxTokens());
+        }
         if (req.contextWindowTokens() != null) s.setContextWindowTokens(Math.max(1000, req.contextWindowTokens()));
         if (req.compactThresholdPct() != null) s.setCompactThresholdPct((int) clamp(req.compactThresholdPct(), 10, 95));
         if (req.autonomy() != null) s.setAutonomy(req.autonomy());

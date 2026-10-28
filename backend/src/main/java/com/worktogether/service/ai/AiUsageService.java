@@ -40,15 +40,15 @@ public class AiUsageService {
         repository.decrementRequests(workspaceId, userId, today());
     }
 
-    /** Somma i token di una chiamata al provider. Best-effort: un errore non interrompe la chat. */
-    @Transactional
+    /**
+     * Somma i token di una chiamata al provider in una transazione AUTONOMA (REQUIRES_NEW): un errore
+     * fa rollback solo di questa scrittura, mai della transazione del chiamante. Il chiamante
+     * ({@link AiGateway#chat}) intercetta comunque l'eccezione: la registrazione è best-effort.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public void addTokens(UUID workspaceId, UUID userId, Llm.Usage usage) {
         if (usage == null || (usage.inputTokens() == 0 && usage.outputTokens() == 0)) return;
-        try {
-            repository.addTokens(workspaceId, userId, today(), usage.inputTokens(), usage.outputTokens(), usage.cacheReadTokens());
-        } catch (Exception e) {
-            log.warn("Registrazione consumi IA fallita (ws {}, user {}): {}", workspaceId, userId, e.getMessage());
-        }
+        repository.addTokens(workspaceId, userId, today(), usage.inputTokens(), usage.outputTokens(), usage.cacheReadTokens());
     }
 
     @Transactional(readOnly = true)

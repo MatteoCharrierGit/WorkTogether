@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.worktogether.domain.enums.AiProvider;
 import com.worktogether.service.ai.Llm;
 import com.worktogether.service.ai.LlmProvider;
+import com.worktogether.service.ai.SseLines;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -19,8 +20,6 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.*;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * Provider OpenRouter (API OpenAI-compatibile): test chiave, elenco modelli, chat completions in
@@ -106,7 +105,7 @@ public class OpenRouterClient implements LlmProvider {
      * Bloccante: eseguire su un thread dedicato.
      */
     @Override
-    public Llm.Result chat(String apiKey, Llm.Request request, Consumer<String> onToken) {
+    public Llm.Result chat(String apiKey, Llm.Request request, Consumer<String> onToken, Llm.Cancellation cancel) {
         try {
             ObjectNode body = objectMapper.createObjectNode();
             body.put("model", request.model());
@@ -126,7 +125,12 @@ public class OpenRouterClient implements LlmProvider {
                 switch (m.role()) {
                     case USER -> {
                         mn.put("role", "user");
-                        mn.put("content", m.text() == null ? "" : m.text());
+                        String t = m.text() == null ? "" : m.text();
+                        // Contesto del turno fissato all'invio: stessi byte a ogni richiesta (prefisso stabile).
+                        if (m.context() != null && !m.context().isBlank()) {
+                            t = "<contesto_turno>\n" + m.context().strip() + "\n</contesto_turno>\n\n" + t;
+                        }
+                        mn.put("content", t);
                     }
                     case TOOL -> {
                         mn.put("role", "tool");
@@ -168,76 +172,103 @@ public class OpenRouterClient implements LlmProvider {
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)))
                     .build();
 
-            HttpResponse<Stream<String>> res = http.send(req, HttpResponse.BodyHandlers.ofLines());
-            if (res.statusCode() != 200) {
-                String raw = res.body().collect(Collectors.joining("\n"));
-                HttpStatus status = res.statusCode() == 429 ? HttpStatus.TOO_MANY_REQUESTS : HttpStatus.BAD_GATEWAY;
-                throw new ResponseStatusException(status,
-                        "OpenRouter " + res.statusCode() + ": " + extractError(raw));
-            }
-
             StringBuilder full = new StringBuilder();
             Map<Integer, TcBuilder> builders = new TreeMap<>();
             long[] usage = new long[3];
-            String[] finish = new String[1];
-            try (Stream<String> lines = res.body()) {
-                lines.forEach(line -> {
-                    if (line == null) return;
+            String finish = null;
+            boolean done = false;
+            try (SseLines sse = SseLines.open(http, req, cancel, SseLines.IDLE_TIMEOUT, "OpenRouter")) {
+                if (sse.status() != 200) {
+                    String raw = sse.readAll(64_000);
+                    HttpStatus status = sse.status() == 429 ? HttpStatus.TOO_MANY_REQUESTS
+                            : sse.status() >= 500 ? HttpStatus.SERVICE_UNAVAILABLE : HttpStatus.BAD_GATEWAY;
+                    throw new ResponseStatusException(status, "OpenRouter " + sse.status() + ": " + extractError(raw));
+                }
+                String line;
+                while ((line = sse.readLine()) != null) {
                     String l = line.trim();
-                    if (!l.startsWith("data:")) return;
+                    if (!l.startsWith("data:")) continue;
                     String data = l.substring(5).trim();
-                    if (data.isEmpty() || data.equals("[DONE]")) return;
+                    if (data.isEmpty()) continue;
+                    if (data.equals("[DONE]")) { done = true; break; }
+                    JsonNode node;
                     try {
-                        JsonNode node = objectMapper.readTree(data);
-                        JsonNode u = node.path("usage");
-                        if (u.isObject()) {
-                            usage[0] = u.path("prompt_tokens").asLong(usage[0]);
-                            usage[1] = u.path("completion_tokens").asLong(usage[1]);
-                            usage[2] = u.path("prompt_tokens_details").path("cached_tokens").asLong(usage[2]);
-                        }
-                        JsonNode choices = node.path("choices");
-                        if (!choices.isArray() || choices.isEmpty()) return;
-                        JsonNode choice = choices.get(0);
-                        if (choice.hasNonNull("finish_reason")) finish[0] = choice.get("finish_reason").asText();
-                        JsonNode delta = choice.path("delta");
-                        String content = delta.path("content").asText("");
-                        if (!content.isEmpty()) {
-                            full.append(content);
-                            onToken.accept(content);
-                        }
-                        JsonNode tcs = delta.path("tool_calls");
-                        if (tcs.isArray()) {
-                            for (JsonNode tc : tcs) {
-                                int idx = tc.path("index").asInt(0);
-                                TcBuilder b = builders.computeIfAbsent(idx, k -> new TcBuilder());
-                                if (tc.hasNonNull("id")) b.id = tc.get("id").asText();
-                                JsonNode fn = tc.path("function");
-                                if (fn.hasNonNull("name")) b.name = fn.get("name").asText();
-                                if (fn.hasNonNull("arguments")) b.args.append(fn.get("arguments").asText());
-                            }
-                        }
+                        node = objectMapper.readTree(data);
                     } catch (Exception ignored) {
-                        // riga non-JSON (keep-alive) o frammento parziale
+                        continue; // riga non-JSON (keep-alive) o frammento parziale
                     }
-                });
+                    if (node.has("error")) {
+                        throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                                "OpenRouter: " + truncate(node.path("error").path("message").asText("errore nello stream"), 300));
+                    }
+                    JsonNode u = node.path("usage");
+                    if (u.isObject()) {
+                        usage[0] = u.path("prompt_tokens").asLong(usage[0]);
+                        usage[1] = u.path("completion_tokens").asLong(usage[1]);
+                        usage[2] = u.path("prompt_tokens_details").path("cached_tokens").asLong(usage[2]);
+                    }
+                    JsonNode choices = node.path("choices");
+                    if (!choices.isArray() || choices.isEmpty()) continue;
+                    JsonNode choice = choices.get(0);
+                    if (choice.hasNonNull("finish_reason")) finish = choice.get("finish_reason").asText();
+                    JsonNode delta = choice.path("delta");
+                    String content = delta.path("content").asText("");
+                    if (!content.isEmpty()) {
+                        full.append(content);
+                        onToken.accept(content);
+                    }
+                    JsonNode tcs = delta.path("tool_calls");
+                    if (tcs.isArray()) {
+                        for (JsonNode tc : tcs) {
+                            int idx = tc.path("index").asInt(0);
+                            TcBuilder b = builders.computeIfAbsent(idx, k -> new TcBuilder());
+                            if (tc.hasNonNull("id")) b.id = tc.get("id").asText();
+                            JsonNode fn = tc.path("function");
+                            if (fn.hasNonNull("name")) b.name = fn.get("name").asText();
+                            if (fn.hasNonNull("arguments")) b.args.append(fn.get("arguments").asText());
+                        }
+                    }
+                }
             }
 
             List<Llm.ToolCall> calls = builders.values().stream()
                     .filter(b -> b.name != null)
                     .map(b -> new Llm.ToolCall(b.id != null ? b.id : "call_" + UUID.randomUUID().toString().replace("-", ""),
-                            b.name, b.args.length() == 0 ? "{}" : b.args.toString()))
+                            b.name, validArgs(b.args.toString())))
                     .toList();
-            Llm.StopReason stop = !calls.isEmpty() ? Llm.StopReason.TOOL_USE
-                    : "length".equals(finish[0]) ? Llm.StopReason.MAX_TOKENS
-                    : "content_filter".equals(finish[0]) ? Llm.StopReason.REFUSAL
-                    : Llm.StopReason.END;
+            // I tool si eseguono solo se il modello ha chiuso con finish_reason=tool_calls.
+            Llm.StopReason stop;
+            if (finish == null) stop = Llm.StopReason.INCOMPLETE;
+            else stop = switch (finish) {
+                case "tool_calls", "function_call" -> calls.isEmpty() ? Llm.StopReason.OTHER : Llm.StopReason.TOOL_USE;
+                case "length" -> Llm.StopReason.MAX_TOKENS;
+                case "content_filter" -> Llm.StopReason.REFUSAL;
+                case "stop" -> Llm.StopReason.END;
+                default -> Llm.StopReason.OTHER;
+            };
+            if (stop == Llm.StopReason.END && !done && full.length() == 0 && calls.isEmpty()) stop = Llm.StopReason.INCOMPLETE;
             return new Llm.Result(full.toString(), calls, new Llm.Usage(usage[0], usage[1], usage[2]), stop, null);
-        } catch (ResponseStatusException e) {
+        } catch (ResponseStatusException | Llm.CancelledException e) {
             throw e;
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
                     "Errore nello streaming OpenRouter: " + e.getMessage());
         }
+    }
+
+    /** Argomenti del tool: JSON oggetto valido (vuoto = {}), altrimenti {"INVALID_JSON": raw}. */
+    private String validArgs(String raw) {
+        if (raw == null || raw.isBlank()) return "{}";
+        try {
+            JsonNode n = objectMapper.reader()
+                    .with(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS).readTree(raw);
+            if (n != null && n.isObject()) return raw;
+        } catch (Exception ignored) {
+            // non valido
+        }
+        ObjectNode o = objectMapper.createObjectNode();
+        o.put("INVALID_JSON", truncate(raw, 4000));
+        return o.toString();
     }
 
     private static final class TcBuilder {

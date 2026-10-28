@@ -11,6 +11,8 @@ export interface AiStreamErrorInfo {
 
 export interface AiStreamCallbacks {
   onToken: (t: string) => void
+  /** Il testo ricevuto finora va scartato (es. rifiuto del modello a metà risposta). */
+  onReset?: () => void
   onTool?: (name: string) => void
   onConfirm?: (actions: any[]) => void
   onDone?: () => void
@@ -70,6 +72,7 @@ export async function aiStream(path: string, body: object, cb: AiStreamCallbacks
       try {
         const ev = JSON.parse(payload)
         if (ev.type === 'token') cb.onToken(ev.text)
+        else if (ev.type === 'reset') cb.onReset?.()
         else if (ev.type === 'tool') cb.onTool?.(ev.name)
         else if (ev.type === 'confirm') { finished = true; cb.onConfirm?.(ev.actions || []) }
         else if (ev.type === 'done') { finished = true; cb.onDone?.() }

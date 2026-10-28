@@ -222,6 +222,14 @@ public class AgentToolRegistry {
 
     /** Esegue il tool e ritorna un risultato testuale (JSON) da rimandare al modello. */
     public String execute(String name, UUID wsId, User user, String argumentsJson) {
+        return execute(name, wsId, user, argumentsJson, true);
+    }
+
+    /**
+     * @param restrictHidden true se l'output può essere visto da altri (chat condivisa) o il chiamante non è
+     *                       admin: i membri nascosti vengono esclusi da ogni elenco di membri.
+     */
+    public String execute(String name, UUID wsId, User user, String argumentsJson, boolean restrictHidden) {
         try {
             JsonNode args;
             try {
@@ -239,6 +247,9 @@ public class AgentToolRegistry {
                 case "list_tags" -> json(tagService.getTags(wsId, user).stream()
                         .map(t -> Map.of("id", t.id(), "name", t.name(), "color", t.color())).toList());
                 case "list_members" -> json(workspaceService.getMembers(wsId, user).stream()
+                        // Il risultato del tool è salvato nella conversazione: niente membri nascosti
+                        // se la chat è condivisa o se chi chiede non è admin.
+                        .filter(m -> !restrictHidden || !m.hidden())
                         .map(m -> {
                             Map<String, Object> mm = new LinkedHashMap<>();
                             mm.put("userId", m.userId());

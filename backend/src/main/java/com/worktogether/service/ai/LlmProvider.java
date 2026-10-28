@@ -21,7 +21,16 @@ public interface LlmProvider {
      * chiamate tool, usage e contenuto nativo. Bloccante: eseguire su un thread dedicato.
      * Errori HTTP del provider → {@link org.springframework.web.server.ResponseStatusException} (502/429).
      */
-    Llm.Result chat(String apiKey, Llm.Request request, Consumer<String> onToken);
+    default Llm.Result chat(String apiKey, Llm.Request request, Consumer<String> onToken) {
+        return chat(apiKey, request, onToken, Llm.Cancellation.none());
+    }
+
+    /**
+     * Come sopra, annullabile: se {@code cancel} scatta la connessione HTTP viene chiusa e viene lanciata
+     * {@link Llm.CancelledException}. Uno stream senza byte per più di {@link SseLines#IDLE_TIMEOUT} viene
+     * interrotto (504). Lo {@code stopReason} TOOL_USE è restituito solo se lo stream è terminato regolarmente.
+     */
+    Llm.Result chat(String apiKey, Llm.Request request, Consumer<String> onToken, Llm.Cancellation cancel);
 
     /**
      * Identificativo del "prefisso" (system+tools+modello) a cui è legato il contenuto nativo prodotto.

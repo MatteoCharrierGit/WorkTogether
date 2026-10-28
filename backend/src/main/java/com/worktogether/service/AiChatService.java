@@ -22,10 +22,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -55,6 +57,17 @@ public class AiChatService {
     private final AiMemoryService memoryService;
     private final ObjectMapper objectMapper;
     private final WorkspaceEventPublisher eventPublisher;
+    private final TransactionTemplate transactionTemplate;
+
+    /** Risultato registrato per le azioni in attesa annullate automaticamente da un nuovo messaggio. */
+    static final String AUTO_CANCELLED_RESULT =
+            "Azione annullata dall'utente: ha inviato un nuovo messaggio senza confermarla. Non è stata eseguita.";
+    static final String REFUSAL_NOTICE =
+            "Non posso elaborare questa richiesta. Prova a riformularla o a dividerla in passaggi più semplici.";
+    static final String INCOMPLETE_NOTICE =
+            "La risposta si è interrotta prima del termine, quindi nessuna azione è stata eseguita. Riprova.";
+    static final String MAX_TOKENS_NOTICE =
+            "La risposta è stata interrotta perché ha raggiunto il limite di token configurato: nessuna azione è stata eseguita.";
 
     private static final Logger log = LoggerFactory.getLogger(AiChatService.class);
 
@@ -89,18 +102,81 @@ public class AiChatService {
         }
     }
 
-    /** Esegue il task nel pool; se saturo rilascia il permesso e risponde 503 con Retry-After. */
-    private void submit(AiRateLimiter.Permit permit, Runnable task) {
+    /**
+     * Stato di un turno in streaming: emitter SSE, annullamento cooperativo e permesso di concorrenza.
+     * Timeout/errore/chiusura dell'emitter (client disconnesso) annullano il turno: il loop si ferma al
+     * passo successivo e lo stream HTTP verso il provider viene chiuso.
+     */
+    private final class Turn {
+        final SseEmitter emitter;
+        final AiRateLimiter.Permit permit;
+        final Llm.Cancellation cancel = new Llm.Cancellation();
+        /** true appena il provider ha prodotto qualcosa (token o risposta completa): da lì la quota è dovuta. */
+        volatile boolean produced;
+
+        Turn(SseEmitter emitter, AiRateLimiter.Permit permit) {
+            this.emitter = emitter;
+            this.permit = permit;
+            emitter.onTimeout(cancel::cancel);
+            emitter.onError(t -> cancel.cancel());
+            emitter.onCompletion(cancel::cancel);
+            // Durante le attese del provider: commento SSE di keep-alive; se il client se n'è andato la
+            // scrittura fallisce e il turno viene annullato (connessione al provider chiusa, permesso rilasciato).
+            cancel.setHeartbeat(() -> {
+                try {
+                    emitter.send(SseEmitter.event().comment("keep-alive"));
+                } catch (Exception e) {
+                    cancel.cancel();
+                }
+            });
+        }
+
+        void send(Object payload) {
+            if (cancel.isCancelled()) return;
+            try {
+                emitter.send(SseEmitter.event().data(payload));
+            } catch (Exception e) {
+                cancel.cancel(); // client disconnesso
+            }
+        }
+
+        void token(String t) {
+            produced = true;
+            send(Map.of("type", "token", "text", t));
+        }
+
+        void checkCancelled() {
+            if (cancel.isCancelled()) throw new Llm.CancelledException("Turno annullato");
+        }
+
+        void complete() {
+            try { emitter.complete(); } catch (Exception ignored) { /* già chiuso */ }
+        }
+    }
+
+    /**
+     * Esegue il task nel pool. Il permesso viene SEMPRE rilasciato: a fine task (qualunque esito) oppure
+     * subito se il pool è saturo (503 con Retry-After, quota giornaliera restituita).
+     */
+    private void submit(Turn turn, Runnable task) {
         try {
             executor.execute(() -> {
-                try (permit) {
+                try {
                     task.run();
+                } catch (Throwable t) {
+                    log.warn("Errore inatteso nel turno AI", t);
+                } finally {
+                    turn.permit.close();
                 }
             });
         } catch (RejectedExecutionException e) {
-            permit.close();
+            turn.permit.close();
+            turn.permit.refund();
             throw new AiRateLimitException(HttpStatus.SERVICE_UNAVAILABLE, "AI_BUSY",
                     "Akari è molto richiesta in questo momento: riprova tra qualche secondo.", 10);
+        } catch (RuntimeException e) {
+            turn.permit.close();
+            throw e;
         }
     }
 
@@ -126,106 +202,172 @@ public class AiChatService {
         if (userText.length() > 20_000) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Messaggio troppo lungo (max 20.000 caratteri)");
         }
+        // Contesto del turno (data/ora, interlocutore) fissato ora e salvato col messaggio: viene re-inviato
+        // identico nei turni successivi, così il prefisso della conversazione resta in cache.
+        String turnContext = buildTurnContext(conv, user);
         // Limiti d'uso PRIMA di salvare il messaggio: in caso di 429 la conversazione resta invariata.
         AiRateLimiter.Permit permit = gateway.acquire(ai);
+        Turn turn = new Turn(new SseEmitter(300_000L), permit);
+        // Il messaggio viene salvato nel worker: se il pool è saturo (503) la conversazione resta invariata.
+        submit(turn, () -> {
+            try {
+                persistUserMessage(conv, userText, turnContext, user);
+                notifyShared(workspaceId, conv); // gli altri partecipanti vedono subito il messaggio utente
+                runLoop(workspaceId, conv, ai, user, turn);
+                turn.complete();
+            } catch (Exception e) {
+                fail(turn, e);
+            }
+        });
+        return turn.emitter;
+    }
 
-        try {
-            saveMessage(conv.getId(), AiMessageRole.USER, userText, user.getId(), null, null);
+    /**
+     * In un'unica transazione: annulla le azioni ancora in attesa di conferma (salvandone il risultato
+     * "annullata" PRIMA del nuovo messaggio, così ogni tool_use resta seguito dal suo tool_result) e salva
+     * il messaggio utente con il suo contesto.
+     */
+    private void persistUserMessage(AiConversation conv, String userText, String turnContext, User user) {
+        transactionTemplate.executeWithoutResult(st -> {
+            OffsetDateTime last = null;
+            List<AiPendingAction> pending = pendingRepository
+                    .findByConversationIdAndStatusOrderByCreatedAtAsc(conv.getId(), AiPendingActionStatus.PENDING);
+            for (AiPendingAction pa : pending) {
+                if (pendingRepository.transition(pa.getId(), AiPendingActionStatus.PENDING, AiPendingActionStatus.REJECTED) != 1) {
+                    continue; // gestita nel frattempo da una conferma
+                }
+                last = after(last);
+                messageRepository.save(AiMessage.builder()
+                        .conversationId(conv.getId())
+                        .role(AiMessageRole.TOOL)
+                        .content(AUTO_CANCELLED_RESULT)
+                        .toolCallId(pa.getToolCallId())
+                        .tokenCount(estimateTokens(AUTO_CANCELLED_RESULT))
+                        .createdAt(last)
+                        .build());
+            }
+            messageRepository.save(AiMessage.builder()
+                    .conversationId(conv.getId())
+                    .role(AiMessageRole.USER)
+                    .content(userText)
+                    .authorUserId(user.getId())
+                    .providerContent(contextJson(turnContext))
+                    .tokenCount(estimateTokens(userText))
+                    .createdAt(after(last))
+                    .build());
             if (conv.getTitle() == null || conv.getTitle().isBlank()) {
                 conv.setTitle(userText.length() > 60 ? userText.substring(0, 60) + "…" : userText);
             }
             conversationRepository.save(conv);
-        } catch (RuntimeException e) {
-            permit.close();
-            throw e;
-        }
-        notifyShared(workspaceId, conv); // gli altri partecipanti vedono subito il messaggio utente
+        });
+    }
 
-        SseEmitter emitter = new SseEmitter(300_000L);
-        submit(permit, () -> runTurn(workspaceId, conv, ai, user, emitter));
-        return emitter;
+    /** Timestamp strettamente successivo a {@code prev} (l'ordine dei messaggi è per created_at). */
+    private static OffsetDateTime after(OffsetDateTime prev) {
+        OffsetDateTime now = OffsetDateTime.now();
+        if (prev == null || now.isAfter(prev.plusNanos(999))) return now;
+        return prev.plusNanos(1000); // risoluzione microsecondi di Postgres
     }
 
     public SseEmitter resumePending(UUID workspaceId, UUID conversationId, boolean confirm, User user) {
         AiGateway.Resolved ai = gateway.requireReady(workspaceId, user.getId());
         AiConversation conv = conversationService.getAccessible(workspaceId, conversationId, user);
         AiRateLimiter.Permit permit = gateway.acquire(ai);
-
-        SseEmitter emitter = new SseEmitter(300_000L);
-        submit(permit, () -> {
+        Turn turn = new Turn(new SseEmitter(300_000L), permit);
+        boolean restrictHidden = restrictHidden(workspaceId, conv, user);
+        submit(turn, () -> {
             try {
                 List<AiPendingAction> pending = pendingRepository
                         .findByConversationIdAndStatusOrderByCreatedAtAsc(conv.getId(), AiPendingActionStatus.PENDING);
+                int handled = 0;
                 for (AiPendingAction pa : pending) {
+                    if (confirm) turn.checkCancelled();
+                    // Transizione atomica: un'azione già annullata (es. da un nuovo messaggio) non si esegue più.
+                    AiPendingActionStatus to = confirm ? AiPendingActionStatus.CONFIRMED : AiPendingActionStatus.REJECTED;
+                    if (pendingRepository.transition(pa.getId(), AiPendingActionStatus.PENDING, to) != 1) continue;
+                    handled++;
                     String result;
                     if (confirm) {
-                        sendEvent(emitter, Map.of("type", "tool", "name", pa.getToolName()));
-                        result = toolRegistry.execute(pa.getToolName(), workspaceId, user, pa.getArguments());
+                        turn.send(Map.of("type", "tool", "name", pa.getToolName()));
+                        result = toolRegistry.execute(pa.getToolName(), workspaceId, user, pa.getArguments(), restrictHidden);
                     } else {
                         result = "Azione annullata dall'utente.";
                     }
                     saveMessage(conv.getId(), AiMessageRole.TOOL, result, null, null, pa.getToolCallId());
-                    pa.setStatus(confirm ? AiPendingActionStatus.CONFIRMED : AiPendingActionStatus.REJECTED);
-                    pendingRepository.save(pa);
                 }
-                runLoop(workspaceId, conv, ai, user, emitter);
-                emitter.complete();
+                if (handled == 0) {
+                    turn.permit.refund();
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            "Non ci sono azioni in attesa di conferma: sono già state gestite o annullate.");
+                }
+                runLoop(workspaceId, conv, ai, user, turn);
+                turn.complete();
             } catch (Exception e) {
-                sendError(emitter, e);
+                fail(turn, e);
             }
         });
-        return emitter;
+        return turn.emitter;
     }
 
     // ---- Loop ----
 
-    private void runTurn(UUID workspaceId, AiConversation conv, AiGateway.Resolved ai, User user, SseEmitter emitter) {
-        try {
-            runLoop(workspaceId, conv, ai, user, emitter);
-            emitter.complete();
-        } catch (Exception e) {
-            sendError(emitter, e);
-        }
+    private boolean restrictHidden(UUID workspaceId, AiConversation conv, User user) {
+        boolean isAdmin = workspaceService.getUserRole(workspaceId, user) == WorkspaceRole.ADMIN;
+        return !isAdmin || conv.getScope() == AiConversationScope.SHARED;
     }
 
-    private void runLoop(UUID workspaceId, AiConversation conv, AiGateway.Resolved ai, User user, SseEmitter emitter) {
+    private void runLoop(UUID workspaceId, AiConversation conv, AiGateway.Resolved ai, User user, Turn turn) {
         AiSettings settings = ai.settings();
+        turn.checkCancelled();
         // Compacting a inizio turno: se il contesto attivo supera la soglia, riassume i turni vecchi.
         memoryService.maybeCompact(conv, ai);
 
         boolean isAdmin = workspaceService.getUserRole(workspaceId, user) == WorkspaceRole.ADMIN;
+        // L'output dei tool è salvato nella conversazione: nelle chat condivise (o per chi non è admin)
+        // i membri nascosti non devono comparire.
+        boolean restrictHidden = !isAdmin || conv.getScope() == AiConversationScope.SHARED;
         JsonNode tools = toolRegistry.specs(settings.getAutonomy(), settings.getMemoryMode(), isAdmin);
         int maxIter = settings.getMaxToolIterations();
-        // System prompt congelato per tutto il turno: stabile per la cache e per il replay dei blocchi
-        // nativi (es. thinking Anthropic, validi solo con system/tools invariati).
+        // System prompt stabile (cacheabile) per tutto il turno e tra un turno e l'altro: data/ora e
+        // interlocutore viaggiano col messaggio utente, non qui.
         SystemPrompt system = buildSystem(settings, conv, user);
         Llm.Request base = new Llm.Request(ai.model(), system.stable(), system.volatilePart(), List.of(), tools,
                 settings.getTemperature(), settings.getMaxTokens());
         String binding = ai.client().binding(base);
+        String fallbackContext = buildTurnContext(conv, user);
 
         for (int i = 0; i < maxIter; i++) {
-            Llm.Request req = withMessages(base, buildMessages(conv, binding));
-            Llm.Result r = gateway.chat(ai, req, token -> sendEvent(emitter, Map.of("type", "token", "text", token)));
+            turn.checkCancelled();
+            Llm.Request req = withMessages(base, buildMessages(conv, binding, fallbackContext));
+            Llm.Result r = gateway.chat(ai, req, turn::token, turn.cancel);
+            turn.produced = true;
+            turn.checkCancelled();
 
-            if (r.stopReason() == Llm.StopReason.REFUSAL) {
-                finishWithNotice(workspaceId, conv, emitter, r.text(),
-                        "Mi dispiace, non posso aiutarti con questa richiesta.");
-                return;
-            }
-            if (r.toolCalls().isEmpty() || r.stopReason() == Llm.StopReason.MAX_TOKENS) {
-                // Con max_tokens l'input dei tool può essere troncato: non li eseguiamo.
-                String notice = r.stopReason() == Llm.StopReason.MAX_TOKENS
-                        ? "La risposta è stata interrotta perché ha raggiunto il limite di token configurato." : null;
-                if (notice != null) {
-                    finishWithNotice(workspaceId, conv, emitter, r.text(), notice);
+            switch (r.stopReason()) {
+                case REFUSAL -> {
+                    // Il testo parziale di un rifiuto va scartato: niente salvataggio né replay.
+                    turn.send(Map.of("type", "reset"));
+                    finishWithNotice(workspaceId, conv, turn, null, REFUSAL_NOTICE);
                     return;
                 }
-                if (r.text() != null && !r.text().isBlank()) {
-                    saveAssistant(conv.getId(), r.text(), null, r.nativeContent(), binding);
+                case INCOMPLETE -> {
+                    finishWithNotice(workspaceId, conv, turn, r.text(), INCOMPLETE_NOTICE);
+                    return;
                 }
-                sendEvent(emitter, Map.of("type", "done"));
-                notifyShared(workspaceId, conv);
-                return;
+                case MAX_TOKENS -> {
+                    // L'input dei tool può essere troncato: non li eseguiamo.
+                    finishWithNotice(workspaceId, conv, turn, r.text(), MAX_TOKENS_NOTICE);
+                    return;
+                }
+                case TOOL_USE -> { /* sotto */ }
+                default -> {
+                    if (r.text() != null && !r.text().isBlank()) {
+                        saveAssistant(conv.getId(), r.text(), null, r.nativeContent(), binding);
+                    }
+                    turn.send(Map.of("type", "done"));
+                    notifyShared(workspaceId, conv);
+                    return;
+                }
             }
 
             // Messaggio assistant con le chiamate tool (+ contenuto nativo per il replay).
@@ -234,6 +376,12 @@ public class AiChatService {
             boolean paused = false;
             List<Map<String, Object>> pendingForEvent = new ArrayList<>();
             for (ToolCall tc : r.toolCalls()) {
+                String args = tc.arguments() == null || tc.arguments().isBlank() ? "{}" : tc.arguments();
+                if (args.startsWith(Llm.INVALID_JSON_PREFIX)) {
+                    // Input non valido: nessuna esecuzione, il modello riceve un tool_result di errore.
+                    saveMessage(conv.getId(), AiMessageRole.TOOL, args, null, null, tc.id());
+                    continue;
+                }
                 boolean needsConfirm = toolRegistry.isDestructive(tc.name())
                         && settings.getAutonomy() == AiAutonomy.CONFIRM_DESTRUCTIVE;
                 if (needsConfirm) {
@@ -241,19 +389,20 @@ public class AiChatService {
                             .conversationId(conv.getId())
                             .toolCallId(tc.id())
                             .toolName(tc.name())
-                            .arguments(tc.arguments() == null || tc.arguments().isBlank() ? "{}" : tc.arguments())
+                            .arguments(args)
                             .status(AiPendingActionStatus.PENDING)
                             .build();
                     pendingRepository.save(pa);
                     Map<String, Object> info = new LinkedHashMap<>();
                     info.put("id", pa.getId());
                     info.put("tool", tc.name());
-                    info.put("summary", toolRegistry.describe(tc.name(), tc.arguments()));
+                    info.put("summary", toolRegistry.describe(tc.name(), args));
                     pendingForEvent.add(info);
                     paused = true;
                 } else {
-                    sendEvent(emitter, Map.of("type", "tool", "name", tc.name()));
-                    String result = toolRegistry.execute(tc.name(), workspaceId, user, tc.arguments());
+                    turn.checkCancelled();
+                    turn.send(Map.of("type", "tool", "name", tc.name()));
+                    String result = toolRegistry.execute(tc.name(), workspaceId, user, args, restrictHidden);
                     saveMessage(conv.getId(), AiMessageRole.TOOL, result, null, null, tc.id());
                 }
             }
@@ -262,7 +411,7 @@ public class AiChatService {
                 Map<String, Object> ev = new LinkedHashMap<>();
                 ev.put("type", "confirm");
                 ev.put("actions", pendingForEvent);
-                sendEvent(emitter, ev);
+                turn.send(ev);
                 notifyShared(workspaceId, conv);
                 return; // turno sospeso in attesa di conferma
             }
@@ -271,23 +420,30 @@ public class AiChatService {
 
         // Limite di passi raggiunto: forza una conclusione testuale senza nuove chiamate tool
         // (i tool restano dichiarati perché la cronologia contiene blocchi tool_use).
+        turn.checkCancelled();
         Llm.Request last = new Llm.Request(ai.model(), system.stable(), system.volatilePart(),
-                buildMessages(conv, binding), tools, settings.getTemperature(), settings.getMaxTokens(), true);
-        Llm.Result r = gateway.chat(ai, last, token -> sendEvent(emitter, Map.of("type", "token", "text", token)));
+                buildMessages(conv, binding, fallbackContext), tools, settings.getTemperature(), settings.getMaxTokens(), true);
+        Llm.Result r = gateway.chat(ai, last, turn::token, turn.cancel);
+        turn.checkCancelled();
+        if (r.stopReason() == Llm.StopReason.REFUSAL) {
+            turn.send(Map.of("type", "reset"));
+            finishWithNotice(workspaceId, conv, turn, null, REFUSAL_NOTICE);
+            return;
+        }
         String content = (r.text() == null || r.text().isBlank())
                 ? "Ho raggiunto il limite di passi consentiti per questa richiesta." : r.text();
         saveAssistant(conv.getId(), content, null, null, null);
-        sendEvent(emitter, Map.of("type", "done"));
+        turn.send(Map.of("type", "done"));
         notifyShared(workspaceId, conv);
     }
 
-    /** Chiude il turno salvando il testo parziale + un avviso (rifiuto del modello, limite token). */
-    private void finishWithNotice(UUID workspaceId, AiConversation conv, SseEmitter emitter, String partial, String notice) {
+    /** Chiude il turno salvando l'eventuale testo parziale + un avviso (rifiuto, limite token, stream interrotto). */
+    private void finishWithNotice(UUID workspaceId, AiConversation conv, Turn turn, String partial, String notice) {
         String text = (partial == null || partial.isBlank()) ? notice : partial.stripTrailing() + "\n\n_" + notice + "_";
-        if (partial == null || partial.isBlank()) sendEvent(emitter, Map.of("type", "token", "text", notice));
-        else sendEvent(emitter, Map.of("type", "token", "text", "\n\n_" + notice + "_"));
+        if (partial == null || partial.isBlank()) turn.send(Map.of("type", "token", "text", notice));
+        else turn.send(Map.of("type", "token", "text", "\n\n_" + notice + "_"));
         saveAssistant(conv.getId(), text, null, null, null);
-        sendEvent(emitter, Map.of("type", "done"));
+        turn.send(Map.of("type", "done"));
         notifyShared(workspaceId, conv);
     }
 
@@ -327,7 +483,17 @@ public class AiChatService {
             system.append("MEMORIA DEL WORKSPACE:\n").append(settings.getMemoryMd().trim()).append("\n\n");
         }
 
-        // ---- Parte variabile (dopo il breakpoint di cache) ----
+        // Parte che cambia solo al compacting (dopo il breakpoint di cache del blocco stabile).
+        String summary = conv.getSummary() != null && !conv.getSummary().isBlank()
+                ? "RIASSUNTO DELLA CONVERSAZIONE PRECEDENTE:\n" + conv.getSummary().trim() : "";
+        return new SystemPrompt(system.toString().trim(), summary);
+    }
+
+    /**
+     * Contesto del turno (data/ora, interlocutore), allegato al messaggio utente invece che al system
+     * prompt: un orario nel system cambierebbe a ogni turno invalidando la cache di tutta la conversazione.
+     */
+    private String buildTurnContext(AiConversation conv, User user) {
         StringBuilder vol = new StringBuilder();
         // Contesto temporale: senza questo l'agente non sa che giorno è e sbaglia "oggi"/"domani"
         // (es. crea eventi su date errate). Fuso fisso Europe/Rome.
@@ -338,7 +504,7 @@ public class AiChatService {
                 .append(" (fuso Europe/Rome). Interpreta 'oggi', 'domani' ecc. rispetto a questa data. ")
                 .append("Gli EVENTI del calendario sono a GIORNATA INTERA: per crearli/modificarli basta la DATA in ")
                 .append("startDate nel formato YYYY-MM-DD (es. ").append(now.toLocalDate())
-                .append("), NON chiedere né indicare l'ora. Per le scadenze dei task usa endDate (YYYY-MM-DD).\n\n");
+                .append("), NON chiedere né indicare l'ora. Per le scadenze dei task usa endDate (YYYY-MM-DD).\n");
 
         // Chi sta scrivendo: utile soprattutto nelle chat condivise dove scrivono più persone.
         boolean shared = conv.getScope() == AiConversationScope.SHARED;
@@ -350,20 +516,33 @@ public class AiChatService {
                     + "etichettati con [Nome] per indicare chi li ha scritti; in tal caso 'me' si riferisce "
                     + "all'autore del messaggio corrente.");
         }
-        vol.append("\n\n");
-        if (conv.getSummary() != null && !conv.getSummary().isBlank()) {
-            vol.append("RIASSUNTO DELLA CONVERSAZIONE PRECEDENTE:\n").append(conv.getSummary().trim()).append("\n");
+        return vol.toString().trim();
+    }
+
+    private String contextJson(String ctx) {
+        if (ctx == null || ctx.isBlank()) return null;
+        try { return objectMapper.writeValueAsString(Map.of("ctx", ctx)); }
+        catch (Exception e) { return null; }
+    }
+
+    private String contextOf(AiMessage m) {
+        String json = m.getProviderContent();
+        if (json == null || json.isBlank()) return null;
+        try {
+            JsonNode n = objectMapper.readTree(json);
+            String ctx = n.path("ctx").asText(null);
+            return ctx == null || ctx.isBlank() ? null : ctx;
+        } catch (Exception e) {
+            return null;
         }
-        return new SystemPrompt(system.toString().trim(), vol.toString().trim());
     }
 
     /**
      * Cronologia attiva in formato normalizzato. Il contenuto nativo del provider (es. blocchi thinking)
-     * viene allegato solo agli ultimi messaggi assistant del turno corrente prodotti con lo stesso
-     * {@code binding} (stesso modello/system/tools): i blocchi precedenti vengono omessi "dalla testa",
-     * come richiesto dal protocollo, e sostituiti dalla forma testo + tool call.
+     * viene allegato ai messaggi assistant prodotti con lo stesso {@code binding} (suffisso contiguo): i
+     * blocchi precedenti vengono omessi "dalla testa" e sostituiti dalla forma testo + tool call.
      */
-    private List<Llm.Message> buildMessages(AiConversation conv, String binding) {
+    private List<Llm.Message> buildMessages(AiConversation conv, String binding, String fallbackContext) {
         boolean shared = conv.getScope() == AiConversationScope.SHARED;
         List<AiMessage> history = messageRepository.findByConversationIdAndArchivedFalseOrderByCreatedAtAsc(conv.getId());
 
@@ -375,21 +554,26 @@ public class AiChatService {
             userRepository.findAllById(ids).forEach(u -> authorNames.put(u.getId(), u.getDisplayName()));
         }
 
-        // Quali assistant possono usare il contenuto nativo: suffisso contiguo dopo l'ultimo USER.
+        // Quali assistant possono usare il contenuto nativo: il suffisso più lungo di messaggi assistant
+        // prodotti con lo stesso binding (stesso modello/system/tools). La cronologia resta append-only tra
+        // un turno e l'altro (prefisso stabile per la cache, thinking preservato); i blocchi con binding
+        // diverso vengono omessi "dalla testa". Gli assistant senza contenuto nativo (avvisi) sono neutri.
         Set<UUID> nativeOk = new HashSet<>();
         if (binding != null) {
-            int lastUser = -1;
-            for (int i = 0; i < history.size(); i++) if (history.get(i).getRole() == AiMessageRole.USER) lastUser = i;
-            for (int i = history.size() - 1; i > lastUser; i--) {
+            for (int i = history.size() - 1; i >= 0; i--) {
                 AiMessage m = history.get(i);
-                if (m.getRole() != AiMessageRole.ASSISTANT) continue;
-                if (binding.equals(m.getProviderBinding()) && m.getProviderContent() != null) nativeOk.add(m.getId());
+                if (m.getRole() != AiMessageRole.ASSISTANT || m.getProviderContent() == null) continue;
+                if (binding.equals(m.getProviderBinding())) nativeOk.add(m.getId());
                 else break;
             }
         }
 
+        int lastUserIdx = -1;
+        for (int i = 0; i < history.size(); i++) if (history.get(i).getRole() == AiMessageRole.USER) lastUserIdx = i;
+
         List<Llm.Message> out = new ArrayList<>();
-        for (AiMessage m : history) {
+        for (int i = 0; i < history.size(); i++) {
+            AiMessage m = history.get(i);
             switch (m.getRole()) {
                 case USER -> {
                     if (notBlank(m.getContent())) {
@@ -398,7 +582,11 @@ public class AiChatService {
                             String author = authorNames.getOrDefault(m.getAuthorUserId(), "Utente");
                             text = "[" + author + "] " + text;
                         }
-                        out.add(Llm.Message.user(text));
+                        // Contesto salvato con il messaggio (stessi byte a ogni richiesta); per messaggi
+                        // precedenti a questa funzione solo l'ultimo riceve il contesto corrente.
+                        String ctx = contextOf(m);
+                        if (ctx == null && i == lastUserIdx) ctx = fallbackContext;
+                        out.add(Llm.Message.user(text, ctx));
                     }
                 }
                 case ASSISTANT -> {
@@ -470,15 +658,14 @@ public class AiChatService {
         return Math.max(1, s.length() / 4);
     }
 
-    private void sendEvent(SseEmitter emitter, Object payload) {
-        try {
-            emitter.send(SseEmitter.event().data(payload));
-        } catch (Exception ignored) {
-            // client disconnesso
+    /** Chiusura del turno in errore: annullamento silenzioso; quota restituita se il provider non ha prodotto nulla. */
+    private void fail(Turn turn, Exception e) {
+        if (e instanceof Llm.CancelledException || turn.cancel.isCancelled()) {
+            log.debug("Turno AI annullato: {}", e.getMessage());
+            turn.complete();
+            return;
         }
-    }
-
-    private void sendError(SseEmitter emitter, Exception e) {
+        if (!turn.produced) turn.permit.refund();
         String msg;
         if (e instanceof ResponseStatusException rse && rse.getReason() != null) msg = rse.getReason();
         else msg = e.getMessage() != null ? e.getMessage() : "Errore durante la generazione";
@@ -487,7 +674,7 @@ public class AiChatService {
         ev.put("type", "error");
         ev.put("message", msg);
         if (e instanceof ResponseStatusException rse) ev.put("status", rse.getStatusCode().value());
-        sendEvent(emitter, ev);
-        emitter.complete();
+        turn.send(ev);
+        turn.complete();
     }
 }
