@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useVoiceActions, useVoiceStatus } from '@/contexts/VoiceSession'
-import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { cn } from '@/lib/utils'
 import { Minus, Monitor, Maximize2, Minimize2 } from 'lucide-react'
 
@@ -40,33 +40,37 @@ export function ScreenShareOverlay() {
 
   return (
     <div
+      role="dialog"
+      aria-label={title}
       className={cn(
-        'fixed z-40 flex flex-col overflow-hidden border bg-black shadow-2xl',
+        // Il video resta su fondo nero in entrambi i temi (letterbox).
+        'fixed z-overlay flex flex-col overflow-hidden border bg-black shadow-lg',
         maximized
           // Riempie l'area principale: su mobile a tutta larghezza, su desktop parte dopo la
           // sidebar (w-60 = 15rem) fino ai bordi.
-          ? 'left-0 md:left-60 right-0 top-0 bottom-0'
+          ? 'bottom-0 left-0 right-0 top-0 md:left-60'
           // PiP: riquadro flottante ridimensionabile in basso a destra.
-          : 'bottom-3 right-3 w-[min(40vw,560px)] min-w-[280px] resize rounded-xl',
+          : 'bottom-3 right-3 w-[min(40vw,560px)] min-w-72 resize rounded-lg',
       )}
     >
-      <div className="flex items-center gap-2 bg-card px-3 py-1.5 border-b">
-        <Monitor className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <p className="min-w-0 flex-1 truncate text-xs font-medium">{title}</p>
-        <Button
-          size="icon" variant="ghost" className="h-6 w-6"
+      <div className="flex items-center gap-2 border-b bg-elevated px-2 py-1">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <Monitor className="h-3.5 w-3.5" />
+        </span>
+        <p className="min-w-0 flex-1 truncate text-caption font-medium">{title}</p>
+        {isLocal && <span className="hidden shrink-0 rounded-full bg-destructive-subtle px-2 text-2xs font-semibold text-destructive sm:inline">LIVE</span>}
+        <IconButton
+          size="xs"
+          label={maximized ? 'Riduci a riquadro' : 'Ingrandisci'}
+          icon={maximized ? <Minimize2 /> : <Maximize2 />}
           onClick={() => setMaximized(m => !m)}
-          title={maximized ? 'Riduci a riquadro' : 'Ingrandisci'}
-        >
-          {maximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-        </Button>
-        <Button
-          size="icon" variant="ghost" className="h-6 w-6"
+        />
+        <IconButton
+          size="xs"
+          label="Nascondi schermo condiviso"
+          icon={<Minus />}
           onClick={() => setScreenViewerOpen(false)}
-          title="Chiudi"
-        >
-          <Minus className="h-4 w-4" />
-        </Button>
+        />
       </div>
       <video
         ref={videoRef}
@@ -75,7 +79,7 @@ export function ScreenShareOverlay() {
         muted
         className={cn(
           'bg-black object-contain',
-          maximized ? 'flex-1 min-h-0 w-full' : 'w-full aspect-video',
+          maximized ? 'min-h-0 w-full flex-1' : 'aspect-video w-full',
         )}
       />
     </div>
