@@ -149,10 +149,9 @@ public class ElementService {
         // Se il nuovo elemento finisce sotto una storia/epica già contrassegnata come COMPLETATO,
         // quel ramo non è più davvero concluso: riattiviamo gli antenati completati (IN_CORSO) così
         // non restano "completati" pur avendo lavoro nuovo aperto sotto di sé.
-        reactivateCompletedAncestors(parent, workspaceId);
+        reactivateCompletedAncestors(parent, workspaceId, user);
 
-        notificationService.notifyAssigned(element,
-                element.getAssignees().stream().map(User::getId).toList(), user);
+        notificationService.onElementChanged(element, null, Set.of(), user);
 
         ElementResponse response = ElementResponse.from(element);
         eventPublisher.publish(workspaceId, "ELEMENT_CREATED", response);
@@ -191,13 +190,17 @@ public class ElementService {
 
     // Risale la catena dei padri e riporta a IN_CORSO ogni antenato che risulta COMPLETATO,
     // azzerando completedAt. Pubblica un ELEMENT_UPDATED per ciascuno così la UI si aggiorna.
-    private void reactivateCompletedAncestors(Element parent, UUID workspaceId) {
+    private void reactivateCompletedAncestors(Element parent, UUID workspaceId, User actor) {
         Element ancestor = parent;
         while (ancestor != null) {
             if (ancestor.getStatus() == ElementStatus.COMPLETATO) {
+                Set<UUID> assignees = new HashSet<>();
+                for (User a : ancestor.getAssignees()) assignees.add(a.getId());
                 ancestor.setStatus(ElementStatus.IN_CORSO);
                 ancestor.setCompletedAt(null);
                 ancestor = elementRepository.save(ancestor);
+                // Anche il cambio di stato "a cascata" passa dall'hook delle notifiche.
+                notificationService.onElementChanged(ancestor, ElementStatus.COMPLETATO, assignees, actor);
                 Integer progress = ancestor.getType() == ElementType.EPICA ? calcProgress(ancestor.getId()) : null;
                 eventPublisher.publish(workspaceId, "ELEMENT_UPDATED", ElementResponse.from(ancestor, progress));
             }
@@ -263,16 +266,8 @@ public class ElementService {
 
         element = elementRepository.save(element);
 
-        List<UUID> added = new ArrayList<>();
-        List<UUID> kept = new ArrayList<>();
-        for (User a : element.getAssignees()) {
-            (previousAssignees.contains(a.getId()) ? kept : added).add(a.getId());
-        }
-        notificationService.notifyAssigned(element, added, user);
-        if (element.getStatus() != previousStatus) {
-            // I nuovi assegnatari ricevono già ASSIGNED: il cambio di stato va a quelli già presenti.
-            notificationService.notifyStatusChanged(element, previousStatus, kept, user);
-        }
+        // Hook unico: ASSIGNED ai nuovi assegnatari, ELEMENT_STATUS a quelli già presenti.
+        notificationService.onElementChanged(element, previousStatus, previousAssignees, user);
 
         Integer progress = element.getType() == ElementType.EPICA ? calcProgress(elementId) : null;
         ElementResponse response = ElementResponse.from(element, progress);

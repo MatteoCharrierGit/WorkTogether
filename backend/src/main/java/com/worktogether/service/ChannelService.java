@@ -236,8 +236,11 @@ public class ChannelService {
     public void notifyTyping(UUID workspaceId, UUID channelId, User user) {
         Channel channel = loadChannel(workspaceId, channelId);
         assertChannelAccess(channel, user);
-        // Modalità invisibile: nessun indicatore "sta scrivendo" per gli admin nascosti.
-        if (hiddenMembers.isHidden(workspaceId, user.getId())) return;
+        // Modalità invisibile: nessun indicatore "sta scrivendo" per gli admin nascosti, ma SOLO dove
+        // sono nascosti (stanze e chat di sprint). In DM e gruppi l'admin partecipa esplicitamente ed
+        // è visibile agli altri partecipanti, quindi l'indicatore resta.
+        boolean conversation = channel.getType() == ChannelType.DM || channel.getType() == ChannelType.GROUP;
+        if (!conversation && hiddenMembers.isHidden(workspaceId, user.getId())) return;
         eventPublisher.publish(workspaceId, "TYPING", Map.of(
                 "channelId", channelId.toString(),
                 "userId", user.getId().toString(),

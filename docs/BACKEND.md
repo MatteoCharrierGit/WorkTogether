@@ -215,3 +215,37 @@ In assenza di JDK/Maven locale, è possibile compilare in un container usa-e-get
 - **Migration V19** (`V19__perf_indexes.sql`): indici su `element_assignees(user_id)`,
   `element_tags(tag_id)`, `messages(author_id)`, `channels(sprint_id)` (parziale),
   `ai_pending_actions(conversation_id, status)`, `verification_codes(code_hash)`.
+
+## Notifiche in-app, dashboard e modalità invisibile (review)
+
+- **Hook unico per le notifiche degli elementi**: `NotificationService.onElementChanged(element,
+  statoPrecedente, assegnatariPrecedenti, attore)`. Tutti i percorsi che cambiano stato o assegnatari
+  passano da `ElementService` (form/dettaglio, drag Kanban e board della sprint = `PUT …/elements/{id}`,
+  tool di Akari `create_element`/`update_element`, API key, riattivazione automatica degli antenati
+  completati) e quindi dall'hook: `ASSIGNED` ai nuovi assegnatari, `ELEMENT_STATUS` a quelli già
+  presenti. L'attore non viene mai notificato; per le azioni di Akari l'attore è l'utente che ha
+  eseguito l'agente. La chiusura della sprint sposta i task incompleti cambiando solo `sprint_id`
+  (nessun cambio di stato ⇒ nessuna `ELEMENT_STATUS`, solo `SPRINT_CLOSED`).
+- **Attore nelle notifiche (`actorName`/`actorAvatar`)**: è mostrato sempre, anche se l'attore è un
+  admin in modalità invisibile. È voluto: le azioni compiute (assegnare un task, spostarlo…) sono
+  attribuite a chi le fa; l'invisibilità nasconde solo presenza, liste membri e "sta scrivendo".
+- **Promemoria di scadenza** (`NotificationScheduler`, ogni ora): `runDueReminders` elabora ogni
+  workspace in una **transazione breve e indipendente** (`TransactionTemplate`); un errore viene
+  loggato e non annulla gli altri workspace. Per workspace: una `INSERT … SELECT` set-based per tipo
+  (assegnatari e preferenze nella stessa query, niente N+1). Deduplica **imposta dal DB** (migration
+  **V23**): colonna `notifications.reminder_day` + indice unico parziale `(user_id, element_id, type,
+  reminder_day) WHERE reminder_day IS NOT NULL`, inserimento con `ON CONFLICT DO NOTHING` ⇒ niente
+  doppioni anche con più istanze/scheduler concorrenti. `DUE_SOON`: un promemoria per giorno di
+  scadenza (Europe/Rome); `OVERDUE`: al massimo uno al giorno.
+- **Avanzamento epiche**: definizione unica = task nipoti (epica → storia → task) **esclusi gli
+  archiviati**, sia in `ElementRepository.epicProgressBy*` (elementi/roadmap/my-tasks) sia nella
+  dashboard.
+- **Dashboard, carico del team**: la CTE `MATERIALIZED` parte dai task aperti del workspace e solo
+  dopo legge `element_assignees` per PK (prima la LEFT JOIN partiva dalle assegnazioni dei membri in
+  tutti i workspace).
+- **Modalità invisibile**: `TYPING` soppresso per un admin nascosto solo in ROOM/SPRINT; in DM e
+  gruppi (dove partecipa esplicitamente) l'indicatore resta. Il toggle non pubblica più
+  `MEMBER_ADDED{visibilityChanged}` sul topic del workspace (rivelava ai non-admin il momento del
+  cambio): invia `MEMBERS_VISIBILITY_CHANGED {workspaceId}` sulla coda personale dei soli admin, che
+  invalidano `['members']`, `['channels']`, `['dashboard']`. I non-admin si riallineano al refetch
+  successivo; dagli "online" l'admin sparisce subito (rebroadcast della presenza).

@@ -90,9 +90,12 @@ public class WorkspaceService {
     /**
      * Attiva/disattiva la modalità invisibile per SE STESSI (solo ADMIN). Dopo il commit: cache
      * invalidata, presenza ridiffusa (l'admin sparisce/ricompare subito dagli "online") e un
-     * MEMBER_ADDED senza userId per far rifare a tutti le liste membri/canali (riuso dell'evento
-     * esistente: il frontend lo mappa già su ['members'] e ['channels']).
+     * MEMBERS_VISIBILITY_CHANGED solo sulle code personali degli ADMIN (che vedono la differenza
+     * nelle liste): un evento sul topic del workspace rivelerebbe ai non-admin il momento del toggle.
      */
+    /** Evento sulla coda personale degli admin: rifare liste membri/canali/dashboard del workspace. */
+    public static final String EVENT_MEMBERS_VISIBILITY_CHANGED = "MEMBERS_VISIBILITY_CHANGED";
+
     @Transactional
     public MemberResponse setHidden(UUID workspaceId, User requester, boolean hidden) {
         WorkspaceMember member = memberRepository.findByWorkspaceIdAndUserId(workspaceId, requester.getId())
@@ -106,7 +109,17 @@ public class WorkspaceService {
             hiddenMembers.evict(workspaceId);
             presenceService.rebroadcast(workspaceId);
         });
-        publishAfterCommit(workspaceId, "MEMBER_ADDED", Map.of("visibilityChanged", true));
+        // Il momento del toggle NON va rivelato ai non-admin: niente evento sul topic del workspace,
+        // il refresh di membri/canali va solo sulle code personali degli admin (anche le altre
+        // schede di chi ha cambiato modalità). I non-admin si riallineano al prossimo refetch;
+        // l'admin sparisce/ricompare subito solo dagli "online" (rebroadcast della presenza, che
+        // avviene comunque ad ogni heartbeat).
+        Map<String, Object> payload = Map.of("workspaceId", workspaceId.toString());
+        for (WorkspaceMember m : memberRepository.findByWorkspaceId(workspaceId)) {
+            if (m.getRole() == WorkspaceRole.ADMIN) {
+                eventPublisher.publishToUser(m.getUser().getId(), EVENT_MEMBERS_VISIBILITY_CHANGED, payload);
+            }
+        }
         return MemberResponse.from(member);
     }
 

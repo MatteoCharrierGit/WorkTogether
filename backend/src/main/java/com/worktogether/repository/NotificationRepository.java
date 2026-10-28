@@ -1,7 +1,6 @@
 package com.worktogether.repository;
 
 import com.worktogether.domain.entity.Notification;
-import com.worktogether.domain.enums.NotificationType;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -31,10 +30,6 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
     @Modifying
     @Query("UPDATE Notification n SET n.readAt = :now WHERE n.userId = :userId AND n.readAt IS NULL")
     int markAllRead(UUID userId, OffsetDateTime now);
-
-    // Deduplica dei promemoria: esiste già una notifica di questo tipo per elemento+utente dopo "since"?
-    boolean existsByElementIdAndUserIdAndTypeAndCreatedAtAfter(UUID elementId, UUID userId,
-                                                               NotificationType type, OffsetDateTime since);
 
     @Modifying
     @Query("DELETE FROM Notification n WHERE n.createdAt < :cutoff")

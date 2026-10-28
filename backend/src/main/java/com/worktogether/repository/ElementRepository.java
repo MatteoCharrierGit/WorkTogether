@@ -64,7 +64,8 @@ public interface ElementRepository extends JpaRepository<Element, UUID> {
 
     // Avanzamento epiche aggregato (una sola query invece di 2 COUNT per epica).
     // Ogni riga: [epicId (UUID), totale task (Number), task completati (Number)].
-    // Task = nipoti dell'epica (epica → storia → task).
+    // Task = nipoti dell'epica (epica → storia → task), ESCLUSI gli archiviati: stessa definizione
+    // dell'avanzamento epiche della dashboard (DashboardService), così roadmap/elementi/dashboard coincidono.
     @Query("""
         SELECT s.parent.id, COUNT(t),
                SUM(CASE WHEN t.status = com.worktogether.domain.enums.ElementStatus.COMPLETATO THEN 1 ELSE 0 END)
@@ -72,6 +73,7 @@ public interface ElementRepository extends JpaRepository<Element, UUID> {
         WHERE s.workspace.id = :workspaceId
           AND s.parent IS NOT NULL
           AND t.type = com.worktogether.domain.enums.ElementType.TASK
+          AND t.status <> com.worktogether.domain.enums.ElementStatus.ARCHIVIATO
         GROUP BY s.parent.id
     """)
     List<Object[]> epicProgressByWorkspace(UUID workspaceId);
@@ -82,6 +84,7 @@ public interface ElementRepository extends JpaRepository<Element, UUID> {
         FROM Element t JOIN t.parent s
         WHERE s.parent.id IN :epicIds
           AND t.type = com.worktogether.domain.enums.ElementType.TASK
+          AND t.status <> com.worktogether.domain.enums.ElementStatus.ARCHIVIATO
         GROUP BY s.parent.id
     """)
     List<Object[]> epicProgressByEpicIds(java.util.Collection<UUID> epicIds);

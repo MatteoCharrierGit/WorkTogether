@@ -124,7 +124,8 @@ public class DashboardService {
                 .map(sp -> activeSprint(sp, today))
                 .orElse(null);
 
-        // 4) Epiche: avanzamento (task nipoti epica → storia → task) ordinate per attività recente.
+        // 4) Epiche: avanzamento (task nipoti epica → storia → task, archiviati esclusi) ordinate per
+        //    attività recente. Stessa definizione di ElementRepository.epicProgressBy* (roadmap/elementi).
         List<EpicProgress> epics = jdbc.query("""
                 SELECT ep.id, ep.title, ep.status, ep.end_date,
                        COUNT(t.id) AS total,
@@ -163,17 +164,24 @@ public class DashboardService {
 
         // 6) Carico del team: task aperti per membro. Gli admin in modalità invisibile sono
         //    esclusi per chi non è admin (tranne sé stessi), come nella lista membri.
+        //    La CTE MATERIALIZED parte dai task aperti DEL workspace (idx_elements_type) e solo dopo
+        //    tocca element_assignees per PK (element_id, …): il planner non può più partire dalle
+        //    assegnazioni dei membri in tutti i workspace.
         p.addValue("seesHidden", role == WorkspaceRole.ADMIN);
         List<MemberLoad> workload = jdbc.query("""
+                WITH t AS MATERIALIZED (
+                    SELECT ea.user_id, e.id, e.status, e.end_date
+                    FROM elements e
+                    JOIN element_assignees ea ON ea.element_id = e.id
+                    WHERE e.workspace_id = :ws AND e.type = 'TASK' AND e.status IN ('DA_FARE','IN_CORSO')
+                )
                 SELECT u.id, u.display_name, u.avatar_version,
-                       COUNT(e.id) AS open,
-                       COUNT(e.id) FILTER (WHERE e.status = 'IN_CORSO') AS in_progress,
-                       COUNT(e.id) FILTER (WHERE e.end_date < :todayStart) AS overdue
+                       COUNT(t.id) AS open,
+                       COUNT(t.id) FILTER (WHERE t.status = 'IN_CORSO') AS in_progress,
+                       COUNT(t.id) FILTER (WHERE t.end_date < :todayStart) AS overdue
                 FROM workspace_members m
                 JOIN users u ON u.id = m.user_id
-                LEFT JOIN element_assignees ea ON ea.user_id = m.user_id
-                LEFT JOIN elements e ON e.id = ea.element_id AND e.workspace_id = :ws
-                     AND e.type = 'TASK' AND e.status IN ('DA_FARE','IN_CORSO')
+                LEFT JOIN t ON t.user_id = m.user_id
                 WHERE m.workspace_id = :ws
                   AND (:seesHidden OR m.hidden = FALSE OR m.user_id = :me)
                 GROUP BY u.id, u.display_name, u.avatar_version

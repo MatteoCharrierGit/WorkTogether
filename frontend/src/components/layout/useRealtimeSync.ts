@@ -191,6 +191,13 @@ export function useRealtimeSync({ workspaceId, meId, onMessage }: Options) {
       applyRemoteRead(queryClient, ev.payload || {})
       return
     }
+    // Modalità invisibile attivata/disattivata da un admin: arriva SOLO agli admin (il topic del
+    // workspace rivelerebbe ai non-admin il momento del toggle). Rifà liste membri/canali/carico.
+    if ((ev.type as string) === 'MEMBERS_VISIBILITY_CHANGED') {
+      const wsId = ev.payload?.workspaceId as string | undefined
+      if (wsId) batcherRef.current?.add([['members', wsId], ['channels', wsId], ['dashboard', wsId]])
+      return
+    }
     if (ev.type !== 'CHANNEL_READ') return
     const { workspaceId: wsId, channelId } = ev.payload || {}
     if (!wsId || !channelId) return
