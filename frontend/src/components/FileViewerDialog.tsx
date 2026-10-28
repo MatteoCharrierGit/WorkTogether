@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { driveApi } from '@/lib/api'
 import { DriveFile, LockResult } from '@/types'
 import { markdownToHtml, fileKind, FileKind } from '@/lib/markdown'
@@ -6,10 +6,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button'
 import { toast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
-import { CodeEditor } from '@/components/editor/CodeEditor'
 import { detectLang, LANGUAGES, LangId } from '@/components/editor/languages'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
-import { Save, Eye, Pencil, Lock, Download, WrapText } from 'lucide-react'
+import { Save, Eye, Pencil, Lock, Download, WrapText, Loader2 } from 'lucide-react'
+
+// CodeMirror è pesante: caricato solo quando si apre un file di testo/markdown.
+const CodeEditor = lazy(() => import('@/components/editor/CodeEditor'))
 
 interface Props {
   open: boolean
@@ -192,13 +194,21 @@ export function FileViewerDialog({ open, onClose, wsId, file, canEdit, resolveNa
               dangerouslySetInnerHTML={{ __html: markdownToHtml(content) }}
             />
           ) : kind === 'text' || kind === 'markdown' ? (
-            <CodeEditor
-              value={editable ? edited : content}
-              onChange={editable ? setEdited : undefined}
-              language={lang}
-              wrap={wrap}
-              readOnly={!editable}
-            />
+            <Suspense
+              fallback={
+                <div className="flex h-full items-center justify-center text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                </div>
+              }
+            >
+              <CodeEditor
+                value={editable ? edited : content}
+                onChange={editable ? setEdited : undefined}
+                language={lang}
+                wrap={wrap}
+                readOnly={!editable}
+              />
+            </Suspense>
           ) : (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-center text-sm text-muted-foreground p-6">
               <p>Anteprima non disponibile per questo tipo di file.</p>

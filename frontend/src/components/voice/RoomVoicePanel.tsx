@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
-  useVoiceSession, SCREEN_RESOLUTIONS, SCREEN_FPS_OPTIONS, describeScreenSettings,
+  useVoiceActions, useVoiceStatus, useVoiceParticipants, preloadVoice, SCREEN_RESOLUTIONS, SCREEN_FPS_OPTIONS, describeScreenSettings,
 } from '@/contexts/VoiceSession'
 import { Button } from '@/components/ui/button'
 import { UserAvatar } from '@/components/UserAvatar'
@@ -26,8 +26,11 @@ export function RoomVoicePanel({
   channelName: string
   screenShareEnabled: boolean
 }) {
-  const s = useVoiceSession()
+  // Stato stabile + azioni; la lista partecipanti (volatile) è in <RoomParticipants />.
+  const s = { ...useVoiceStatus(), ...useVoiceActions() }
   const [busy, setBusy] = useState(false)
+  // Scarica in anticipo livekit-client quando si apre una stanza vocale.
+  useEffect(() => { preloadVoice() }, [])
   const here = s.status === 'connected' && s.channelId === channelId
   const connectingHere = s.status === 'connecting' && s.channelId === channelId
 
@@ -61,25 +64,7 @@ export function RoomVoicePanel({
           <Loader2 className="h-3 w-3 animate-spin" /> Riconnessione in corso…
         </p>
       )}
-      <div className="flex flex-wrap items-center gap-2">
-        {s.participants.map(p => (
-          <div
-            key={p.identity}
-            className={cn(
-              'flex items-center gap-1.5 rounded-full border bg-background pl-1 pr-2.5 py-1 text-xs transition-shadow',
-              p.speaking && 'ring-2 ring-green-500',
-            )}
-            title={p.isLocal ? `${p.name} (tu)` : p.name}
-          >
-            <UserAvatar name={p.name} avatar={p.avatar} className="h-6 w-6" />
-            <span className="font-medium max-w-[120px] truncate">{p.isLocal ? 'Tu' : p.name}</span>
-            {p.isScreenSharing && <MonitorUp className="h-3.5 w-3.5 text-amber-600" />}
-            {p.muted
-              ? <MicOff className="h-3.5 w-3.5 text-muted-foreground" />
-              : <Mic className={cn('h-3.5 w-3.5', p.speaking ? 'text-green-600' : 'text-muted-foreground')} />}
-          </div>
-        ))}
-      </div>
+      <RoomParticipants />
 
       <div className="flex items-center gap-2">
         <Button size="sm" variant={s.muted ? 'destructive' : 'secondary'} onClick={s.toggleMute}>
@@ -135,6 +120,32 @@ export function RoomVoicePanel({
           <PhoneOff className="h-4 w-4 mr-1.5" /> Esci
         </Button>
       </div>
+    </div>
+  )
+}
+
+/** Partecipanti della stanza con indicatore "sta parlando" (si aggiorna a ogni cambio speaker). */
+function RoomParticipants() {
+  const { participants } = useVoiceParticipants()
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {participants.map(p => (
+        <div
+          key={p.identity}
+          className={cn(
+            'flex items-center gap-1.5 rounded-full border bg-background pl-1 pr-2.5 py-1 text-xs transition-shadow',
+            p.speaking && 'ring-2 ring-green-500',
+          )}
+          title={p.isLocal ? `${p.name} (tu)` : p.name}
+        >
+          <UserAvatar name={p.name} avatar={p.avatar} className="h-6 w-6" />
+          <span className="font-medium max-w-[120px] truncate">{p.isLocal ? 'Tu' : p.name}</span>
+          {p.isScreenSharing && <MonitorUp className="h-3.5 w-3.5 text-amber-600" />}
+          {p.muted
+            ? <MicOff className="h-3.5 w-3.5 text-muted-foreground" />
+            : <Mic className={cn('h-3.5 w-3.5', p.speaking ? 'text-green-600' : 'text-muted-foreground')} />}
+        </div>
+      ))}
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useVoiceSession } from '@/contexts/VoiceSession'
+import { useVoiceActions, useVoiceStatus } from '@/contexts/VoiceSession'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { Minus, Monitor, Maximize2, Minimize2 } from 'lucide-react'
@@ -12,7 +12,9 @@ import { Minus, Monitor, Maximize2, Minimize2 } from 'lucide-react'
  * tra i cambi pagina.
  */
 export function ScreenShareOverlay() {
-  const s = useVoiceSession()
+  // Niente lista partecipanti: l'overlay non deve ri-renderizzarsi a ogni cambio di speaker.
+  const s = useVoiceStatus()
+  const { attachScreen, setScreenViewerOpen } = useVoiceActions()
   const videoRef = useRef<HTMLVideoElement>(null)
   // Apertura predefinita: grande. L'utente può ridurre a PiP e tornare grande.
   const [maximized, setMaximized] = useState(true)
@@ -21,9 +23,9 @@ export function ScreenShareOverlay() {
   // L'elemento <video> resta lo stesso al cambio di dimensione, quindi non serve riattaccare.
   useEffect(() => {
     if (s.activeScreen && s.screenViewerOpen && videoRef.current) {
-      s.attachScreen(videoRef.current)
+      attachScreen(videoRef.current)
     }
-  }, [s.activeScreen?.sid, s.screenViewerOpen, s])
+  }, [s.activeScreen, s.screenViewerOpen, attachScreen])
 
   // Ogni volta che si apre una nuova condivisione, riparte in grande.
   useEffect(() => {
@@ -32,7 +34,8 @@ export function ScreenShareOverlay() {
 
   if (!s.activeScreen || !s.screenViewerOpen) return null
 
-  const isLocal = s.activeScreen.identity === s.participants.find(p => p.isLocal)?.identity
+  // activeScreen è il mio schermo esattamente quando sto condividendo (vedi sync() nel contesto).
+  const isLocal = s.isSharing
   const title = isLocal ? 'Stai condividendo il tuo schermo' : `${s.activeScreen.name} sta condividendo`
 
   return (
@@ -59,7 +62,7 @@ export function ScreenShareOverlay() {
         </Button>
         <Button
           size="icon" variant="ghost" className="h-6 w-6"
-          onClick={() => s.setScreenViewerOpen(false)}
+          onClick={() => setScreenViewerOpen(false)}
           title="Chiudi"
         >
           <Minus className="h-4 w-4" />

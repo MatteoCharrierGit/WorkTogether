@@ -1,23 +1,7 @@
 import type { Extension } from '@codemirror/state'
-import { StreamLanguage } from '@codemirror/language'
-import { javascript } from '@codemirror/lang-javascript'
-import { python } from '@codemirror/lang-python'
-import { java } from '@codemirror/lang-java'
-import { html } from '@codemirror/lang-html'
-import { css } from '@codemirror/lang-css'
-import { json } from '@codemirror/lang-json'
-import { markdown } from '@codemirror/lang-markdown'
-import { xml } from '@codemirror/lang-xml'
-import { sql } from '@codemirror/lang-sql'
-import { rust } from '@codemirror/lang-rust'
-import { cpp } from '@codemirror/lang-cpp'
-import { go } from '@codemirror/lang-go'
-import { php } from '@codemirror/lang-php'
-import { yaml } from '@codemirror/legacy-modes/mode/yaml'
-import { shell } from '@codemirror/legacy-modes/mode/shell'
-import { ruby } from '@codemirror/legacy-modes/mode/ruby'
-import { toml } from '@codemirror/legacy-modes/mode/toml'
-import { properties } from '@codemirror/legacy-modes/mode/properties'
+
+// Nessun import statico dei pacchetti @codemirror/lang-*: ogni linguaggio è caricato on-demand
+// (import dinamico → chunk separato) solo quando si apre un file di quel tipo.
 
 export type LangId =
   | 'plaintext' | 'javascript' | 'jsx' | 'typescript' | 'tsx' | 'python'
@@ -54,32 +38,52 @@ export const LANG_LABELS: Record<LangId, string> = Object.fromEntries(
   LANGUAGES.map(l => [l.id, l.label])
 ) as Record<LangId, string>
 
-// Restituisce l'estensione CodeMirror per il syntax highlighting del linguaggio.
-export function langExtension(id: LangId): Extension | null {
-  switch (id) {
-    case 'javascript': return javascript()
-    case 'jsx': return javascript({ jsx: true })
-    case 'typescript': return javascript({ typescript: true })
-    case 'tsx': return javascript({ jsx: true, typescript: true })
-    case 'python': return python()
-    case 'java': return java()
-    case 'html': return html()
-    case 'css': return css()
-    case 'json': return json()
-    case 'markdown': return markdown()
-    case 'xml': return xml()
-    case 'sql': return sql()
-    case 'rust': return rust()
-    case 'cpp': return cpp()
-    case 'go': return go()
-    case 'php': return php()
-    case 'yaml': return StreamLanguage.define(yaml)
-    case 'shell': return StreamLanguage.define(shell)
-    case 'ruby': return StreamLanguage.define(ruby)
-    case 'toml': return StreamLanguage.define(toml)
-    case 'properties': return StreamLanguage.define(properties)
-    default: return null
+// Modalità "legacy" (stream parser) avvolte in StreamLanguage.
+async function legacy(load: () => Promise<any>, key: string): Promise<Extension> {
+  const [{ StreamLanguage }, mod] = await Promise.all([import('@codemirror/language'), load()])
+  return StreamLanguage.define(mod[key])
+}
+
+const loaders: Partial<Record<LangId, () => Promise<Extension>>> = {
+  javascript: () => import('@codemirror/lang-javascript').then(m => m.javascript()),
+  jsx: () => import('@codemirror/lang-javascript').then(m => m.javascript({ jsx: true })),
+  typescript: () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true })),
+  tsx: () => import('@codemirror/lang-javascript').then(m => m.javascript({ jsx: true, typescript: true })),
+  python: () => import('@codemirror/lang-python').then(m => m.python()),
+  java: () => import('@codemirror/lang-java').then(m => m.java()),
+  html: () => import('@codemirror/lang-html').then(m => m.html()),
+  css: () => import('@codemirror/lang-css').then(m => m.css()),
+  json: () => import('@codemirror/lang-json').then(m => m.json()),
+  markdown: () => import('@codemirror/lang-markdown').then(m => m.markdown()),
+  xml: () => import('@codemirror/lang-xml').then(m => m.xml()),
+  sql: () => import('@codemirror/lang-sql').then(m => m.sql()),
+  rust: () => import('@codemirror/lang-rust').then(m => m.rust()),
+  cpp: () => import('@codemirror/lang-cpp').then(m => m.cpp()),
+  go: () => import('@codemirror/lang-go').then(m => m.go()),
+  php: () => import('@codemirror/lang-php').then(m => m.php()),
+  yaml: () => legacy(() => import('@codemirror/legacy-modes/mode/yaml'), 'yaml'),
+  shell: () => legacy(() => import('@codemirror/legacy-modes/mode/shell'), 'shell'),
+  ruby: () => legacy(() => import('@codemirror/legacy-modes/mode/ruby'), 'ruby'),
+  toml: () => legacy(() => import('@codemirror/legacy-modes/mode/toml'), 'toml'),
+  properties: () => legacy(() => import('@codemirror/legacy-modes/mode/properties'), 'properties'),
+}
+
+// Le estensioni sono riusabili tra editor: una sola istanza per linguaggio.
+const cache = new Map<LangId, Promise<Extension | null>>()
+
+/**
+ * Carica (asincrono, con cache) l'estensione CodeMirror per il syntax highlighting del
+ * linguaggio. `null` per testo semplice o se il caricamento fallisce (resta testo semplice).
+ */
+export function loadLangExtension(id: LangId): Promise<Extension | null> {
+  const load = loaders[id]
+  if (!load) return Promise.resolve(null)
+  let p = cache.get(id)
+  if (!p) {
+    p = load().catch(() => { cache.delete(id); return null })
+    cache.set(id, p)
   }
+  return p
 }
 
 // Rileva il linguaggio dall'estensione del file (valore iniziale del selettore).

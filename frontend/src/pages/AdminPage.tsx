@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { workspacesApi, tagsApi, usersApi, apiKeysApi, aiApi, channelsApi, invitationsApi } from '@/lib/api'
 import { Member, Tag, Workspace, WorkspaceRole, ApiKey, CreatedApiKey, ApiScope, AiSettings, AiAutonomy, AiMemoryMode, AiTestResult, Channel, Invitation } from '@/types'
-import { CodeEditor } from '@/components/editor/CodeEditor'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -360,6 +359,8 @@ function CreateApiKeyDialog({ wsId, open, onClose }: { wsId: string; open: boole
 }
 
 // ─── AI Agent Settings Tab ────────────────────────────────────────────────────
+const CodeEditor = lazy(() => import('@/components/editor/CodeEditor'))
+
 function MdEditorBox({ label, hint, value, onChange }: {
   label: string; hint?: string; value: string; onChange: (v: string) => void
 }) {
@@ -368,7 +369,9 @@ function MdEditorBox({ label, hint, value, onChange }: {
       <Label>{label}</Label>
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       <div className="h-52 rounded-lg border overflow-hidden">
-        <CodeEditor value={value} onChange={onChange} language="markdown" />
+        <Suspense fallback={<div className="h-full animate-pulse bg-muted/40" />}>
+          <CodeEditor value={value} onChange={onChange} language="markdown" />
+        </Suspense>
       </div>
     </div>
   )

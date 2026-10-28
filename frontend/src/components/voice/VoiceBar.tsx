@@ -1,5 +1,5 @@
 import {
-  useVoiceSession, SCREEN_RESOLUTIONS, SCREEN_FPS_OPTIONS, describeScreenSettings,
+  useVoiceActions, useVoiceStatus, useVoiceParticipants, SCREEN_RESOLUTIONS, SCREEN_FPS_OPTIONS, describeScreenSettings,
 } from '@/contexts/VoiceSession'
 import { Button } from '@/components/ui/button'
 import { UserAvatar } from '@/components/UserAvatar'
@@ -17,7 +17,9 @@ import {
  * mentre navighi l'app. Montata nel Layout, legge lo stato dal contesto globale.
  */
 export function VoiceBar() {
-  const s = useVoiceSession()
+  // Stato stabile + azioni: la parte che dipende dagli speaker attivi è isolata nei
+  // sottocomponenti sotto, così ActiveSpeakersChanged non ri-renderizza tutta la barra.
+  const s = { ...useVoiceStatus(), ...useVoiceActions() }
   if (s.status === 'idle') return null
 
   const connecting = s.status === 'connecting'
@@ -31,66 +33,12 @@ export function VoiceBar() {
         <div className="min-w-0 flex-1">
           <p className="text-xs font-semibold truncate">{s.channelName ?? 'Stanza vocale'}</p>
           <p className="text-[11px] text-muted-foreground">
-            {connecting ? 'Connessione…' : s.reconnecting ? 'Riconnessione…' : `${s.participants.length} in chiamata`}
+            {connecting ? 'Connessione…' : s.reconnecting ? 'Riconnessione…' : <ParticipantCount />}
           </p>
         </div>
       </div>
 
-      {s.participants.length > 0 && (
-        <div className="flex flex-wrap gap-1 px-3 py-2">
-          {s.participants.map(p => {
-            const vol = s.participantVolumes[p.identity] ?? 1
-            const locallyMuted = !p.isLocal && vol === 0
-            const avatar = (
-              <div className={cn('relative rounded-full', p.speaking && 'ring-2 ring-green-500')}>
-                <UserAvatar name={p.name} avatar={p.avatar} className="h-7 w-7" />
-                {p.muted && (
-                  <span className="absolute -bottom-0.5 -right-0.5 rounded-full bg-card p-0.5">
-                    <MicOff className="h-2.5 w-2.5 text-muted-foreground" />
-                  </span>
-                )}
-                {locallyMuted && (
-                  <span className="absolute -top-0.5 -right-0.5 rounded-full bg-card p-0.5">
-                    <VolumeX className="h-2.5 w-2.5 text-destructive" />
-                  </span>
-                )}
-              </div>
-            )
-            // Il proprio avatar non ha controlli volume; per gli altri un menu con muta + slider.
-            if (p.isLocal) {
-              return <div key={p.identity} title={`${p.name} (tu)`}>{avatar}</div>
-            }
-            return (
-              <DropdownMenu key={p.identity}>
-                <DropdownMenuTrigger asChild>
-                  <button title={`${p.name} — regola volume`} className="rounded-full">{avatar}</button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent side="top" align="start" className="w-56 p-2">
-                  <div className="px-1 pb-1.5 text-xs font-medium truncate">{p.name}</div>
-                  <div className="flex items-center gap-2 px-1">
-                    <button
-                      onClick={() => s.setParticipantVolume(p.identity, vol === 0 ? 1 : 0)}
-                      title={vol === 0 ? 'Riattiva l\'audio' : 'Muta per me'}
-                      className="shrink-0 text-muted-foreground hover:text-foreground"
-                    >
-                      {vol === 0 ? <VolumeX className="h-4 w-4 text-destructive" /> : <Volume2 className="h-4 w-4" />}
-                    </button>
-                    <input
-                      type="range" min={0} max={1} step={0.05} value={vol}
-                      onChange={e => s.setParticipantVolume(p.identity, parseFloat(e.target.value))}
-                      className="flex-1 accent-primary cursor-pointer"
-                    />
-                    <span className="w-8 text-right text-xs tabular-nums text-muted-foreground">
-                      {Math.round(vol * 100)}
-                    </span>
-                  </div>
-                  <p className="px-1 pt-1.5 text-[10px] text-muted-foreground">Solo per te, non per gli altri.</p>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )
-          })}
-        </div>
-      )}
+      <VoiceBarParticipants />
 
       <div className="flex items-center gap-1.5 px-3 py-2 border-t">
         <Button size="icon" variant={s.muted ? 'destructive' : 'secondary'} className="h-8 w-8"
@@ -172,6 +120,73 @@ export function VoiceBar() {
           <PhoneOff className="h-4 w-4" />
         </Button>
       </div>
+    </div>
+  )
+}
+
+function ParticipantCount() {
+  const { participants } = useVoiceParticipants()
+  return <>{`${participants.length} in chiamata`}</>
+}
+
+/** Avatar dei partecipanti con indicatore "sta parlando" e controlli volume per-utente. */
+function VoiceBarParticipants() {
+  const { participants, participantVolumes } = useVoiceParticipants()
+  const { setParticipantVolume } = useVoiceActions()
+  if (participants.length === 0) return null
+  return (
+    <div className="flex flex-wrap gap-1 px-3 py-2">
+      {participants.map(p => {
+        const vol = participantVolumes[p.identity] ?? 1
+        const locallyMuted = !p.isLocal && vol === 0
+        const avatar = (
+          <div className={cn('relative rounded-full', p.speaking && 'ring-2 ring-green-500')}>
+            <UserAvatar name={p.name} avatar={p.avatar} className="h-7 w-7" />
+            {p.muted && (
+              <span className="absolute -bottom-0.5 -right-0.5 rounded-full bg-card p-0.5">
+                <MicOff className="h-2.5 w-2.5 text-muted-foreground" />
+              </span>
+            )}
+            {locallyMuted && (
+              <span className="absolute -top-0.5 -right-0.5 rounded-full bg-card p-0.5">
+                <VolumeX className="h-2.5 w-2.5 text-destructive" />
+              </span>
+            )}
+          </div>
+        )
+        // Il proprio avatar non ha controlli volume; per gli altri un menu con muta + slider.
+        if (p.isLocal) {
+          return <div key={p.identity} title={`${p.name} (tu)`}>{avatar}</div>
+        }
+        return (
+          <DropdownMenu key={p.identity}>
+            <DropdownMenuTrigger asChild>
+              <button title={`${p.name} — regola volume`} className="rounded-full">{avatar}</button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" className="w-56 p-2">
+              <div className="px-1 pb-1.5 text-xs font-medium truncate">{p.name}</div>
+              <div className="flex items-center gap-2 px-1">
+                <button
+                  onClick={() => setParticipantVolume(p.identity, vol === 0 ? 1 : 0)}
+                  title={vol === 0 ? 'Riattiva l\'audio' : 'Muta per me'}
+                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                >
+                  {vol === 0 ? <VolumeX className="h-4 w-4 text-destructive" /> : <Volume2 className="h-4 w-4" />}
+                </button>
+                <input
+                  type="range" min={0} max={1} step={0.05} value={vol}
+                  onChange={e => setParticipantVolume(p.identity, parseFloat(e.target.value))}
+                  className="flex-1 accent-primary cursor-pointer"
+                />
+                <span className="w-8 text-right text-xs tabular-nums text-muted-foreground">
+                  {Math.round(vol * 100)}
+                </span>
+              </div>
+              <p className="px-1 pt-1.5 text-[10px] text-muted-foreground">Solo per te, non per gli altri.</p>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )
+      })}
     </div>
   )
 }

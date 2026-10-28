@@ -1,8 +1,10 @@
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode,
 } from 'react'
-import {
-  Room, RoomEvent, Track, RemoteTrack, LocalTrackPublication, RemoteTrackPublication,
+// Solo tipi: livekit-client (~500 kB) viene caricato con import() dinamico al primo join,
+// così non pesa sul bundle iniziale di chi non entra mai in una stanza vocale.
+import type {
+  Room, RemoteTrack, LocalTrackPublication, RemoteTrackPublication,
 } from 'livekit-client'
 import { useQuery } from '@tanstack/react-query'
 import { channelsApi, workspacesApi } from '@/lib/api'
@@ -86,6 +88,29 @@ export function describeScreenSettings(st: ScreenSettings): string {
 
 type Status = 'idle' | 'connecting' | 'connected'
 
+type LiveKit = typeof import('livekit-client')
+let livekitModule: LiveKit | null = null
+let livekitPromise: Promise<LiveKit> | null = null
+
+/** Carica (una sola volta) il modulo livekit-client. */
+function loadLiveKit(): Promise<LiveKit> {
+  if (livekitModule) return Promise.resolve(livekitModule)
+  if (!livekitPromise) {
+    livekitPromise = import('livekit-client')
+      .then(m => { livekitModule = m; return m })
+      .catch(err => { livekitPromise = null; throw err })
+  }
+  return livekitPromise
+}
+
+/**
+ * Pre-carica livekit-client in idle (es. quando si apre una stanza vocale), così il click su
+ * "Entra in chiamata" non deve attendere il download. Errori ignorati: join() ritenta.
+ */
+export function preloadVoice() {
+  loadLiveKit().catch(() => {})
+}
+
 interface JoinParams {
   wsId: string
   channelId: string
@@ -93,25 +118,16 @@ interface JoinParams {
   screenShareEnabled: boolean
 }
 
-interface VoiceSessionValue {
-  status: Status
-  reconnecting: boolean
-  wsId: string | null
-  channelId: string | null
-  channelName: string | null
-  screenShareAllowed: boolean
-  participants: VoiceParticipant[]
-  muted: boolean
-  // Volume di riproduzione per partecipante remoto (identity → 0..1; 0 = mutato localmente).
-  participantVolumes: Record<string, number>
+/**
+ * Il contesto è diviso in tre parti per limitare i re-render:
+ * - actions: callback stabili (identità costante per tutta la vita del provider);
+ * - status: stato che cambia di rado (connessione, canale, mute locale, schermo attivo…);
+ * - participants: dati volatili (lista partecipanti con `speaking`, volumi) aggiornati a ogni
+ *   ActiveSpeakersChanged. Solo chi li legge si ri-renderizza a ogni cambio di speaker.
+ */
+export interface VoiceActions {
   setParticipantVolume: (identity: string, volume: number) => void
-  isSharing: boolean
-  activeScreen: ActiveScreen | null
-  devices: MediaDeviceInfo[]
-  activeDeviceId: string
-  screenViewerOpen: boolean
   setScreenViewerOpen: (v: boolean) => void
-  screenSettings: ScreenSettings
   setScreenSettings: (patch: Partial<ScreenSettings>) => Promise<void>
   join: (p: JoinParams) => Promise<void>
   leave: () => Promise<void>
@@ -122,12 +138,60 @@ interface VoiceSessionValue {
   attachScreen: (el: HTMLVideoElement | null) => void
 }
 
-const VoiceSessionContext = createContext<VoiceSessionValue | null>(null)
+export interface VoiceStatus {
+  status: Status
+  reconnecting: boolean
+  wsId: string | null
+  channelId: string | null
+  channelName: string | null
+  screenShareAllowed: boolean
+  muted: boolean
+  isSharing: boolean
+  activeScreen: ActiveScreen | null
+  devices: MediaDeviceInfo[]
+  activeDeviceId: string
+  screenViewerOpen: boolean
+  screenSettings: ScreenSettings
+}
 
-export function useVoiceSession() {
-  const ctx = useContext(VoiceSessionContext)
-  if (!ctx) throw new Error('useVoiceSession deve stare dentro <VoiceSessionProvider>')
-  return ctx
+export interface VoiceParticipantsState {
+  participants: VoiceParticipant[]
+  // Volume di riproduzione per partecipante remoto (identity → 0..1; 0 = mutato localmente).
+  participantVolumes: Record<string, number>
+}
+
+export type VoiceSessionValue = VoiceActions & VoiceStatus & VoiceParticipantsState
+
+const VoiceActionsContext = createContext<VoiceActions | null>(null)
+const VoiceStatusContext = createContext<VoiceStatus | null>(null)
+const VoiceParticipantsContext = createContext<VoiceParticipantsState | null>(null)
+
+function required<T>(v: T | null, hook: string): T {
+  if (!v) throw new Error(`${hook} deve stare dentro <VoiceSessionProvider>`)
+  return v
+}
+
+/** Azioni (join/leave/mute/schermo…): identità stabile, non causa re-render. */
+export function useVoiceActions() {
+  return required(useContext(VoiceActionsContext), 'useVoiceActions')
+}
+
+/** Stato poco volatile della sessione (status, canale, mute, schermo attivo…). */
+export function useVoiceStatus() {
+  return required(useContext(VoiceStatusContext), 'useVoiceStatus')
+}
+
+/** Partecipanti e volumi: cambia a ogni variazione degli speaker attivi. */
+export function useVoiceParticipants() {
+  return required(useContext(VoiceParticipantsContext), 'useVoiceParticipants')
+}
+
+/** Retro-compatibile: tutto insieme (si ri-renderizza a ogni cambio partecipanti). */
+export function useVoiceSession(): VoiceSessionValue {
+  const actions = useVoiceActions()
+  const status = useVoiceStatus()
+  const parts = useVoiceParticipants()
+  return useMemo(() => ({ ...actions, ...status, ...parts }), [actions, status, parts])
 }
 
 interface Member { userId: string; displayName: string; avatar?: string }
@@ -136,6 +200,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   const me = useAuthStore(s => s.user)
 
   const [status, setStatus] = useState<Status>('idle')
+  const statusRef = useRef<Status>(status)
+  statusRef.current = status
   const [reconnecting, setReconnecting] = useState(false)
   const [wsId, setWsId] = useState<string | null>(null)
   const [channelId, setChannelId] = useState<string | null>(null)
@@ -176,7 +242,9 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
 
   const sync = useCallback(() => {
     const room = roomRef.current
-    if (!room) return
+    const lk = livekitModule
+    if (!room || !lk) return
+    const { Track } = lk
     const resolve = resolveRef.current
     const lp = room.localParticipant
     const lu = resolve(lp.identity)
@@ -219,7 +287,13 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       }
     }
     screenTrackRef.current = screen?.track ?? null
-    setActiveScreen(screen ? { identity: screen.identity, name: screen.name, sid: screen.sid } : null)
+    // Aggiorna solo se cambia davvero: sync() gira a ogni ActiveSpeakersChanged e un nuovo
+    // oggetto a ogni chiamata ri-renderizzerebbe tutti i consumer dello stato "stabile".
+    setActiveScreen(prev => {
+      if (!screen) return null
+      if (prev && prev.identity === screen.identity && prev.sid === screen.sid && prev.name === screen.name) return prev
+      return { identity: screen.identity, name: screen.name, sid: screen.sid }
+    })
   }, [])
 
   // Ricalcola quando cambia la lista membri (per i nomi).
@@ -235,14 +309,19 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const join = useCallback(async (p: JoinParams) => {
-    if (status === 'connecting') return
+    if (statusRef.current === 'connecting') return
     if (roomRef.current) await roomRef.current.disconnect()
 
+    statusRef.current = 'connecting'
     setStatus('connecting'); setWsId(p.wsId); setChannelId(p.channelId)
     setChannelName(p.channelName); setScreenShareAllowed(p.screenShareEnabled)
     setScreenViewerOpen(true)
     try {
-      const { url, token } = await channelsApi.voiceToken(p.wsId, p.channelId)
+      // Token e modulo LiveKit in parallelo: il download del chunk non allunga il join.
+      const [{ url, token }, { Room, RoomEvent, Track }] = await Promise.all([
+        channelsApi.voiceToken(p.wsId, p.channelId),
+        loadLiveKit(),
+      ])
       if (!url) throw new Error('URL del media server non configurato')
 
       const room = new Room({
@@ -297,7 +376,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       toast(msg, 'destructive')
       throw err
     }
-  }, [status, sync, reset])
+  }, [sync, reset])
 
   const leave = useCallback(async () => {
     await roomRef.current?.disconnect().catch(() => {})
@@ -334,6 +413,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     const room = roomRef.current
     if (!room) return
     // Un publisher per volta: blocca se qualcun altro sta già condividendo.
+    const { Track } = livekitModule!
     const other = [...room.remoteParticipants.values()]
       .some(p => p.getTrackPublication(Track.Source.ScreenShare)?.isSubscribed)
     if (other) { toast('Qualcuno sta già condividendo lo schermo', 'destructive'); return }
@@ -379,7 +459,8 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       }))
     } catch { /* storage non disponibile */ }
     const room = roomRef.current
-    const sharing = !!room?.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track
+    const sharing = !!(room && livekitModule
+      && room.localParticipant.getTrackPublication(livekitModule.Track.Source.ScreenShare)?.track)
     if (sharing) {
       await stopScreenShare()
       await startScreenShare(next)
@@ -396,21 +477,32 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     if (!me) { roomRef.current?.disconnect().catch(() => {}); }
   }, [me])
 
-  const value = useMemo<VoiceSessionValue>(() => ({
-    status, reconnecting, wsId, channelId, channelName, screenShareAllowed,
-    participants, muted, participantVolumes, setParticipantVolume, isSharing, activeScreen, devices, activeDeviceId,
-    screenViewerOpen, setScreenViewerOpen, screenSettings, setScreenSettings,
+  const actions = useMemo<VoiceActions>(() => ({
+    setParticipantVolume, setScreenViewerOpen, setScreenSettings,
     join, leave, toggleMute, switchMic, startScreenShare, stopScreenShare, attachScreen,
-  }), [status, reconnecting, wsId, channelId, channelName, screenShareAllowed, participants, muted,
-    participantVolumes, setParticipantVolume,
-    isSharing, activeScreen, devices, activeDeviceId, screenViewerOpen, screenSettings, setScreenSettings,
+  }), [setParticipantVolume, setScreenSettings,
     join, leave, toggleMute, switchMic, startScreenShare, stopScreenShare, attachScreen])
 
+  const statusValue = useMemo<VoiceStatus>(() => ({
+    status, reconnecting, wsId, channelId, channelName, screenShareAllowed,
+    muted, isSharing, activeScreen, devices, activeDeviceId, screenViewerOpen, screenSettings,
+  }), [status, reconnecting, wsId, channelId, channelName, screenShareAllowed,
+    muted, isSharing, activeScreen, devices, activeDeviceId, screenViewerOpen, screenSettings])
+
+  const participantsValue = useMemo<VoiceParticipantsState>(
+    () => ({ participants, participantVolumes }),
+    [participants, participantVolumes],
+  )
+
   return (
-    <VoiceSessionContext.Provider value={value}>
-      {children}
-      {/* Audio remoti: contenitore nascosto persistente (sopravvive ai cambi pagina). */}
-      <div ref={audioContainer} className="hidden" />
-    </VoiceSessionContext.Provider>
+    <VoiceActionsContext.Provider value={actions}>
+      <VoiceStatusContext.Provider value={statusValue}>
+        <VoiceParticipantsContext.Provider value={participantsValue}>
+          {children}
+          {/* Audio remoti: contenitore nascosto persistente (sopravvive ai cambi pagina). */}
+          <div ref={audioContainer} className="hidden" />
+        </VoiceParticipantsContext.Provider>
+      </VoiceStatusContext.Provider>
+    </VoiceActionsContext.Provider>
   )
 }

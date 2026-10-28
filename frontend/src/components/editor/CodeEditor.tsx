@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { EditorView } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
-import { langExtension, LANG_LABELS, LangId } from './languages'
+import { loadLangExtension, LANG_LABELS, LangId } from './languages'
 import { useIsDark } from '@/lib/useIsDark'
 import { cn } from '@/lib/utils'
 
@@ -18,17 +18,29 @@ interface CodeEditorProps {
 // Editor di codice stile VSCode basato su CodeMirror 6: syntax highlighting,
 // numeri di riga, code folding, parentesi abbinate, ricerca (Ctrl+F),
 // autocompletamento, tema chiaro/scuro e barra di stato con posizione cursore.
+// Pesante (CodeMirror): importarlo con React.lazy (default export qui sotto).
 export function CodeEditor({ value, onChange, language, readOnly = false, wrap = false, className }: CodeEditorProps) {
   const dark = useIsDark()
   const [pos, setPos] = useState({ line: 1, col: 1 })
+  // Estensione del linguaggio caricata on-demand: finché non arriva l'editor mostra testo
+  // semplice, poi si riconfigura (cambio di `extensions`) senza perdere contenuto/cursore.
+  const [lang, setLang] = useState<{ id: LangId; ext: Extension } | null>(null)
 
+  useEffect(() => {
+    let alive = true
+    loadLangExtension(language).then(ext => {
+      if (alive) setLang(ext ? { id: language, ext } : null)
+    })
+    return () => { alive = false }
+  }, [language])
+
+  const langExt = lang && lang.id === language ? lang.ext : null
   const extensions = useMemo<Extension[]>(() => {
     const exts: Extension[] = [EditorView.theme({ '&': { height: '100%' } })]
-    const lang = langExtension(language)
-    if (lang) exts.push(lang)
+    if (langExt) exts.push(langExt)
     if (wrap) exts.push(EditorView.lineWrapping)
     return exts
-  }, [language, wrap])
+  }, [langExt, wrap])
 
   return (
     <div className={cn('flex flex-col h-full min-h-0', className)}>
@@ -68,3 +80,5 @@ export function CodeEditor({ value, onChange, language, readOnly = false, wrap =
     </div>
   )
 }
+
+export default CodeEditor

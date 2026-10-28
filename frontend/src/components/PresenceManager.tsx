@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { presenceApi } from '@/lib/api'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { usePresenceStore } from '@/store/presenceStore'
-import { useVoiceSession } from '@/contexts/VoiceSession'
+import { useVoiceActions, useVoiceStatus } from '@/contexts/VoiceSession'
 import { subscribeWorkspace } from '@/lib/websocket'
 import { WsEvent } from '@/types'
 
@@ -16,7 +16,9 @@ export function PresenceManager() {
   const wsId = useWorkspaceStore(s => s.current?.id)
   const setAll = usePresenceStore(s => s.setAll)
   const clear = usePresenceStore(s => s.clear)
-  const voice = useVoiceSession()
+  // Solo stato stabile + azioni: non si ri-renderizza a ogni cambio di speaker attivo.
+  const voice = useVoiceStatus()
+  const { leave } = useVoiceActions()
 
   // Canale vocale corrente solo se la call è in QUESTO workspace.
   const inCall = voice.status === 'connected' && voice.wsId === wsId ? voice.channelId : null
@@ -48,8 +50,8 @@ export function PresenceManager() {
   // altri utenti. `pagehide` copre chiusura tab, refresh e navigazione (più affidabile di
   // `beforeunload`, specie su mobile). Chiude anche la room LiveKit così il partecipante viene
   // rimosso subito lato media.
-  const leaveRef = useRef(voice.leave)
-  leaveRef.current = voice.leave
+  const leaveRef = useRef(leave)
+  leaveRef.current = leave
   useEffect(() => {
     if (!wsId) return
     const onHide = () => {
