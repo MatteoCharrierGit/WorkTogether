@@ -5,6 +5,9 @@ spring:
     password: ${DB_PASSWORD:changeme}
     driver-class-name: org.postgresql.Driver
   jpa:
+    # Niente sessione JPA aperta per tutta la richiesta HTTP: il mapping entità→DTO avviene
+    # dentro i metodi @Transactional dei service (le connessioni tornano subito al pool).
+    open-in-view: false
     hibernate:
       ddl-auto: validate
     show-sql: false
@@ -12,6 +15,9 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
+        # Le associazioni lazy (tag/assegnatari degli elementi, utenti dei membri, autori...)
+        # vengono inizializzate a lotti (WHERE id = ANY(?)) invece che una query per riga.
+        default_batch_fetch_size: 50
   flyway:
     enabled: true
     locations: classpath:db/migration

@@ -8,7 +8,7 @@ import com.worktogether.dto.response.InvitationPreviewResponse;
 import com.worktogether.dto.response.InvitationResponse;
 import com.worktogether.repository.*;
 import jakarta.persistence.EntityNotFoundException;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -90,7 +90,7 @@ public class WorkspaceInvitationService {
         return InvitationResponse.from(inv);
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public List<InvitationResponse> list(UUID workspaceId, User requester) {
         workspaceService.assertRole(workspaceId, requester, WorkspaceRole.ADMIN);
         return invitationRepository

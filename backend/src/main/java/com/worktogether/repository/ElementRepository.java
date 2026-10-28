@@ -43,6 +43,16 @@ public interface ElementRepository extends JpaRepository<Element, UUID> {
 
     long countBySprintIdAndStatus(UUID sprintId, ElementStatus status);
 
+    // Totale/completati per più sprint in una query (lista sprint). Righe: [sprintId, totale, completati].
+    @Query("""
+        SELECT e.sprintId, COUNT(e),
+               SUM(CASE WHEN e.status = com.worktogether.domain.enums.ElementStatus.COMPLETATO THEN 1 ELSE 0 END)
+        FROM Element e
+        WHERE e.sprintId IN :sprintIds
+        GROUP BY e.sprintId
+    """)
+    List<Object[]> countTasksBySprintIds(java.util.Collection<UUID> sprintIds);
+
     // Task della sprint non ancora completati né archiviati (da gestire alla chiusura).
     @Query("""
         SELECT e FROM Element e
@@ -52,22 +62,27 @@ public interface ElementRepository extends JpaRepository<Element, UUID> {
     """)
     List<Element> findIncompleteBySprintId(UUID sprintId);
 
+    // Avanzamento epiche aggregato (una sola query invece di 2 COUNT per epica).
+    // Ogni riga: [epicId (UUID), totale task (Number), task completati (Number)].
+    // Task = nipoti dell'epica (epica → storia → task).
     @Query("""
-        SELECT COUNT(e) FROM Element e
-        WHERE e.parent.id IN (
-            SELECT s.id FROM Element s WHERE s.parent.id = :epicId
-        )
-        AND e.type = com.worktogether.domain.enums.ElementType.TASK
+        SELECT s.parent.id, COUNT(t),
+               SUM(CASE WHEN t.status = com.worktogether.domain.enums.ElementStatus.COMPLETATO THEN 1 ELSE 0 END)
+        FROM Element t JOIN t.parent s
+        WHERE s.workspace.id = :workspaceId
+          AND s.parent IS NOT NULL
+          AND t.type = com.worktogether.domain.enums.ElementType.TASK
+        GROUP BY s.parent.id
     """)
-    long countTasksByEpicId(UUID epicId);
+    List<Object[]> epicProgressByWorkspace(UUID workspaceId);
 
     @Query("""
-        SELECT COUNT(e) FROM Element e
-        WHERE e.parent.id IN (
-            SELECT s.id FROM Element s WHERE s.parent.id = :epicId
-        )
-        AND e.type = com.worktogether.domain.enums.ElementType.TASK
-        AND e.status = com.worktogether.domain.enums.ElementStatus.COMPLETATO
+        SELECT s.parent.id, COUNT(t),
+               SUM(CASE WHEN t.status = com.worktogether.domain.enums.ElementStatus.COMPLETATO THEN 1 ELSE 0 END)
+        FROM Element t JOIN t.parent s
+        WHERE s.parent.id IN :epicIds
+          AND t.type = com.worktogether.domain.enums.ElementType.TASK
+        GROUP BY s.parent.id
     """)
-    long countCompletedTasksByEpicId(UUID epicId);
+    List<Object[]> epicProgressByEpicIds(java.util.Collection<UUID> epicIds);
 }

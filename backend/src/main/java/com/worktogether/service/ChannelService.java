@@ -12,7 +12,7 @@ import com.worktogether.dto.response.VoiceTokenResponse;
 import com.worktogether.repository.*;
 import com.worktogether.websocket.WorkspaceEventPublisher;
 import jakarta.persistence.EntityNotFoundException;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -39,7 +39,7 @@ public class ChannelService {
 
     // ---------------------------------------------------------------- Lettura
 
-    @Transactional
+    @Transactional(readOnly = true)
     public List<ChannelResponse> listChannels(UUID workspaceId, User user) {
         workspaceService.assertMember(workspaceId, user);
 
@@ -52,10 +52,7 @@ public class ChannelService {
             accessible.putIfAbsent(c.getId(), c);
         }
 
-        List<ChannelResponse> result = new ArrayList<>();
-        for (Channel c : accessible.values()) {
-            result.add(buildResponse(c, user));
-        }
+        List<ChannelResponse> result = new ArrayList<>(buildResponses(new ArrayList<>(accessible.values()), user));
         // Ordina per ultimo messaggio (o updatedAt) decrescente.
         result.sort(Comparator.comparing(
                 (ChannelResponse r) -> r.lastMessage() != null ? r.lastMessage().createdAt() : r.updatedAt(),
@@ -63,15 +60,20 @@ public class ChannelService {
         return result;
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public List<ChannelResponse> listRooms(UUID workspaceId, User user) {
         workspaceService.assertRole(workspaceId, user, WorkspaceRole.ADMIN);
-        return channelRepository.findRooms(workspaceId).stream()
-                .map(c -> buildResponse(c, user))
-                .toList();
+        return buildResponses(channelRepository.findRooms(workspaceId), user);
     }
 
-    @Transactional
+    /**
+     * Pagina di messaggi in ordine cronologico (dal più vecchio al più recente).
+     * Senza {@code before}: gli ultimi {@code limit} (max 100). Con {@code before} (createdAt ISO-8601
+     * del messaggio più vecchio già caricato): i {@code limit} messaggi precedenti. Cursore servito
+     * dall'indice idx_messages_channel(channel_id, created_at). Lista vuota o più corta di limit =
+     * inizio della conversazione raggiunto.
+     */
+    @Transactional(readOnly = true)
     public List<MessageResponse> getMessages(UUID workspaceId, UUID channelId, User user,
                                              OffsetDateTime before, int limit) {
         Channel channel = loadChannel(workspaceId, channelId);
@@ -219,11 +221,16 @@ public class ChannelService {
         ChannelMember cm = getOrCreateMember(channel, user);
         cm.setLastReadAt(OffsetDateTime.now());
         memberRepository.save(cm);
-        eventPublisher.publish(workspaceId, "CHANNEL_READ",
-                Map.of("channelId", channelId.toString(), "userId", user.getId().toString()));
+        // Lo stato "letto" riguarda solo chi ha letto: niente broadcast a tutto il workspace (che
+        // faceva rifare la lista canali a ogni membro). Va sulla coda personale dell'utente
+        // (/user/queue/events) per sincronizzare le sue altre schede/dispositivi.
+        eventPublisher.publishToUser(user.getId(), "CHANNEL_READ", Map.of(
+                "workspaceId", workspaceId.toString(),
+                "channelId", channelId.toString(),
+                "userId", user.getId().toString()));
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public void notifyTyping(UUID workspaceId, UUID channelId, User user) {
         Channel channel = loadChannel(workspaceId, channelId);
         assertChannelAccess(channel, user);
@@ -257,35 +264,59 @@ public class ChannelService {
     // ---------------------------------------------------------------- Helper
 
     private ChannelResponse buildResponse(Channel c, User viewer) {
-        List<ChannelMember> members = memberRepository.findByChannelId(c.getId());
-        List<ChannelMemberDto> memberDtos = members.stream()
-                .map(m -> ChannelMemberDto.from(m.getUser()))
-                .toList();
+        return buildResponses(List.of(c), viewer).get(0);
+    }
 
-        // Nome visualizzato: per i DM è il nome dell'altro partecipante.
-        String displayName = c.getName();
-        if (c.getType() == ChannelType.DM) {
-            displayName = members.stream()
-                    .map(ChannelMember::getUser)
-                    .filter(u -> !u.getId().equals(viewer.getId()))
-                    .map(User::getDisplayName)
-                    .findFirst().orElse("Conversazione");
+    /**
+     * Costruisce le risposte per più canali con un numero fisso di query (indipendente dal numero
+     * di canali): membri+utenti (JOIN FETCH), ultimo messaggio per canale (LATERAL), non-letti per
+     * canale (subquery correlata sul last_read_at del viewer). Autori dei last message: batch fetch.
+     * Mantiene l'ordine della lista in ingresso.
+     */
+    private List<ChannelResponse> buildResponses(List<Channel> channels, User viewer) {
+        if (channels.isEmpty()) return List.of();
+        List<UUID> ids = channels.stream().map(Channel::getId).toList();
+
+        Map<UUID, List<ChannelMember>> membersByChannel = new HashMap<>();
+        for (ChannelMember m : memberRepository.findByChannelIdInWithUser(ids)) {
+            membersByChannel.computeIfAbsent(m.getChannel().getId(), k -> new ArrayList<>()).add(m);
         }
 
-        // Ultimo messaggio + non-letti per il viewer.
-        List<Message> last = messageRepository.findLastMessage(c.getId(), PageRequest.of(0, 1));
-        MessageResponse lastMsg = last.isEmpty() ? null : MessageResponse.from(last.get(0));
+        Map<UUID, MessageResponse> lastByChannel = new HashMap<>();
+        for (Message m : messageRepository.findLastMessages(ids)) {
+            lastByChannel.put(m.getChannel().getId(), MessageResponse.from(m));
+        }
 
-        OffsetDateTime lastReadAt = memberRepository.findByChannelIdAndUserId(c.getId(), viewer.getId())
-                .map(ChannelMember::getLastReadAt).orElse(null);
-        long unread = (lastReadAt != null)
-                ? messageRepository.countUnreadSince(c.getId(), viewer.getId(), lastReadAt)
-                : messageRepository.countUnreadAll(c.getId(), viewer.getId());
+        Map<UUID, Long> unreadByChannel = new HashMap<>();
+        for (Object[] row : messageRepository.countUnreadByChannel(ids, viewer.getId())) {
+            UUID channelId = row[0] instanceof UUID u ? u : UUID.fromString(row[0].toString());
+            unreadByChannel.put(channelId, row[1] == null ? 0L : ((Number) row[1]).longValue());
+        }
 
-        return new ChannelResponse(
-                c.getId(), c.getType(), displayName, c.getDescription(),
-                c.isPrivate(), c.isVoiceEnabled(), c.isScreenShareEnabled(),
-                memberDtos, lastMsg, unread, c.getCreatedAt(), c.getUpdatedAt());
+        List<ChannelResponse> out = new ArrayList<>(channels.size());
+        for (Channel c : channels) {
+            List<ChannelMember> members = membersByChannel.getOrDefault(c.getId(), List.of());
+            List<ChannelMemberDto> memberDtos = members.stream()
+                    .map(m -> ChannelMemberDto.from(m.getUser()))
+                    .toList();
+
+            // Nome visualizzato: per i DM è il nome dell'altro partecipante.
+            String displayName = c.getName();
+            if (c.getType() == ChannelType.DM) {
+                displayName = members.stream()
+                        .map(ChannelMember::getUser)
+                        .filter(u -> !u.getId().equals(viewer.getId()))
+                        .map(User::getDisplayName)
+                        .findFirst().orElse("Conversazione");
+            }
+
+            out.add(new ChannelResponse(
+                    c.getId(), c.getType(), displayName, c.getDescription(),
+                    c.isPrivate(), c.isVoiceEnabled(), c.isScreenShareEnabled(),
+                    memberDtos, lastByChannel.get(c.getId()), unreadByChannel.getOrDefault(c.getId(), 0L),
+                    c.getCreatedAt(), c.getUpdatedAt()));
+        }
+        return out;
     }
 
     private Channel loadChannel(UUID workspaceId, UUID channelId) {

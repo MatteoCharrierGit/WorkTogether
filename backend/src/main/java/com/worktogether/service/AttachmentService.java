@@ -8,7 +8,7 @@ import com.worktogether.dto.response.AttachmentResponse;
 import com.worktogether.repository.AttachmentRepository;
 import com.worktogether.repository.ElementRepository;
 import jakarta.persistence.EntityNotFoundException;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -37,6 +37,7 @@ public class AttachmentService {
 
     public record DownloadFile(Resource resource, String filename, String contentType) {}
 
+    @Transactional(readOnly = true)
     public List<AttachmentResponse> list(UUID workspaceId, UUID elementId, User user) {
         workspaceService.assertMember(workspaceId, user);
         validateElement(workspaceId, elementId);

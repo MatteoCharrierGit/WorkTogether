@@ -12,7 +12,7 @@ import com.worktogether.repository.DriveFileRepository;
 import com.worktogether.repository.FolderRepository;
 import com.worktogether.websocket.WorkspaceEventPublisher;
 import jakarta.persistence.EntityNotFoundException;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -67,7 +67,7 @@ public class DriveService {
 
     // ---- Folders ----
 
-    @Transactional
+    @Transactional(readOnly = true)
     public List<FolderResponse> listFolders(UUID workspaceId, UUID parentId, User user) {
         workspaceService.assertMember(workspaceId, user);
         if (parentId != null) validateFolder(workspaceId, parentId);
@@ -158,7 +158,7 @@ public class DriveService {
 
     // ---- Files ----
 
-    @Transactional
+    @Transactional(readOnly = true)
     public List<DriveFileResponse> listFiles(UUID workspaceId, UUID folderId, User user) {
         workspaceService.assertMember(workspaceId, user);
         if (folderId != null) validateFolder(workspaceId, folderId);
@@ -522,7 +522,7 @@ public class DriveService {
     }
 
     /** Legge il contenuto testuale di un file (troncato a maxChars). */
-    @Transactional
+    @Transactional(readOnly = true)
     public String readText(UUID workspaceId, UUID fileId, User user, int maxChars) {
         workspaceService.assertMember(workspaceId, user);
         DriveFile df = getFileInWorkspace(workspaceId, fileId);

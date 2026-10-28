@@ -10,7 +10,7 @@ import com.worktogether.repository.TagRepository;
 import com.worktogether.repository.WorkspaceRepository;
 import com.worktogether.websocket.WorkspaceEventPublisher;
 import jakarta.persistence.EntityNotFoundException;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -29,7 +29,7 @@ public class TagService {
     private final WorkspaceService workspaceService;
     private final WorkspaceEventPublisher eventPublisher;
 
-    @Transactional
+    @Transactional(readOnly = true)
     public List<TagResponse> getTags(UUID workspaceId, User user) {
         workspaceService.assertMember(workspaceId, user);
         return tagRepository.findByWorkspaceIdOrderByNameAsc(workspaceId)

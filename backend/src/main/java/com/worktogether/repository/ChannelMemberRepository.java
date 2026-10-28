@@ -12,6 +12,10 @@ import java.util.UUID;
 public interface ChannelMemberRepository extends JpaRepository<ChannelMember, UUID> {
     Optional<ChannelMember> findByChannelIdAndUserId(UUID channelId, UUID userId);
     List<ChannelMember> findByChannelId(UUID channelId);
+
+    // Membri di più canali con l'utente già caricato (lista conversazioni senza N+1).
+    @Query("SELECT m FROM ChannelMember m JOIN FETCH m.user WHERE m.channel.id IN :channelIds ORDER BY m.joinedAt ASC, m.id ASC")
+    List<ChannelMember> findByChannelIdInWithUser(java.util.Collection<UUID> channelIds);
     boolean existsByChannelIdAndUserId(UUID channelId, UUID userId);
     void deleteByChannelId(UUID channelId);
 

@@ -5,7 +5,7 @@ import com.worktogether.domain.entity.VerificationCode;
 import com.worktogether.domain.enums.VerificationPurpose;
 import com.worktogether.repository.VerificationCodeRepository;
 import jakarta.mail.internet.MimeMessage;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -35,6 +35,14 @@ public record ElementResponse(
     }
 
     public static ElementResponse from(Element e, Integer progress) {
+        return from(e, progress, true);
+    }
+
+    /**
+     * Variante per le liste: con {@code includeBody=false} il campo {@code body} (rich text, può
+     * essere pesante) viene omesso (null). Il dettaglio singolo (GET /elements/{id}) resta completo.
+     */
+    public static ElementResponse from(Element e, Integer progress, boolean includeBody) {
         return new ElementResponse(
                 e.getId(),
                 e.getWorkspace().getId(),
@@ -42,7 +50,7 @@ public record ElementResponse(
                 e.getType(),
                 e.getStatus(),
                 e.getTitle(),
-                e.getBody(),
+                includeBody ? e.getBody() : null,
                 e.getStartDate(),
                 e.getEndDate(),
                 e.isAllDay(),

@@ -6,7 +6,7 @@ import com.worktogether.dto.transfer.*;
 import com.worktogether.dto.transfer.WorkspaceExport.*;
 import com.worktogether.repository.*;
 import jakarta.persistence.EntityNotFoundException;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -42,7 +42,7 @@ public class WorkspaceTransferService {
 
     // ----------------------------------------------------------------- EXPORT
 
-    @Transactional
+    @Transactional(readOnly = true)
     public WorkspaceExport export(UUID workspaceId, User requester, ExportRequest opts) {
         workspaceService.assertRole(workspaceId, requester, WorkspaceRole.ADMIN);
         Workspace ws = workspaceRepository.findById(workspaceId)

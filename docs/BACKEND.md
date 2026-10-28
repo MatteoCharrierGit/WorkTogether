@@ -96,7 +96,9 @@ Gli errori sono normalizzati da `GlobalExceptionHandler` nella forma `{ "error":
 ## 5. Realtime e media lato server
 
 - **`WorkspaceEventPublisher.publish(wsId, type, payload)`** invia su `/topic/workspace/{wsId}`.
-  Usato da elementi, chat, presenza. (`config/WebSocketConfig`: broker `/topic`, endpoint `/ws`.)
+  Usato da elementi, chat, presenza; invio rimandato a dopo il commit se in transazione.
+  `publishToUser(userId, …)` invia su `/user/queue/events` (vedi Novità v1.4).
+  (`config/WebSocketConfig`: broker `/topic` + `/queue`, prefisso utente `/user`, endpoint `/ws`.)
 - **`LiveKitService`** firma un AccessToken LiveKit (HS256 con l'API secret come chiave HMAC, claim
   `video` con grant sulla room = `channelId`). `isConfigured()` è false se mancano url/key/secret
   → la voce resta disattivata e l'endpoint token risponde `503`.
@@ -174,3 +176,42 @@ In assenza di JDK/Maven locale, è possibile compilare in un container usa-e-get
 - **Visibilità sezione Sprint**: `workspaces.sprint_enabled` (migration **V18**, default FALSE) esposto in
   `WorkspaceResponse` e aggiornabile da admin via `PATCH …/settings` (`UpdateWorkspaceSettingsRequest.sprintEnabled`).
   Toggle solo di UI: nascosta di default.
+
+## Novità v1.4 — performance
+
+- **Niente Open Session In View**: `spring.jpa.open-in-view: false`. Tutto il mapping entità→DTO avviene
+  dentro metodi `@Transactional` dei service (ora `org.springframework.transaction.annotation.Transactional`,
+  `readOnly = true` sulle letture). Le connessioni tornano al pool appena il service ha finito.
+  Regola: un nuovo metodo che legge associazioni lazy (`getTags()`, `getAssignees()`, `getUser()`,
+  `getAuthor()`, `getWorkspace().getName()`…) **deve** essere `@Transactional` (accedere al solo id
+  di un proxy, es. `getWorkspace().getId()`, è sicuro anche fuori transazione).
+- **Batch fetching**: `hibernate.default_batch_fetch_size: 50` ⇒ tag/assegnatari degli elementi,
+  autori dei messaggi ecc. si caricano a lotti (`WHERE id = ANY(?)`) invece che una query per riga.
+- **Elementi**: avanzamento epiche calcolato con **una** query aggregata (`epicProgressByWorkspace` /
+  `epicProgressByEpicIds`) invece di 2 COUNT per epica.
+  Le liste (`GET …/elements`, `GET /api/users/me/tasks`, task in `GET …/sprints/active|{id}`) **non
+  includono più `body`** (vale `null`); il dettaglio `GET …/elements/{id}` e gli eventi websocket
+  `ELEMENT_*` restano completi. `GET …/elements?includeBody=true` ripristina il body in lista (per
+  integrazioni API key che lo leggevano). Un `PUT` con `body: null` non cancella il body (comportamento invariato).
+- **Canali**: `ChannelService.buildResponses` costruisce la lista con un numero fisso di query
+  (membri+utenti in JOIN FETCH, ultimo messaggio per canale via `LATERAL … LIMIT 1`, non-letti per
+  canale con subquery sul `last_read_at` del viewer). Forma della risposta invariata.
+- **Sprint/workspace**: lista sprint con 2 query aggregate (conteggi + chat); lista workspace
+  dell'utente con una query (`WorkspaceMember JOIN FETCH workspace`); membri con `@EntityGraph(user)`.
+- **Eventi websocket dopo il commit**: `WorkspaceEventPublisher` rimanda l'invio ad `afterCommit` se
+  c'è una transazione attiva (nessun evento su rollback; i client che rifanno le query leggono dati
+  committati). Fuori transazione (agente AI, presenza, scheduler) invia subito.
+- **Coda personale STOMP**: broker `/topic` + `/queue`, prefisso utente `/user`. Alla `CONNECT` STOMP
+  l'header nativo `Authorization: Bearer <jwt>` (già inviato dal frontend) associa la sessione allo
+  userId; un token assente/scaduto non rifiuta la connessione, ma quella sessione non riceve eventi
+  personali. `WorkspaceEventPublisher.publishToUser(userId, type, payload)` → `/user/queue/events`.
+  **`CHANNEL_READ` ora va solo all'utente che ha letto** (payload `{workspaceId, channelId, userId}`),
+  non più a tutto il workspace. `TYPING` resta sul topic del workspace.
+- **Paginazione messaggi** (`GET …/channels/{id}/messages`): `limit` (default 50, max 100) e `before`
+  opzionale = `createdAt` ISO-8601 del messaggio più vecchio già caricato (passarlo **così come
+  arriva dal server**, URL-encoded, senza riformattarlo con `Date` che tronca ai millisecondi). Risposta
+  in ordine cronologico crescente; meno di `limit` elementi ⇒ inizio conversazione. Il cursore usa
+  l'indice `idx_messages_channel(channel_id, created_at)`; autore caricato in JOIN FETCH.
+- **Migration V19** (`V19__perf_indexes.sql`): indici su `element_assignees(user_id)`,
+  `element_tags(tag_id)`, `messages(author_id)`, `channels(sprint_id)` (parziale),
+  `ai_pending_actions(conversation_id, status)`, `verification_codes(code_hash)`.

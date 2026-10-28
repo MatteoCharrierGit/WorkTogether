@@ -9,7 +9,7 @@ import com.worktogether.dto.response.ApiKeyResponse;
 import com.worktogether.dto.response.CreatedApiKeyResponse;
 import com.worktogether.repository.ApiKeyRepository;
 import jakarta.persistence.EntityNotFoundException;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -29,6 +29,7 @@ public class ApiKeyService {
     private final WorkspaceService workspaceService;
     private final SecureRandom random = new SecureRandom();
 
+    @Transactional(readOnly = true)
     public List<ApiKeyResponse> list(UUID workspaceId, User user) {
         workspaceService.assertRole(workspaceId, user, WorkspaceRole.ADMIN);
         return apiKeyRepository.findByWorkspaceIdOrderByCreatedAtDesc(workspaceId)

@@ -6,7 +6,7 @@ import com.worktogether.dto.request.*;
 import com.worktogether.dto.response.*;
 import com.worktogether.repository.*;
 import jakarta.persistence.EntityNotFoundException;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,8 +15,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
@@ -44,15 +42,12 @@ public class WorkspaceService {
     @Value("${app.upload.dir}")
     private String uploadDir;
 
+    // Una sola query (membership + workspace in JOIN FETCH) invece di 1 + N lookup del ruolo.
+    @Transactional(readOnly = true)
     public List<WorkspaceResponse> getUserWorkspaces(User user) {
-        return workspaceRepository.findByMemberUserId(user.getId()).stream()
-                .map(w -> {
-                    WorkspaceRole role = memberRepository
-                            .findByWorkspaceIdAndUserId(w.getId(), user.getId())
-                            .map(WorkspaceMember::getRole)
-                            .orElse(WorkspaceRole.GUEST);
-                    return WorkspaceResponse.from(w, role);
-                }).toList();
+        return memberRepository.findByUserIdWithWorkspace(user.getId()).stream()
+                .map(m -> WorkspaceResponse.from(m.getWorkspace(), m.getRole()))
+                .toList();
     }
 
     @Transactional
@@ -76,7 +71,7 @@ public class WorkspaceService {
     // @Transactional: serve a tenere aperta la sessione anche quando il metodo è
     // invocato fuori da una richiesta HTTP (es. dal thread di background dell'agente
     // o dalle automazioni), così il caricamento lazy di member.getUser() non fallisce.
-    @Transactional
+    @Transactional(readOnly = true)
     public List<MemberResponse> getMembers(UUID workspaceId, User requester) {
         assertMember(workspaceId, requester);
         return memberRepository.findByWorkspaceId(workspaceId).stream()
@@ -235,21 +230,9 @@ public class WorkspaceService {
         publishAfterCommit(workspaceId, "WORKSPACE_DELETED", Map.of("workspaceId", workspaceId.toString()));
     }
 
-    /**
-     * Pubblica un evento sul topic del workspace solo dopo il commit della transazione corrente,
-     * così i client che reagiscono rifacendo le query leggono dati già persistiti. Se non c'è una
-     * transazione attiva, pubblica subito.
-     */
+    // WorkspaceEventPublisher rimanda già l'invio a dopo il commit quando c'è una transazione attiva.
     private void publishAfterCommit(UUID workspaceId, String type, Object payload) {
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override public void afterCommit() {
-                    eventPublisher.publish(workspaceId, type, payload);
-                }
-            });
-        } else {
-            eventPublisher.publish(workspaceId, type, payload);
-        }
+        eventPublisher.publish(workspaceId, type, payload);
     }
 
     private void deleteUploadDir(UUID workspaceId) {

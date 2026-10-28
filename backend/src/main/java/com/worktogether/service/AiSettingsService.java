@@ -7,7 +7,7 @@ import com.worktogether.domain.enums.WorkspaceRole;
 import com.worktogether.dto.request.UpdateAiSettingsRequest;
 import com.worktogether.dto.response.AiSettingsResponse;
 import com.worktogether.repository.AiSettingsRepository;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 

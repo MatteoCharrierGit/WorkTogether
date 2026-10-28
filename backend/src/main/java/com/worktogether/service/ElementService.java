@@ -12,7 +12,7 @@ import com.worktogether.dto.response.ElementResponse;
 import com.worktogether.repository.*;
 import com.worktogether.websocket.WorkspaceEventPublisher;
 import jakarta.persistence.EntityNotFoundException;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -32,28 +32,56 @@ public class ElementService {
     private final WorkspaceEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
 
-    @Transactional
+    /** Lista per le viste (board/roadmap/calendario): senza {@code body}, vedi {@link #getElements(UUID, User, boolean)}. */
+    @Transactional(readOnly = true)
     public List<ElementResponse> getElements(UUID workspaceId, User user) {
+        return getElements(workspaceId, user, false);
+    }
+
+    /**
+     * Tutti gli elementi del workspace. Tag e assegnatari sono caricati a lotti
+     * (hibernate.default_batch_fetch_size) e l'avanzamento delle epiche con UNA query aggregata,
+     * invece di N lazy-load + 2 COUNT per epica.
+     */
+    @Transactional(readOnly = true)
+    public List<ElementResponse> getElements(UUID workspaceId, User user, boolean includeBody) {
         workspaceService.assertMember(workspaceId, user);
-        return elementRepository.findByWorkspaceId(workspaceId)
-                .stream()
-                .map(e -> {
-                    Integer progress = null;
-                    if (e.getType() == ElementType.EPICA) {
-                        progress = calcProgress(e.getId());
-                    }
-                    return ElementResponse.from(e, progress);
-                }).toList();
+        List<Element> elements = elementRepository.findByWorkspaceId(workspaceId);
+        Map<UUID, Integer> progress = toProgressMap(elementRepository.epicProgressByWorkspace(workspaceId));
+        return toResponses(elements, progress, includeBody);
     }
 
     // Tutti gli elementi assegnati all'utente, attraverso tutti i workspace.
+    @Transactional(readOnly = true)
     public List<ElementResponse> getAssignedToUser(User user) {
-        return elementRepository.findByAssigneeId(user.getId())
-                .stream()
-                .map(e -> {
-                    Integer progress = e.getType() == ElementType.EPICA ? calcProgress(e.getId()) : null;
-                    return ElementResponse.from(e, progress);
-                }).toList();
+        List<Element> elements = elementRepository.findByAssigneeId(user.getId());
+        List<UUID> epicIds = elements.stream()
+                .filter(e -> e.getType() == ElementType.EPICA)
+                .map(Element::getId)
+                .toList();
+        Map<UUID, Integer> progress = epicIds.isEmpty()
+                ? Map.of()
+                : toProgressMap(elementRepository.epicProgressByEpicIds(epicIds));
+        return toResponses(elements, progress, false);
+    }
+
+    private List<ElementResponse> toResponses(List<Element> elements, Map<UUID, Integer> progress, boolean includeBody) {
+        return elements.stream()
+                .map(e -> ElementResponse.from(e,
+                        e.getType() == ElementType.EPICA ? progress.getOrDefault(e.getId(), 0) : null,
+                        includeBody))
+                .toList();
+    }
+
+    // Righe [epicId, totale, completati] → percentuale arrotondata (epiche senza task = 0).
+    private static Map<UUID, Integer> toProgressMap(List<Object[]> rows) {
+        Map<UUID, Integer> out = new HashMap<>();
+        for (Object[] r : rows) {
+            long total = r[1] == null ? 0 : ((Number) r[1]).longValue();
+            long completed = r[2] == null ? 0 : ((Number) r[2]).longValue();
+            out.put((UUID) r[0], total == 0 ? 0 : (int) Math.round((double) completed / total * 100));
+        }
+        return out;
     }
 
     @Transactional
@@ -172,7 +200,7 @@ public class ElementService {
         }
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public ElementResponse getElement(UUID workspaceId, UUID elementId, User user) {
         workspaceService.assertMember(workspaceId, user);
         Element element = findInWorkspace(workspaceId, elementId);
@@ -304,9 +332,6 @@ public class ElementService {
     }
 
     private Integer calcProgress(UUID epicId) {
-        long total = elementRepository.countTasksByEpicId(epicId);
-        if (total == 0) return 0;
-        long completed = elementRepository.countCompletedTasksByEpicId(epicId);
-        return (int) Math.round((double) completed / total * 100);
+        return toProgressMap(elementRepository.epicProgressByEpicIds(List.of(epicId))).getOrDefault(epicId, 0);
     }
 }

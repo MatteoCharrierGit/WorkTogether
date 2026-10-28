@@ -17,7 +17,7 @@ public interface MessageRepository extends JpaRepository<Message, UUID> {
 
     // Pagina più recente di un canale (ordinata desc; il chiamante la inverte per la UI).
     @Query("""
-        SELECT m FROM Message m
+        SELECT m FROM Message m JOIN FETCH m.author
         WHERE m.channel.id = :channelId
         ORDER BY m.createdAt DESC
     """)
@@ -25,7 +25,7 @@ public interface MessageRepository extends JpaRepository<Message, UUID> {
 
     // Pagina di messaggi precedenti a un cursore (per "carica precedenti").
     @Query("""
-        SELECT m FROM Message m
+        SELECT m FROM Message m JOIN FETCH m.author
         WHERE m.channel.id = :channelId AND m.createdAt < :before
         ORDER BY m.createdAt DESC
     """)
@@ -33,32 +33,33 @@ public interface MessageRepository extends JpaRepository<Message, UUID> {
                              @Param("before") OffsetDateTime before,
                              Pageable pageable);
 
-    // Conteggio non-letti: messaggi dopo lastReadAt non scritti dall'utente stesso.
-    @Query("""
-        SELECT COUNT(m) FROM Message m
-        WHERE m.channel.id = :channelId
-          AND m.author.id <> :userId
-          AND m.createdAt > :lastReadAt
-    """)
-    long countUnreadSince(@Param("channelId") UUID channelId,
-                          @Param("userId") UUID userId,
-                          @Param("lastReadAt") OffsetDateTime lastReadAt);
+    // Ultimo messaggio di ciascun canale in UNA query: per ogni canale una sola probe all'indietro
+    // sull'indice idx_messages_channel(channel_id, created_at) (LATERAL ... LIMIT 1).
+    @Query(value = """
+        SELECT lm.* FROM channels c
+        CROSS JOIN LATERAL (
+            SELECT m.* FROM messages m
+            WHERE m.channel_id = c.id
+            ORDER BY m.created_at DESC
+            LIMIT 1
+        ) lm
+        WHERE c.id IN (:channelIds)
+    """, nativeQuery = true)
+    List<Message> findLastMessages(@Param("channelIds") java.util.Collection<UUID> channelIds);
 
-    // Variante senza lastReadAt: tutti i messaggi non scritti dall'utente sono non-letti.
-    // Tenuta separata per non passare un parametro NULL a Postgres (errore 42P18 in "IS NULL").
-    @Query("""
-        SELECT COUNT(m) FROM Message m
-        WHERE m.channel.id = :channelId
-          AND m.author.id <> :userId
-    """)
-    long countUnreadAll(@Param("channelId") UUID channelId,
-                        @Param("userId") UUID userId);
-
-    // Ultimo messaggio di un canale (per la preview nella lista conversazioni).
-    @Query("""
-        SELECT m FROM Message m
-        WHERE m.channel.id = :channelId
-        ORDER BY m.createdAt DESC
-    """)
-    List<Message> findLastMessage(@Param("channelId") UUID channelId, Pageable pageable);
+    // Non-letti per canale in UNA query: messaggi non scritti dall'utente e successivi al suo
+    // last_read_at (se assente — nessuna riga membro o mai letto — contano tutti).
+    // Righe: [channel_id (UUID), conteggio (Number)].
+    @Query(value = """
+        SELECT c.id,
+               (SELECT COUNT(*) FROM messages m
+                 WHERE m.channel_id = c.id
+                   AND m.author_id <> :userId
+                   AND m.created_at > COALESCE(cm.last_read_at, CAST('-infinity' AS timestamptz))) AS unread
+        FROM channels c
+        LEFT JOIN channel_members cm ON cm.channel_id = c.id AND cm.user_id = :userId
+        WHERE c.id IN (:channelIds)
+    """, nativeQuery = true)
+    List<Object[]> countUnreadByChannel(@Param("channelIds") java.util.Collection<UUID> channelIds,
+                                        @Param("userId") UUID userId);
 }

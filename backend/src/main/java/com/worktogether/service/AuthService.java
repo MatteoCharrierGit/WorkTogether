@@ -7,7 +7,7 @@ import com.worktogether.dto.request.*;
 import com.worktogether.dto.response.AuthResponse;
 import com.worktogether.repository.*;
 import com.worktogether.security.JwtUtil;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;

@@ -22,7 +22,7 @@ import com.worktogether.repository.SprintRepository;
 import com.worktogether.repository.WorkspaceRepository;
 import com.worktogether.websocket.WorkspaceEventPublisher;
 import jakarta.persistence.EntityNotFoundException;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.OffsetDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -48,14 +49,31 @@ public class SprintService {
 
     // ---------------------------------------------------------------- Lettura
 
-    @Transactional
+    @Transactional(readOnly = true)
     public List<SprintResponse> list(UUID workspaceId, User user) {
         workspaceService.assertMember(workspaceId, user);
-        return sprintRepository.findByWorkspace(workspaceId).stream().map(this::toResponse).toList();
+        List<Sprint> sprints = sprintRepository.findByWorkspace(workspaceId);
+        if (sprints.isEmpty()) return List.of();
+        // Conteggi e chat di tutte le sprint con 2 query aggregate (invece di 3 query per sprint).
+        List<UUID> ids = sprints.stream().map(Sprint::getId).toList();
+        Map<UUID, long[]> counts = new HashMap<>();
+        for (Object[] r : elementRepository.countTasksBySprintIds(ids)) {
+            counts.put((UUID) r[0], new long[]{
+                    r[1] == null ? 0 : ((Number) r[1]).longValue(),
+                    r[2] == null ? 0 : ((Number) r[2]).longValue()});
+        }
+        Map<UUID, UUID> channels = new HashMap<>();
+        for (Object[] r : channelRepository.findChannelIdsBySprintIds(ids)) {
+            channels.putIfAbsent((UUID) r[0], (UUID) r[1]);
+        }
+        return sprints.stream().map(sp -> {
+            long[] c = counts.getOrDefault(sp.getId(), new long[]{0, 0});
+            return SprintResponse.from(sp, c[0], c[1], channels.get(sp.getId()));
+        }).toList();
     }
 
     /** Sprint attiva con i suoi task. {@code sprint} è null se non c'è alcuna sprint attiva. */
-    @Transactional
+    @Transactional(readOnly = true)
     public SprintDetailResponse getActive(UUID workspaceId, User user) {
         workspaceService.assertMember(workspaceId, user);
         return sprintRepository.findActive(workspaceId)
@@ -63,7 +81,7 @@ public class SprintService {
                 .orElseGet(() -> new SprintDetailResponse(null, List.of()));
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public SprintDetailResponse getOne(UUID workspaceId, UUID sprintId, User user) {
         workspaceService.assertMember(workspaceId, user);
         return toDetail(load(workspaceId, sprintId));
@@ -269,8 +287,9 @@ public class SprintService {
     }
 
     private SprintDetailResponse toDetail(Sprint sprint) {
+        // Lista task senza body (rich text): la vista sprint non lo usa; il dettaglio va su GET /elements/{id}.
         List<ElementResponse> tasks = elementRepository.findBySprintId(sprint.getId()).stream()
-                .map(ElementResponse::from)
+                .map(e -> ElementResponse.from(e, null, false))
                 .toList();
         return new SprintDetailResponse(toResponse(sprint), tasks);
     }

@@ -62,6 +62,10 @@ public interface ChannelRepository extends JpaRepository<Channel, UUID> {
     // Canale chat dedicato a una sprint (type = SPRINT).
     java.util.Optional<Channel> findBySprintId(UUID sprintId);
 
+    // Coppie [sprintId, channelId] per più sprint in una query (lista sprint).
+    @Query("SELECT c.sprintId, c.id FROM Channel c WHERE c.sprintId IN :sprintIds")
+    List<Object[]> findChannelIdsBySprintIds(@Param("sprintIds") java.util.Collection<UUID> sprintIds);
+
     // Tutti i canali del workspace (per l'export/backup).
     List<Channel> findByWorkspaceId(UUID workspaceId);
 }
