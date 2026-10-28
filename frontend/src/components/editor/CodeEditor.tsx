@@ -53,7 +53,7 @@ export function CodeEditor({ value, onChange, language, readOnly = false, wrap =
           theme={dark ? 'dark' : 'light'}
           extensions={extensions}
           height="100%"
-          className="h-full text-[13px]"
+          className="h-full text-sm"
           basicSetup={{
             lineNumbers: true,
             foldGutter: true,
@@ -73,7 +73,7 @@ export function CodeEditor({ value, onChange, language, readOnly = false, wrap =
           }}
         />
       </div>
-      <div className="flex items-center justify-between px-3 py-1 border-t bg-muted/30 text-[11px] text-muted-foreground shrink-0">
+      <div className="flex items-center justify-between px-3 py-1 border-t bg-surface-2 text-2xs text-muted-foreground shrink-0">
         <span>{LANG_LABELS[language]}{readOnly && ' · sola lettura'}</span>
         <span>Ln {pos.line}, Col {pos.col} · {value.length} caratteri</span>
       </div>
