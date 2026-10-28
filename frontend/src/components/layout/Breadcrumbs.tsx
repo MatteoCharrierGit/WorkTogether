@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { TYPE_ICONS } from '@/lib/utils'
+import { TypeIcon } from '@/components/shared'
 
 interface Crumb {
   label: string
@@ -16,11 +16,11 @@ interface BreadcrumbsProps {
 
 export function Breadcrumbs({ items, className }: BreadcrumbsProps) {
   return (
-    <nav className={cn('flex items-center gap-1 text-sm text-muted-foreground', className)} aria-label="Breadcrumb">
+    <nav className={cn('flex min-w-0 flex-wrap items-center gap-1 text-sm text-muted-foreground', className)} aria-label="Breadcrumb">
       {items.map((item, i) => (
         <span key={i} className="flex items-center gap-1">
           {i > 0 && <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-50" />}
-          {item.type && <span className="text-xs">{TYPE_ICONS[item.type]}</span>}
+          {item.type && <TypeIcon type={item.type} size="sm" />}
           {item.href ? (
             <Link to={item.href} className="hover:text-foreground transition-colors truncate max-w-[140px]">
               {item.label}

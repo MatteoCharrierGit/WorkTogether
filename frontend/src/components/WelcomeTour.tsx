@@ -1,7 +1,10 @@
 import { useLayoutEffect, useState } from 'react'
 import { useAuthStore } from '@/store/authStore'
 import { usersApi } from '@/lib/api'
+import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
+import { cn } from '@/lib/utils'
 
 interface Step {
   target?: string   // valore di data-tour da evidenziare; assente = passo centrato
@@ -11,7 +14,7 @@ interface Step {
 
 const STEPS: Step[] = [
   {
-    title: 'Benvenuto in WorkTogether! 🌸',
+    title: 'Benvenuto in WorkTogether',
     body: 'Facciamo un giro completo delle funzionalità più importanti: ti bastano un paio di minuti per sapere dove sta ogni cosa. Puoi saltare quando vuoi.',
   },
   {
@@ -60,8 +63,8 @@ const STEPS: Step[] = [
     body: 'Le impostazioni sono qui, nel menu del tuo profilo in fondo alla sidebar: tema dell\'app, avatar, nome e preferenze personali. Tienilo a mente — è il posto da cui personalizzi WorkTogether.',
   },
   {
-    title: 'Tutto qui! Buon lavoro 🚀',
-    body: 'Ora conosci le sezioni principali. Esplora con calma: ogni area ha qualche dettaglio in più da scoprire. Puoi sempre tornare a queste sezioni dalla sidebar a sinistra.',
+    title: 'Tutto qui, buon lavoro!',
+    body: 'Ora conosci le sezioni principali. Esplora con calma: ogni area ha qualche dettaglio in più da scoprire. Puoi sempre tornare a queste sezioni dalla barra laterale, oppure cercarle al volo con ⌘K / Ctrl+K.',
   },
 ]
 
@@ -88,6 +91,8 @@ export function WelcomeTour() {
       const el = document.querySelector<HTMLElement>(`[data-tour="${step.target}"]`)
       if (!el) { setRect(null); return }
       const r = el.getBoundingClientRect()
+      // Elemento nascosto (es. sidebar desktop su mobile): passo centrato.
+      if (r.width === 0 || r.height === 0) { setRect(null); return }
       setRect({ top: r.top, left: r.left, width: r.width, height: r.height })
     }
     measure()
@@ -120,57 +125,62 @@ export function WelcomeTour() {
     : null
 
   // Posizione della card: accanto all'elemento (a destra della sidebar) o centrata.
-  const cardStyle: React.CSSProperties = spotlight
-    ? {
-        position: 'fixed',
-        top: Math.min(Math.max(8, spotlight.top), window.innerHeight - 220),
-        left: Math.min(spotlight.left + spotlight.width + 14, window.innerWidth - 340),
-      }
-    : {
-        position: 'fixed',
-        top: '50%',
-        left: '50%',
-        transform: 'translate(-50%, -50%)',
-      }
+  // Sotto i 640px la card sta sempre in basso, a tutta larghezza.
+  const narrow = window.innerWidth < 640
+  const cardStyle: React.CSSProperties | undefined = narrow
+    ? undefined
+    : spotlight
+      ? {
+          top: Math.min(Math.max(8, spotlight.top), window.innerHeight - 240),
+          left: Math.min(spotlight.left + spotlight.width + 14, window.innerWidth - 344),
+        }
+      : { top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }
 
   return (
-    <div className="fixed inset-0 z-[100]">
-      {/* Overlay scuro: con lo spotlight usiamo un box-shadow gigante per "bucare" attorno all'elemento. */}
+    <div className="fixed inset-0 z-modal" role="dialog" aria-modal="true" aria-labelledby="tour-title">
+      {/* Overlay: con lo spotlight un box-shadow gigante "buca" l'area attorno all'elemento. */}
       {spotlight ? (
         <div
-          className="pointer-events-none fixed rounded-lg ring-2 ring-primary transition-all duration-200"
+          className="pointer-events-none fixed rounded-lg ring-2 ring-ring transition-all duration-200"
           style={{
             top: spotlight.top,
             left: spotlight.left,
             width: spotlight.width,
             height: spotlight.height,
-            boxShadow: '0 0 0 9999px rgba(0,0,0,0.55)',
+            boxShadow: '0 0 0 9999px rgb(0 0 0 / 0.5)',
           }}
         />
       ) : (
-        <div className="fixed inset-0 bg-black/55" />
+        <div className="fixed inset-0 bg-black/50" />
       )}
 
       {/* Card */}
       <div
         style={cardStyle}
-        className="w-[320px] max-w-[90vw] rounded-xl border bg-card p-4 shadow-xl"
+        className={cn(
+          'fixed rounded-xl border bg-elevated p-4 shadow-lg',
+          narrow ? 'inset-x-3 bottom-3 pb-[max(1rem,env(safe-area-inset-bottom))]' : 'w-80',
+        )}
       >
-        <div className="flex items-center justify-between mb-1">
-          <h3 className="text-sm font-semibold">{step.title}</h3>
-          <span className="text-xs text-muted-foreground">{index + 1}/{STEPS.length}</span>
+        <div className="mb-1.5 flex items-start gap-2">
+          <h3 id="tour-title" className="flex-1 text-sm font-semibold leading-snug">{step.title}</h3>
+          <IconButton label="Chiudi il tour" size="xs" className="-mr-1.5 -mt-1" onClick={finish} icon={<X />} />
         </div>
-        <p className="text-sm text-muted-foreground leading-relaxed">{step.body}</p>
+        <p className="text-sm leading-relaxed text-muted-foreground">{step.body}</p>
 
-        <div className="mt-4 flex items-center justify-between">
-          <button
-            onClick={finish}
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Salta
-          </button>
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-1" aria-label={`Passo ${index + 1} di ${STEPS.length}`}>
+            {STEPS.map((_, i) => (
+              <span
+                key={i}
+                className={cn('h-1.5 rounded-full transition-all', i === index ? 'w-4 bg-primary' : 'w-1.5 bg-border-strong')}
+              />
+            ))}
+          </div>
           <div className="flex gap-2">
-            {!isFirst && (
+            {isFirst ? (
+              <Button size="sm" variant="ghost" onClick={finish}>Salta</Button>
+            ) : (
               <Button size="sm" variant="outline" onClick={prev}>Indietro</Button>
             )}
             <Button size="sm" onClick={next}>

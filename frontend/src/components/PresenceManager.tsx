@@ -3,8 +3,7 @@ import { presenceApi } from '@/lib/api'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { usePresenceStore } from '@/store/presenceStore'
 import { useVoiceActions, useVoiceStatus } from '@/contexts/VoiceSession'
-import { subscribeWorkspace } from '@/lib/websocket'
-import { WsEvent } from '@/types'
+import { useWorkspaceEvents } from '@/lib/websocket'
 
 const HEARTBEAT_MS = 20_000
 
@@ -62,17 +61,13 @@ export function PresenceManager() {
     return () => window.removeEventListener('pagehide', onHide)
   }, [wsId])
 
-  // Aggiornamenti realtime di presenza.
-  useEffect(() => {
-    if (!wsId) return
-    const unsub = subscribeWorkspace(wsId, (ev: WsEvent) => {
-      if (ev.type === 'PRESENCE') {
-        const online = ev.payload?.online
-        if (Array.isArray(online)) setAll(online)
-      }
-    })
-    return unsub
-  }, [wsId, setAll])
+  // Aggiornamenti realtime di presenza (setAll non ricrea lo stato se nulla è cambiato).
+  useWorkspaceEvents(wsId, ev => {
+    if (ev.type === 'PRESENCE') {
+      const online = ev.payload?.online
+      if (Array.isArray(online)) setAll(online)
+    }
+  })
 
   return null
 }

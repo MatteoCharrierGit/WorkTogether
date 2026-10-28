@@ -1,11 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { workspacesApi } from '@/lib/api'
+import { getErrorMessage } from '@/lib/utils'
 import { useWorkspaceStore } from '@/store/workspaceStore'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { toast } from '@/components/ui/toast'
 
@@ -17,6 +21,10 @@ export function CreateWorkspaceDialog({ open, onClose }: { open: boolean; onClos
   const [description, setDescription] = useState('')
   const [loading, setLoading] = useState(false)
 
+  useEffect(() => {
+    if (!open) { setName(''); setDescription('') }
+  }, [open])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) return
@@ -25,13 +33,11 @@ export function CreateWorkspaceDialog({ open, onClose }: { open: boolean; onClos
       const ws = await workspacesApi.create(name.trim(), description.trim() || undefined)
       await queryClient.invalidateQueries({ queryKey: ['workspaces'] })
       setCurrent(ws)
-      toast('Workspace creato')
-      setName('')
-      setDescription('')
+      toast('Workspace creato', 'success')
       onClose()
       navigate(`/workspace/${ws.id}/kanban`)
-    } catch (err: any) {
-      toast(err.response?.data?.error ?? 'Errore nella creazione', 'destructive')
+    } catch (err) {
+      toast(getErrorMessage(err, 'Errore nella creazione'), 'destructive')
     } finally {
       setLoading(false)
     }
@@ -42,30 +48,37 @@ export function CreateWorkspaceDialog({ open, onClose }: { open: boolean; onClos
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Nuovo workspace</DialogTitle>
+          <DialogDescription>Uno spazio separato con i suoi progetti, file, chat e membri.</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <Label>Nome</Label>
+            <Label htmlFor="ws-name">Nome</Label>
             <Input
+              id="ws-name"
               value={name}
               onChange={e => setName(e.target.value)}
               required
               autoFocus
-              placeholder="Es: Team Prodotto"
+              maxLength={100}
+              placeholder="Es. Team Prodotto"
             />
           </div>
           <div className="space-y-1.5">
-            <Label>Descrizione (opzionale)</Label>
-            <Input
+            <Label htmlFor="ws-desc">
+              Descrizione <span className="font-normal text-muted-foreground">(opzionale)</span>
+            </Label>
+            <Textarea
+              id="ws-desc"
               value={description}
               onChange={e => setDescription(e.target.value)}
+              rows={2}
               placeholder="A cosa serve questo workspace?"
             />
           </div>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={onClose}>Annulla</Button>
-            <Button type="submit" disabled={loading}>{loading ? 'Creazione...' : 'Crea'}</Button>
-          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>Annulla</Button>
+            <Button type="submit" loading={loading} disabled={!name.trim()}>Crea workspace</Button>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

@@ -1,23 +1,30 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Menu } from 'lucide-react'
+import { Menu, Search } from 'lucide-react'
 import { Sidebar } from './Sidebar'
+import { routeTitle } from './nav'
+import { useRealtimeSync } from './useRealtimeSync'
 import { Channel, Workspace } from '@/types'
 import { workspacesApi } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import {
   notificationsEnabled, requestNotificationPermission, notificationPermission,
   appIsForeground, getActiveChatChannel, showChatNotification,
 } from '@/lib/notifications'
 import { QuickCapture } from '@/components/QuickCapture'
 import { WelcomeTour } from '@/components/WelcomeTour'
+import { CommandPalette } from '@/components/CommandPalette'
 import { VoiceSessionProvider } from '@/contexts/VoiceSession'
 import { VoiceBar } from '@/components/voice/VoiceBar'
 import { ScreenShareOverlay } from '@/components/voice/ScreenShareOverlay'
 import { PresenceManager } from '@/components/PresenceManager'
+import { IconButton } from '@/components/ui/icon-button'
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { useAuthStore } from '@/store/authStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
-import { connectWS, subscribeWorkspace } from '@/lib/websocket'
+import { useUiStore } from '@/store/uiStore'
+import { connectWS } from '@/lib/websocket'
 import {
   ToastProvider, ToastViewport, Toast, ToastTitle, ToastClose, useToasts, toast
 } from '@/components/ui/toast'
@@ -38,10 +45,12 @@ function Toaster() {
 }
 
 export function Layout() {
-  const token = useAuthStore(s => s.accessToken)
+  const hasToken = useAuthStore(s => !!s.accessToken)
   const meId = useAuthStore(s => s.user?.id)
   const workspaceId = useWorkspaceStore(s => s.current?.id)
   const setCurrentWorkspace = useWorkspaceStore(s => s.setCurrent)
+  const collapsed = useUiStore(s => s.sidebarCollapsed)
+  const setCommandOpen = useUiStore(s => s.setCommandOpen)
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const location = useLocation()
@@ -52,7 +61,7 @@ export function Layout() {
   const { data: myWorkspaces } = useQuery<Workspace[]>({
     queryKey: ['workspaces'],
     queryFn: workspacesApi.list,
-    enabled: !!token,
+    enabled: hasToken,
   })
   useEffect(() => {
     if (!myWorkspaces || !workspaceId) return
@@ -62,143 +71,78 @@ export function Layout() {
     }
   }, [myWorkspaces, workspaceId, setCurrentWorkspace, navigate])
 
-  // Drawer della sidebar su mobile (< md). Su desktop la sidebar è sempre visibile (statica).
+  // Drawer della sidebar su mobile (< md); si richiude a ogni cambio pagina.
   const [navOpen, setNavOpen] = useState(false)
-  // Chiude il drawer a ogni cambio pagina: navigando da un link la sidebar si richiude da sola.
   useEffect(() => { setNavOpen(false) }, [location.pathname])
 
+  // Connessione unica: il token corrente viene letto a ogni (ri)connessione (beforeConnect).
   useEffect(() => {
-    if (token) connectWS(token)
-  }, [token])
+    if (hasToken) connectWS()
+  }, [hasToken])
 
   // Chiede una volta il permesso per le notifiche desktop (se l'utente non l'ha negato).
   useEffect(() => {
-    if (token && notificationsEnabled() && notificationPermission() === 'default') {
+    if (hasToken && notificationsEnabled() && notificationPermission() === 'default') {
       requestNotificationPermission()
     }
-  }, [token])
+  }, [hasToken])
 
-  // Sincronizzazione realtime centralizzata: qualsiasi evento sul workspace
-  // corrente aggiorna board, dettaglio, "le mie task" e drive (anche da altri client).
-  useEffect(() => {
-    if (!workspaceId) return
+  // Notifica un nuovo messaggio: notifica di sistema se la finestra non è in primo
+  // piano, altrimenti un toast in-app (a meno che non si stia già leggendo quel canale).
+  const notifyMessage = useCallback((p: any) => {
+    if (!workspaceId || !p || !p.channelId || p.authorId === meId) return
+    if (!notificationsEnabled()) return
+    // Solo per i canali visibili a questo utente (esclude le stanze di cui non è membro).
+    const channels = queryClient.getQueryData<Channel[]>(['channels', workspaceId])
+    const ch = channels?.find(c => c.id === p.channelId)
+    if (!ch) return
+    if (getActiveChatChannel() === p.channelId && appIsForeground()) return
+    const author = p.authorName || 'Qualcuno'
+    // Niente contenuto: il topic è di tutto il workspace, quindi il backend non lo invia.
+    const title = ch.type === 'DM' ? author : `${author} · ${ch.name}`
+    const body = ch.type === 'DM' ? 'Ti ha inviato un messaggio' : 'Nuovo messaggio'
+    const open = () => navigate(`/workspace/${workspaceId}/chat?c=${p.channelId}`)
+    if (appIsForeground()) toast(`Nuovo messaggio da ${title}`, 'info')
+    else showChatNotification({ title, body, tag: p.channelId, onClick: open })
+  }, [workspaceId, meId, queryClient, navigate])
 
-    // Notifica un nuovo messaggio: notifica di sistema se la finestra non è in primo
-    // piano, altrimenti un toast in-app (a meno che non si stia già leggendo quel canale).
-    const notifyMessage = (p: any) => {
-      if (!p || !p.channelId || p.authorId === meId) return
-      if (!notificationsEnabled()) return
-      // Solo per i canali visibili a questo utente (esclude le stanze di cui non è membro).
-      const channels = queryClient.getQueryData<Channel[]>(['channels', workspaceId])
-      const ch = channels?.find(c => c.id === p.channelId)
-      if (!ch) return
-      const reading = getActiveChatChannel() === p.channelId && appIsForeground()
-      if (reading) return
-      const author = p.authorName || 'Qualcuno'
-      // Niente contenuto del messaggio nella notifica: il topic è di tutto il workspace,
-      // quindi il backend non lo invia. Mostriamo solo chi ha scritto e dove.
-      const title = ch.type === 'DM' ? author : `${author} · ${ch.name}`
-      const body = ch.type === 'DM' ? 'Ti ha inviato un messaggio' : 'Nuovo messaggio'
-      const open = () => navigate(`/workspace/${workspaceId}/chat?c=${p.channelId}`)
-      if (appIsForeground()) {
-        // Finestra attiva ma altrove: toast discreto, cliccabile non serve qui.
-        toast(`💬 ${title}`)
-      } else {
-        showChatNotification({ title, body, tag: p.channelId, onClick: open })
-      }
-    }
+  // Sincronizzazione realtime: invalidazioni mirate per evento (scoped per wsId, raggruppate).
+  useRealtimeSync({ workspaceId, meId, onMessage: notifyMessage })
 
-    const unsub = subscribeWorkspace(workspaceId, ev => {
-      // Rimuove subito un workspace dalla cache (dropdown aggiornato all'istante, senza
-      // attendere il refetch) e poi invalida per riconciliare con il server.
-      const dropWorkspace = (wsId?: string) => {
-        const id = wsId ?? workspaceId
-        queryClient.setQueryData<Workspace[]>(['workspaces'], old =>
-          old ? old.filter(w => w.id !== id) : old)
-        queryClient.invalidateQueries({ queryKey: ['workspaces'] })
-      }
-      // Workspace eliminato: chi è dentro esce subito (niente attesa di un refresh).
-      if (ev.type === 'WORKSPACE_DELETED') {
-        setCurrentWorkspace(null)
-        dropWorkspace(ev.payload?.workspaceId)
-        toast('Questo workspace è stato eliminato')
-        navigate('/', { replace: true })
-        return
-      }
-      // Membro rimosso: se sono io, vengo espulso dall'area del workspace.
-      if (ev.type === 'MEMBER_REMOVED') {
-        if (ev.payload?.userId === meId) {
-          setCurrentWorkspace(null)
-          dropWorkspace()
-          toast('Sei stato rimosso da questo workspace')
-          navigate('/', { replace: true })
-        } else {
-          queryClient.invalidateQueries({ queryKey: ['members'] })
-        }
-        return
-      }
-      // Presenza: gestita da PresenceManager, non tocca le query dei dati.
-      if (ev.type === 'PRESENCE') return
-      // Messaggi dell'assistente AI (chat condivise): li gestisce AssistantPage,
-      // non riguardano elementi/drive/canali.
-      if (ev.type === 'AI_MESSAGE') return
-      // Eventi chat: aggiornano solo la lista canali (badge non-letti in sidebar).
-      if (ev.type === 'MESSAGE_CREATED' || ev.type.startsWith('CHANNEL_') || ev.type === 'TYPING') {
-        if (ev.type !== 'TYPING') {
-          queryClient.invalidateQueries({ queryKey: ['channels'] })
-        }
-        if (ev.type === 'MESSAGE_CREATED') notifyMessage(ev.payload)
-        return
-      }
-      // Tag creati/modificati/eliminati (anche dall'agente AI): aggiorna la lista tag e gli elementi
-      // (le card mostrano i tag).
-      if (ev.type === 'TAG_CHANGED') {
-        queryClient.invalidateQueries({ queryKey: ['tags'] })
-        queryClient.invalidateQueries({ queryKey: ['elements'] })
-        return
-      }
-      if (ev.type === 'SPRINT_CHANGED') {
-        queryClient.invalidateQueries({ queryKey: ['sprints'] })
-        queryClient.invalidateQueries({ queryKey: ['sprint-active'] })
-        return
-      }
-      queryClient.invalidateQueries({ queryKey: ['elements'] })
-      queryClient.invalidateQueries({ queryKey: ['element'] })
-      queryClient.invalidateQueries({ queryKey: ['my-tasks'] })
-      queryClient.invalidateQueries({ queryKey: ['drive-folders'] })
-      queryClient.invalidateQueries({ queryKey: ['drive-files'] })
-      // Le transizioni di task (status/blocked/sprint) si riflettono anche sulle viste sprint.
-      queryClient.invalidateQueries({ queryKey: ['sprints'] })
-      queryClient.invalidateQueries({ queryKey: ['sprint-active'] })
-    })
-    return unsub
-  }, [workspaceId, queryClient, meId, navigate])
+  const title = routeTitle(location.pathname)
 
   return (
     <VoiceSessionProvider>
-      <div className="flex h-screen overflow-hidden bg-background">
-        <Sidebar mobileOpen={navOpen} />
-        {/* Backdrop del drawer su mobile. */}
-        {navOpen && (
-          <div
-            className="fixed inset-0 z-40 bg-black/50 md:hidden"
-            onClick={() => setNavOpen(false)}
-            aria-hidden
-          />
-        )}
-        <main className="flex-1 overflow-hidden flex flex-col min-w-0">
-          {/* Header mobile con hamburger: la sidebar è nascosta sotto md. */}
-          <header className="flex items-center gap-2 border-b px-3 py-2 md:hidden">
-            <button
-              onClick={() => setNavOpen(o => !o)}
-              className="rounded-md p-1.5 hover:bg-accent/60"
-              aria-label="Apri menu"
-            >
-              <Menu className="h-5 w-5" />
-            </button>
+      <div className="flex h-dvh overflow-hidden bg-background">
+        {/* Sidebar desktop: piena o rail di icone (preferenza persistita). */}
+        <aside
+          aria-label="Navigazione principale"
+          className={cn(
+            'hidden shrink-0 border-r border-sidebar-border transition-[width] duration-200 ease-out md:flex',
+            collapsed ? 'w-14' : 'w-60',
+          )}
+        >
+          <Sidebar collapsed={collapsed} />
+        </aside>
+
+        {/* Sidebar mobile: drawer. */}
+        <Sheet open={navOpen} onOpenChange={setNavOpen}>
+          <SheetContent side="left" hideClose className="w-72 max-w-[85vw] p-0 md:hidden" aria-describedby={undefined} onOpenAutoFocus={e => e.preventDefault()}>
+            <SheetTitle className="sr-only">Menu di navigazione</SheetTitle>
+            <Sidebar variant="drawer" />
+          </SheetContent>
+        </Sheet>
+
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {/* Barra mobile minimale: le pagine hanno già il proprio PageHeader. */}
+          <header className="z-header flex h-12 shrink-0 items-center gap-1 border-b bg-background/95 px-2 backdrop-blur md:hidden">
+            <IconButton label="Apri menu" onClick={() => setNavOpen(true)} icon={<Menu />} />
+            <span className="min-w-0 flex-1 truncate px-1 text-sm font-semibold">{title}</span>
+            <IconButton label="Cerca" onClick={() => setCommandOpen(true)} icon={<Search />} />
           </header>
           <Outlet />
         </main>
+        <CommandPalette />
         <QuickCapture />
         <Toaster />
         <WelcomeTour />

@@ -13,18 +13,22 @@ function isJwtExpired(token: string): boolean {
 }
 
 export function ProtectedRoute() {
-  const { user, accessToken, refreshToken } = useAuthStore()
+  // Selettori granulari: nessun re-render per cambi non rilevanti (es. updateUser di altri campi).
+  const hasUser = useAuthStore(s => !!s.user)
+  const mustResetPassword = useAuthStore(s => !!s.user?.mustResetPassword)
+  const accessToken = useAuthStore(s => s.accessToken)
+  const hasRefreshToken = useAuthStore(s => !!s.refreshToken)
 
   // Nessuna sessione: vai al login.
-  if (!accessToken || !user) return <Navigate to="/login" replace />
+  if (!accessToken || !hasUser) return <Navigate to="/login" replace />
 
   // Access token scaduto e nessun refresh token utile: sessione morta → login.
   // (Se c'è il refresh token lasciamo entrare: l'interceptor rinnova al primo 401.)
-  if (isJwtExpired(accessToken) && !refreshToken) {
+  if (isJwtExpired(accessToken) && !hasRefreshToken) {
     return <Navigate to="/login" replace />
   }
 
-  if (user.mustResetPassword) return <Navigate to="/force-reset" replace />
+  if (mustResetPassword) return <Navigate to="/force-reset" replace />
 
   return <Outlet />
 }

@@ -1,74 +1,172 @@
+import { useEffect, useRef } from 'react'
 import { Client, StompSubscription } from '@stomp/stompjs'
 import SockJS from 'sockjs-client'
 import { WsEvent } from '@/types'
+import { useAuthStore } from '@/store/authStore'
+import { usersApi } from '@/lib/api'
 
-type WsHandler = (event: WsEvent) => void
+/**
+ * Connessione STOMP unica per tutta l'app.
+ *
+ * API per le pagine:
+ *  - `useWorkspaceEvents(wsId, handler)`  hook: eventi di `/topic/workspace/{wsId}`.
+ *     L'handler può cambiare a ogni render (è tenuto in un ref): la subscription non viene rifatta.
+ *  - `useUserEvents(handler)`             hook: eventi personali di `/user/queue/events` (es. CHANNEL_READ).
+ *  - `subscribeWorkspace(wsId, handler)`  versione imperativa (ritorna l'unsubscribe).
+ *  - `subscribeUserEvents(handler)`       idem per la coda personale.
+ *  - `onWSConnect(listener)`              chiamato a ogni (ri)connessione; `reconnect=true` dopo una
+ *                                         caduta → occasione per riallineare i dati persi.
+ *
+ * Più componenti possono ascoltare lo stesso workspace: c'è UNA sola subscription STOMP per
+ * workspace che inoltra l'evento a tutti gli handler registrati.
+ */
+
+export type WsHandler = (event: WsEvent) => void
+type ConnectListener = (info: { reconnect: boolean }) => void
 
 let client: Client | null = null
-// Desired subscribers (workspaceId -> set of handlers) and the live STOMP subscriptions.
-// Più componenti (es. Layout + ChatPage) possono ascoltare lo stesso workspace:
-// una sola subscription STOMP per workspace inoltra l'evento a tutti gli handler.
+let everConnected = false
 const handlers = new Map<string, Set<WsHandler>>()
 const active = new Map<string, StompSubscription>()
+const userHandlers = new Set<WsHandler>()
+let userSub: StompSubscription | null = null
+const connectListeners = new Set<ConnectListener>()
+
+const USER_QUEUE = '/user/queue/events'
+
+function parse(body: string): WsEvent | null {
+  try {
+    return JSON.parse(body) as WsEvent
+  } catch {
+    return null /* frame malformato: ignorato */
+  }
+}
+
+function dispatch(set: Iterable<WsHandler> | undefined, event: WsEvent) {
+  if (!set) return
+  // Copia: un handler può disiscriversi durante il dispatch.
+  for (const h of Array.from(set)) {
+    try {
+      h(event)
+    } catch (err) {
+      // Un handler che fallisce non deve bloccare gli altri.
+      if (import.meta.env.DEV) console.error('[ws] handler error', err)
+    }
+  }
+}
 
 function doSubscribe(workspaceId: string) {
-  // Only subscribe when the underlying STOMP connection is actually up,
-  // otherwise @stomp/stompjs throws ("no underlying STOMP connection").
+  // Solo a connessione attiva, altrimenti @stomp/stompjs lancia ("no underlying STOMP connection").
   if (!client || !client.connected) return
   if (active.has(workspaceId)) return
   const set = handlers.get(workspaceId)
   if (!set || set.size === 0) return
   const sub = client.subscribe(`/topic/workspace/${workspaceId}`, msg => {
-    let event: WsEvent
-    try {
-      event = JSON.parse(msg.body) as WsEvent
-    } catch {
-      return /* ignore malformed frames */
-    }
-    handlers.get(workspaceId)?.forEach(h => {
-      try {
-        h(event)
-      } catch {
-        /* un handler che fallisce non deve bloccare gli altri */
-      }
-    })
+    const event = parse(msg.body)
+    if (event) dispatch(handlers.get(workspaceId), event)
   })
   active.set(workspaceId, sub)
 }
 
-export function connectWS(token: string): Client {
+function doSubscribeUser() {
+  if (!client || !client.connected || userSub) return
+  userSub = client.subscribe(USER_QUEUE, msg => {
+    const event = parse(msg.body)
+    if (event) dispatch(userHandlers, event)
+  })
+}
+
+/** Scadenza (ms epoch) di un JWT, null se illeggibile. */
+function jwtExpiry(token: string): number | null {
+  try {
+    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    const payload = JSON.parse(atob(base64))
+    return typeof payload.exp === 'number' ? payload.exp * 1000 : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Token corrente per la CONNECT. Se è scaduto (o sta per scadere) fa una chiamata autenticata
+ * leggera: l'interceptor di axios rinnova il token col refresh token (deduplicato) e lo salva
+ * nello store, da cui lo rileggiamo.
+ */
+async function freshAccessToken(): Promise<string | null> {
+  let token = useAuthStore.getState().accessToken
+  if (!token) return null
+  const exp = jwtExpiry(token)
+  if (exp !== null && exp - Date.now() < 30_000) {
+    try {
+      await usersApi.me()
+    } catch {
+      /* refresh fallito: l'interceptor gestisce il logout; tentiamo comunque */
+    }
+    token = useAuthStore.getState().accessToken
+  }
+  return token
+}
+
+/**
+ * Avvia (una volta) la connessione. Il token passato è ignorato: a ogni (ri)connessione
+ * `beforeConnect` legge il token CORRENTE dallo store (l'access token scade dopo 15 minuti e le
+ * riconnessioni usavano quello vecchio).
+ */
+export function connectWS(_token?: string): Client {
   if (client) return client
 
-  client = new Client({
+  const c = new Client({
     webSocketFactory: () => new SockJS('/ws'),
-    connectHeaders: { Authorization: `Bearer ${token}` },
     reconnectDelay: 3000,
+    beforeConnect: async stomp => {
+      const token = await freshAccessToken()
+      if (!token) {
+        // Sessione chiusa nel frattempo: niente connessione.
+        void stomp.deactivate()
+        return
+      }
+      stomp.connectHeaders = { Authorization: `Bearer ${token}` }
+    },
     onConnect: () => {
-      // (Re)subscribe every desired workspace once the connection is ready.
+      // (Ri)crea tutte le subscription desiderate ora che la connessione è pronta.
       active.clear()
+      userSub = null
       handlers.forEach((_, wsId) => doSubscribe(wsId))
+      doSubscribeUser()
+      const reconnect = everConnected
+      everConnected = true
+      connectListeners.forEach(l => {
+        try {
+          l({ reconnect })
+        } catch {
+          /* ignore */
+        }
+      })
     },
     onWebSocketClose: () => {
-      // Stale subscription objects: clear so onConnect can recreate them.
+      // Oggetti subscription ormai invalidi: onConnect li ricrea.
       active.clear()
+      userSub = null
     },
   })
 
-  client.activate()
-  return client
+  client = c
+  c.activate()
+  return c
 }
 
-export function subscribeWorkspace(
-  workspaceId: string,
-  onEvent: (event: WsEvent) => void
-): () => void {
+export function isWSConnected(): boolean {
+  return !!client?.connected
+}
+
+export function subscribeWorkspace(workspaceId: string, onEvent: WsHandler): () => void {
   let set = handlers.get(workspaceId)
   if (!set) {
     set = new Set()
     handlers.set(workspaceId, set)
   }
   set.add(onEvent)
-  // Subscribe immediately if already connected; otherwise onConnect handles it.
+  // Subito se già connessi; altrimenti ci pensa onConnect.
   doSubscribe(workspaceId)
 
   return () => {
@@ -82,12 +180,51 @@ export function subscribeWorkspace(
         try {
           sub.unsubscribe()
         } catch {
-          /* connection may already be gone */
+          /* connessione già chiusa */
         }
         active.delete(workspaceId)
       }
     }
   }
+}
+
+/** Eventi personali (`/user/queue/events`), es. CHANNEL_READ {workspaceId, channelId, userId}. */
+export function subscribeUserEvents(onEvent: WsHandler): () => void {
+  userHandlers.add(onEvent)
+  doSubscribeUser()
+  return () => {
+    userHandlers.delete(onEvent)
+  }
+}
+
+/** Listener di (ri)connessione. Ritorna l'unsubscribe. */
+export function onWSConnect(listener: ConnectListener): () => void {
+  connectListeners.add(listener)
+  return () => {
+    connectListeners.delete(listener)
+  }
+}
+
+/**
+ * Hook: ascolta gli eventi del workspace. L'handler può essere una closure nuova a ogni render:
+ * viene letto da un ref, quindi la subscription dipende solo da `wsId`.
+ *
+ *   useWorkspaceEvents(wsId, ev => { if (ev.type === 'MESSAGE_CREATED') … })
+ */
+export function useWorkspaceEvents(wsId: string | null | undefined, handler: WsHandler): void {
+  const ref = useRef(handler)
+  ref.current = handler
+  useEffect(() => {
+    if (!wsId) return
+    return subscribeWorkspace(wsId, ev => ref.current(ev))
+  }, [wsId])
+}
+
+/** Hook: eventi personali dell'utente (`/user/queue/events`). */
+export function useUserEvents(handler: WsHandler): void {
+  const ref = useRef(handler)
+  ref.current = handler
+  useEffect(() => subscribeUserEvents(ev => ref.current(ev)), [])
 }
 
 export function disconnectWS() {
@@ -99,7 +236,14 @@ export function disconnectWS() {
     }
   })
   active.clear()
-  handlers.clear()
-  client?.deactivate()
+  userSub = null
+  everConnected = false
+  // Gli handler restano registrati: appartengono ai componenti, che li rimuovono al proprio unmount.
+  void client?.deactivate()
   client = null
 }
+
+// Logout: chiude la connessione (non deve restare aperta con l'identità dell'utente precedente).
+useAuthStore.subscribe((state, prev) => {
+  if (prev.accessToken && !state.accessToken) disconnectWS()
+})
