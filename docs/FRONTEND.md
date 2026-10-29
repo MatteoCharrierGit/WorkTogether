@@ -180,10 +180,11 @@ Dettagli su token, qualità (audio Opus; screen share 1080p a ~15 fps), presenza
   usciva senza token (401, es. sull'heartbeat). Scheda in background (timer rallentati): nessun rinnovo
   perso, perché ogni chiamata passa da `getAccessToken()` che rinnova un token in scadenza o scaduto.
   **Più schede**: i token sono nel `sessionStorage` della scheda, quindi ogni scheda ha la sua sessione e
-  il suo refresh token e non si disturbano. Una scheda **duplicata** (copia il `sessionStorage`) parte
-  invece con lo stesso refresh token: la prima che rinnova lo invalida e l'altra, al rinnovo, va alla
-  schermata di accesso (un clic: la sessione Authentik è ancora valida). Comportamento voluto per
-  semplicità (niente `BroadcastChannel`/`navigator.locks`).
+  il suo refresh token e non si disturbano. Una scheda **duplicata** o aperta con `window.open` (copiano
+  il `sessionStorage`) parte invece con lo stesso refresh token: la prima che rinnova lo invalida, l'altra
+  riceve `invalid_grant` e, quando il suo access token scade davvero, va alla schermata di accesso (un
+  clic: la sessione Authentik è ancora valida). Comportamento accettato per semplicità (niente
+  `BroadcastChannel`/`navigator.locks`); non è cambiato con il single-flight.
 - **401**: l'interceptor rinnova una volta e ripete; se non basta → `/login?returnTo=…&expired=1`.
   Le chiamate `fetch` (stream SSE di Akari) prendono il token da `getAccessToken()`.
 - **WebSocket**: `beforeConnect` usa `getAccessToken()`; il server chiude la connessione quando il

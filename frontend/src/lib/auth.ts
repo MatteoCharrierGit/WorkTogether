@@ -70,8 +70,9 @@ let renewing: Promise<string | null> | null = null
  *
  * Più schede: i token stanno nel sessionStorage della scheda, quindi ogni scheda aperta normalmente ha
  * la sua sessione e il suo refresh token e non si disturbano. Solo una scheda *duplicata* (che copia il
- * sessionStorage) parte con lo stesso refresh token dell'originale: la prima che rinnova lo invalida e
- * l'altra, al suo rinnovo, finisce sulla schermata di accesso (un clic, la sessione Authentik è ancora valida).
+ * sessionStorage, anche window.open) parte con lo stesso refresh token dell'originale: la prima che rinnova
+ * lo invalida e l'altra, scaduto il suo access token, finisce sulla schermata di accesso (un clic, la
+ * sessione Authentik è ancora valida).
  */
 export function renewAccessToken(): Promise<string | null> {
   if (!oidcConfigured) return Promise.resolve(null)
