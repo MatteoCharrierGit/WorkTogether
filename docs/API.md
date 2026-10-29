@@ -87,7 +87,7 @@ API rifiutato, `503` API di Authentik non configurata.
 |--------|----------|---------|------|
 | GET | `` | 👤 | Workspace dell'utente |
 | POST | `` | ⭐ | Crea un workspace |
-| GET | `/{wsId}/members` | 👤 | Membri del workspace |
+| GET | `/{wsId}/members` | 👤 · 🔑 `members:read` | Membri del workspace (via API key: vista ridotta, vedi §13) |
 | POST | `/{wsId}/members?userId=&role=` | 🛡️ | Aggiunge un membro |
 | PATCH | `/{wsId}/members/{userId}/role?role=` | 🛡️ | Cambia ruolo |
 | DELETE | `/{wsId}/members/{userId}` | 🛡️ | Rimuove un membro |
@@ -114,7 +114,7 @@ API rifiutato, `503` API di Authentik non configurata.
 
 | Metodo | Endpoint | Accesso | Note |
 |--------|----------|---------|------|
-| GET | `` | 👤 · 🔑 `elements:read` | Lista elementi del workspace |
+| GET | `` | 👤 · 🔑 `elements:read` | Lista elementi del workspace (filtri opzionali, vedi sotto) |
 | POST | `` | 👤 · 🔑 `elements:write` | Crea un elemento |
 | GET | `/{id}` | 👤 · 🔑 `elements:read` | Dettaglio |
 | PUT | `/{id}` | 👤 · 🔑 `elements:write` | Aggiorna |
@@ -140,6 +140,27 @@ Corpo (`ElementRequest`):
 
 > La risposta (`ElementResponse`) include anche `sprintId` (sprint a cui il TASK è assegnato, null = backlog),
 > `completedAt` (istante di completamento, per la timeline della sprint) e `blocked`.
+
+**Filtri di `GET /elements`** (tutti opzionali, combinati in AND; valgono per utenti e API key).
+Senza parametri la risposta è quella di sempre: **tutti** gli elementi, ordinati per `position` e poi
+per data di creazione.
+
+| Parametro | Significato |
+|-----------|-------------|
+| `type` | `EPICA` · `STORIA` · `TASK` · `EVENTO` |
+| `status` | `DA_FARE` · `IN_CORSO` · `COMPLETATO` · `ARCHIVIATO` |
+| `parentId` | Solo i figli diretti di questo elemento (es. i task di una storia) |
+| `q` | Testo contenuto nel titolo, senza distinzione di maiuscole (spazi esterni ignorati; max 200 caratteri) |
+| `sprintId` | Solo gli elementi della sprint indicata |
+| `backlog` | `true` = solo elementi senza sprint · `false` = solo elementi in una sprint (non insieme a `sprintId`) |
+| `tagId` | Solo gli elementi con questo tag |
+| `limit` | Numero massimo di risultati, da 1 a **500**; **assente = nessun limite** (comportamento storico) |
+| `offset` | Risultati da saltare (default 0) |
+| `includeBody` | `false` per omettere `body` dalla lista (default `true`) |
+
+L'header di risposta `X-Total-Count` contiene il numero di risultati **prima** di `limit`/`offset`.
+Valori non validi (tipo inesistente, UUID malformato, `limit` fuori intervallo, `sprintId` insieme a
+`backlog`) → **400**. Esempio: `GET /elements?type=TASK&parentId=<idStoria>&status=DA_FARE`.
 
 ### Allegati — `…/elements/{id}/attachments`
 | Metodo | Endpoint | Accesso | Note |
@@ -177,7 +198,7 @@ Corpo (`ElementRequest`):
 > **Cartelle**: spostare/rinominare/eliminare resta solo **proprietario** o **admin**. Caricare file e
 > **intere cartelle** e copiare: qualsiasi non-guest.
 
-## 6b. Sprint — `/api/workspaces/{wsId}/sprints` (solo token utente)
+## 6b. Sprint — `/api/workspaces/{wsId}/sprints`
 
 Gestione del ciclo di vita di una sprint: **PLANNED → ACTIVE → CLOSED**. Avvio e chiusura sono
 **rigorosamente manuali** (non dipendono dalle date) e riservati all'**admin**; al massimo **una
@@ -189,16 +210,16 @@ sprint ACTIVE per workspace**. Solo gli `elements` di tipo **TASK** si collegano
 
 | Metodo | Endpoint | Accesso | Note |
 |--------|----------|---------|------|
-| GET | `` | 👤 | Tutte le sprint del workspace (con `taskTotal`/`taskCompleted`/`channelId`) |
-| GET | `/active` | 👤 | Sprint attiva + i suoi task (`{ sprint, tasks }`); `sprint` null se nessuna |
-| GET | `/{id}` | 👤 | Dettaglio di una sprint + task |
+| GET | `` | 👤 · 🔑 `sprints:read` | Tutte le sprint del workspace (con `taskTotal`/`taskCompleted`/`channelId`) |
+| GET | `/active` | 👤 · 🔑 `sprints:read` | Sprint attiva + i suoi task (`{ sprint, tasks }`); `sprint` null se nessuna |
+| GET | `/{id}` | 👤 · 🔑 `sprints:read` | Dettaglio di una sprint + task |
 | POST | `` | 🛡️ | Crea (planning): `{ name, goal?, startDate?, endDate? }` (date previste, `YYYY-MM-DD`) |
 | PATCH | `/{id}` | 🛡️ | Aggiorna (non se CLOSED): `{ name?, goal?, startDate?, endDate?, position? }` |
 | DELETE | `/{id}` | 🛡️ | Elimina (solo PLANNED); i task tornano al backlog |
 | POST | `/{id}/start` | 🛡️ | Avvia (solo PLANNED): crea la chat di sprint; **409** se esiste già una attiva |
 | POST | `/{id}/close` | 🛡️ | Chiude (solo ACTIVE): vedi corpo sotto |
-| POST | `/{id}/tasks/{elementId}` | 👤 (no guest) | Aggiunge un TASK alla sprint |
-| DELETE | `/{id}/tasks/{elementId}` | 👤 (no guest) | Rimuove il TASK dalla sprint (torna al backlog) |
+| POST | `/{id}/tasks/{elementId}` | 👤 (no guest) · 🔑 `sprints:write` | Aggiunge un TASK alla sprint (non CLOSED; se era in un'altra sprint vi viene spostato) |
+| DELETE | `/{id}/tasks/{elementId}` | 👤 (no guest) · 🔑 `sprints:write` | Rimuove il TASK dalla sprint (torna al backlog) |
 
 Corpo chiusura (`CloseSprintRequest`):
 ```json
@@ -299,17 +320,81 @@ Su `participant_left` azzera lo stato "in chiamata" del partecipante. Config in
 Workspace → **Admin** → tab **API key** → *Nuova API key*. Il segreto in chiaro è mostrato **una sola
 volta**: copialo e conservalo (es. variabile d'ambiente del bot). In DB è salvato solo l'hash SHA-256.
 
+### Per conto di chi agisce
+La chiave agisce **per conto dell'utente che l'ha creata** (un admin del workspace): le risorse create
+o modificate via chiave hanno quell'utente come autore (`createdBy` degli elementi, `uploadedBy` dei
+file, autore delle notifiche). Valgono i **ruoli attuali** di quell'utente: se viene declassato a
+`GUEST` o rimosso dal workspace, la chiave perde la scrittura (o ogni accesso) senza bisogno di
+revocarla. Per distinguere il lavoro di un'integrazione, crea la chiave con un account dedicato.
+
 ### Scope
 | Scope | Permette |
 |-------|----------|
-| `elements:read` | Leggere elementi (task/eventi/storie/epiche) e allegati |
+| `elements:read` | Leggere elementi (task/eventi/storie/epiche) e allegati, con i filtri di §5 |
 | `elements:write` | Creare/modificare/eliminare elementi e allegati |
 | `drive:read` | Leggere cartelle e file |
 | `drive:write` | Caricare, modificare, spostare, rinominare, copiare, eliminare |
 | `tags:read` | Leggere i tag |
 | `tags:write` | Creare/modificare/eliminare i tag |
+| `members:read` | **Solo** `GET /members`, in vista ridotta (vedi sotto) |
+| `sprints:read` | **Solo** `GET /sprints`, `GET /sprints/active`, `GET /sprints/{id}` (il dettaglio include i task della sprint, senza `body`) |
+| `sprints:write` | **Solo** `POST` e `DELETE /sprints/{id}/tasks/{elementId}`: mettere o togliere un TASK da una sprint esistente |
 
-Regola: `GET` richiede lo scope `:read`; le altre richiedono `:write` (lo `:write` include la lettura).
+Regole:
+- Elementi, Drive e tag: `GET` richiede lo scope `:read`; le altre richiedono `:write` (lo `:write` include
+  la lettura).
+- Membri e sprint: ogni rotta richiede **esattamente** lo scope indicato; `sprints:write` **non** include
+  `sprints:read` (servono entrambi per leggere e poi assegnare).
+- **Negazione per default**: qualsiasi rotta non elencata qui è rifiutata con **403**, qualunque siano gli
+  scope: scrittura sui membri (aggiunta, ruolo, rimozione, modalità invisibile), creazione/modifica/
+  avvio/chiusura/eliminazione delle sprint, impostazioni, workspace, utenti, API key, AI, chat/voce,
+  email, presenza. Le rotte puntuali sono confrontate con la rotta effettivamente scelta dal server,
+  non con il testo dell'URL.
+- La chiave è confinata al **suo workspace**: un altro `wsId` nell'URL → 403; una sprint o un task di un
+  altro workspace → 404.
+- Gli scope nuovi non vengono mai aggiunti alle chiavi esistenti: per usarli crea una chiave nuova.
+- Le regole di dominio restano quelle della web app: solo i TASK vanno in sprint, mai in una sprint
+  `CLOSED`; l'utente della chiave non deve essere `GUEST`.
+
+### Membri via API key (`members:read`)
+Risposta ridotta, pensata per scegliere gli `assigneeIds`:
+```json
+[ { "userId": "7c0e…", "displayName": "Mario Rossi", "role": "COLLABORATORE" } ]
+```
+Niente email, avatar né flag interni. Gli admin in **modalità invisibile** sono omessi come per gli
+utenti non admin (l'autore della chiave compare comunque, senza indicazione di visibilità).
+
+### Esempi — integrazione che gestisce i task
+```bash
+H="Authorization: Bearer $WT_KEY"; W="$BASE/api/workspaces/$WS_ID"
+
+# Membri (members:read): id da usare in assigneeIds
+curl -s -H "$H" "$W/members"
+
+# Storie che contengono "login" nel titolo, poi i task DA_FARE di una storia (elements:read)
+curl -s -H "$H" "$W/elements?type=STORIA&q=login"
+curl -s -H "$H" "$W/elements?type=TASK&parentId=$STORY_ID&status=DA_FARE&includeBody=false"
+
+# Task nel backlog, a pagine da 50 (il totale è nell'header X-Total-Count)
+curl -s -D - -H "$H" "$W/elements?type=TASK&backlog=true&limit=50&offset=0"
+
+# Sprint: elenco e sprint attiva con i suoi task (sprints:read)
+curl -s -H "$H" "$W/sprints"
+curl -s -H "$H" "$W/sprints/active"
+
+# Mettere un task nella sprint e toglierlo (sprints:write) → 204
+curl -s -X POST   -H "$H" "$W/sprints/$SPRINT_ID/tasks/$TASK_ID"
+curl -s -X DELETE -H "$H" "$W/sprints/$SPRINT_ID/tasks/$TASK_ID"
+```
+Esiti tipici: 400 se l'elemento non è un TASK, 409 se la sprint è chiusa, 404 se sprint o task non
+esistono (o sono di un altro workspace), 403 se manca lo scope o l'autore della chiave è `GUEST`.
+
+### Limiti
+- Nessuna scrittura sui membri e nessuna gestione del ciclo di vita delle sprint via chiave.
+- I filtri sono applicati in memoria sugli elementi del workspace: `limit` serve a ridurre la risposta,
+  non a interrogare workspace enormi.
+- La lista elementi include gli assegnatari come nella web app (con la loro email): `members:read` non
+  aggiunge dati personali oltre a quelli già visibili con `elements:read`.
 
 ### Esempio — bot che crea un evento (`elements:write`)
 ```bash
@@ -346,7 +431,7 @@ members[], lastMessage?, unreadCount, …`
 ## 15. Errori comuni
 | Codice | Significato |
 |--------|-------------|
-| 400 | Richiesta non valida (campo mancante, scope inesistente) |
+| 400 | Richiesta non valida (campo mancante, scope inesistente, parametro con valore non valido) |
 | 401 | Non autenticato (token assente/scaduto/non valido: firma, `iss`, `aud` o `exp`) |
 | 403 + `code: OIDC_ACCOUNT` | Token valido ma account non collegabile (es. email già usata e non verificata da Authentik) |
 | 403 | Permesso negato (ruolo insufficiente, scope mancante, workspace diverso) |
@@ -378,3 +463,4 @@ members[], lastMessage?, unreadCount, …`
   una chiave compromessa.
 - Usa sempre **HTTPS** in produzione e tieni i segreti fuori dal codice (variabili d'ambiente).
 - Imposta una **scadenza** quando ha senso e crea chiavi con il **minimo** degli scope necessari.
+- Le API key sono a **negazione per default** (vedi §13): solo le rotte elencate, solo nel proprio workspace.

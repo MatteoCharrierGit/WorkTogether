@@ -117,6 +117,10 @@ Gli errori sono normalizzati da `GlobalExceptionHandler` nella forma `{ "error":
   con **scope** per risorsa e scadenza opzionale; revocabile.
 - Risorse consentite: **`elements`, `drive`, `tags`** (più gli allegati). `GET`→scope `:read`,
   scrittura→scope `:write` (lo `:write` include la lettura). Scope in `domain/enums/ApiScope`.
+- Rotte puntuali (`ApiKeyScopeInterceptor.ROUTE_RULES`, confronto col pattern Spring scelto):
+  `members:read` → `GET /members` (vista ridotta `ApiMemberResponse`, senza invisibili);
+  `sprints:read` → lettura sprint; `sprints:write` → solo `POST`/`DELETE /sprints/{id}/tasks/{elementId}`.
+  Tutto il resto è negato per default. La chiave agisce come l'utente che l'ha creata (autore e ruoli).
 - Vedi la guida completa all'uso in [API.md](../API.md).
 
 ## 4. Service principali
