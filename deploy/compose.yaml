@@ -64,6 +64,8 @@ services:
       AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN:?set AUTHENTIK_API_TOKEN in deploy/.env}
       AUTHENTIK_USER_GROUP: ${AUTHENTIK_USER_GROUP:-worktogether}
       ADMIN_INIT_EMAIL: ${ADMIN_INIT_EMAIL:?set ADMIN_INIT_EMAIL in deploy/.env}
+      # Authentik non dichiara email_verified; gli account li crea solo l'admin, quindi l'email è affidabile
+      OIDC_REQUIRE_EMAIL_VERIFIED: "false"
       AI_SECRET: ${AI_SECRET:?set AI_SECRET in deploy/.env}
       UPLOAD_DIR: /app/uploads
       # Email facoltativa: vuote = nessuna mail
@@ -72,6 +74,8 @@ services:
       MAIL_USERNAME: ${MAIL_USERNAME:-}
       MAIL_PASSWORD: ${MAIL_PASSWORD:-}
       MAIL_FROM: ${MAIL_FROM:-}
+      # Senza SMTP configurato il controllo mail dell'health darebbe 503
+      MANAGEMENT_HEALTH_MAIL_ENABLED: "false"
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-https://worktogether.mchaservice.tech}
       # Voce (LiveKit). LIVEKIT_URL è quello PUBBLICO, usato dal browser.
       LIVEKIT_URL: ${LIVEKIT_URL:-wss://livekit.worktogether.mchaservice.tech}
