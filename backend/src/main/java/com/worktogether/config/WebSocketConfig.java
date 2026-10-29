@@ -1,9 +1,12 @@
 package com.worktogether.config;
 
-import com.worktogether.repository.UserRepository;
+import com.worktogether.domain.entity.User;
 import com.worktogether.repository.WorkspaceMemberRepository;
-import com.worktogether.security.JwtUtil;
+import com.worktogether.security.OidcAccountException;
+import com.worktogether.security.OidcAuthFilter;
+import com.worktogether.service.OidcUserService;
 import com.worktogether.websocket.WorkspaceSubscriptionRegistry;
+import com.worktogether.websocket.WsSessionExpiryGuard;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;
@@ -18,6 +21,8 @@ import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.web.socket.config.annotation.*;
 
 import java.security.Principal;
@@ -32,8 +37,10 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private static final String WORKSPACE_TOPIC = "/topic/workspace/";
 
-    private final JwtUtil jwtUtil;
-    private final UserRepository userRepository;
+    private final JwtDecoder oidcJwtDecoder;
+    private final OidcUserService oidcUserService;
+    // Chiude le connessioni il cui access token è scaduto (il client si riconnette col token rinnovato).
+    private final WsSessionExpiryGuard expiryGuard;
     private final WorkspaceMemberRepository memberRepository;
     // Subscription ai topic di workspace, per revocarle alla rimozione del membro / eliminazione.
     private final WorkspaceSubscriptionRegistry subscriptionRegistry;
@@ -53,13 +60,20 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 .withSockJS();
     }
 
+    @Override
+    public void configureWebSocketTransport(WebSocketTransportRegistration registration) {
+        registration.addDecoratorFactory(expiryGuard::decorate);
+    }
+
     /**
      * Sicurezza STOMP (il canale /ws è aperto a livello HTTP per SockJS, l'autenticazione è qui):
      * <ul>
-     *   <li>CONNECT: richiede il JWT nell'header nativo "Authorization" (il frontend lo rinnova in
-     *       beforeConnect a ogni (ri)connessione). Token assente/non valido/di una sessione superata
-     *       ⇒ ERROR e connessione chiusa. Il Principal ha come nome lo userId, così
-     *       {@code convertAndSendToUser(userId, "/queue/events", ...)} raggiunge le sue sessioni.</li>
+     *   <li>CONNECT: richiede l'access token di Authentik nell'header nativo "Authorization" (lo
+     *       stesso delle chiamate REST; il frontend legge quello corrente in beforeConnect a ogni
+     *       (ri)connessione). Token assente/non valido ⇒ ERROR e connessione chiusa. Il Principal ha
+     *       come nome lo userId, così {@code convertAndSendToUser(userId, "/queue/events", ...)}
+     *       raggiunge le sue sessioni. La scadenza del token è registrata in
+     *       {@link WsSessionExpiryGuard}, che chiude la connessione quando il token scade.</li>
      *   <li>SUBSCRIBE: {@code /topic/workspace/{id}} solo ai membri del workspace;
      *       {@code /user/queue/**} (code personali, già isolate per utente) sempre; il resto è negato.
      *       Una SUBSCRIBE negata viene scartata (nessun ERROR): un ERROR chiuderebbe l'intera
@@ -77,7 +91,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
                 if (accessor == null || accessor.getCommand() == null) return message;
                 switch (accessor.getCommand()) {
-                    case CONNECT, STOMP -> accessor.setUser(authenticate(accessor.getFirstNativeHeader("Authorization")));
+                    case CONNECT, STOMP -> accessor.setUser(
+                            authenticate(accessor.getSessionId(), accessor.getFirstNativeHeader("Authorization")));
                     case SUBSCRIBE -> {
                         String denied = subscribeDenial(accessor.getUser(), accessor.getDestination());
                         if (denied != null) {
@@ -97,21 +112,21 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         });
     }
 
-    private Principal authenticate(String header) {
+    private Principal authenticate(String sessionId, String header) {
         if (header == null || !header.startsWith("Bearer ")) {
             throw new MessageDeliveryException("Token mancante");
         }
-        String token = header.substring(7);
-        if (!jwtUtil.isValid(token)) throw new MessageDeliveryException("Token non valido");
-        UUID userId = jwtUtil.extractUserId(token);
-        int tokenVersion = jwtUtil.extractTokenVersion(token);
-        // Sessione singola, come JwtAuthFilter: un token di una sessione superata non vale.
-        boolean current = userRepository.findById(userId)
-                .map(u -> u.getTokenVersion() == tokenVersion)
-                .orElse(false);
-        if (!current) throw new MessageDeliveryException("Sessione non valida");
+        Jwt jwt = OidcAuthFilter.decode(oidcJwtDecoder, header.substring(7).trim())
+                .orElseThrow(() -> new MessageDeliveryException("Token non valido"));
+        User user;
+        try {
+            user = oidcUserService.resolve(jwt);
+        } catch (OidcAccountException e) {
+            throw new MessageDeliveryException(e.getMessage());
+        }
+        expiryGuard.track(sessionId, jwt.getExpiresAt());
         return new UsernamePasswordAuthenticationToken(
-                userId.toString(), null, List.of(new SimpleGrantedAuthority("ROLE_USER")));
+                user.getId().toString(), null, List.of(new SimpleGrantedAuthority("ROLE_USER")));
     }
 
     private void trackWorkspaceSubscription(StompHeaderAccessor accessor) {

@@ -16,26 +16,27 @@ public class User {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    // Nullable: un utente creato dall'admin col solo username non ha email finché non
-    // completa l'onboarding (verifica email + password).
+    // Email (minuscola) sincronizzata da Authentik; usata per notifiche, inviti e per collegare
+    // al primo accesso OIDC gli account creati prima di Authentik. Nullable per account legacy.
     @Column(unique = true)
     private String email;
 
-    // display_name è anche l'handle di login (univoco, vedi migration V16).
+    // Nome visualizzato nell'app (univoco: è anche l'handle usato negli inviti, vedi V16).
     @Column(name = "display_name", nullable = false, unique = true)
     private String displayName;
 
-    // Nullable: assente finché l'utente non imposta la password in onboarding.
-    @Column(name = "password_hash")
-    private String passwordHash;
+    // Identità Authentik: claim "sub" degli access token OIDC (V24). null finché l'utente non
+    // accede la prima volta (account legacy) o se è stato creato senza conoscere il sub.
+    @Column(name = "oidc_subject", unique = true)
+    private String oidcSubject;
 
-    @Column(name = "must_reset_password", nullable = false)
-    private boolean mustResetPassword = true;
-
+    // Admin dell'app (crea workspace e account). Il primo è l'utente con email = ADMIN_INIT_EMAIL.
+    @Builder.Default
     @Column(name = "is_system_admin", nullable = false)
     private boolean systemAdmin = false;
 
     // Tour di benvenuto già visto: mostrato solo al primo accesso assoluto.
+    @Builder.Default
     @Column(name = "onboarding_completed", nullable = false)
     private boolean onboardingCompleted = false;
 
@@ -44,12 +45,6 @@ public class User {
     // null = nessuna foto. (La vecchia colonna users.avatar con il data URL non è più mappata.)
     @Column(name = "avatar_version")
     private Integer avatarVersion;
-
-    // Sessione singola: incrementata a ogni login. Gli access token portano questa versione (claim
-    // "sv"); se non combacia con quella corrente il token è di una sessione vecchia ⇒ rifiutato.
-    @Builder.Default
-    @Column(name = "token_version", nullable = false)
-    private int tokenVersion = 0;
 
     @Builder.Default
     @Column(name = "created_at", nullable = false, updatable = false)

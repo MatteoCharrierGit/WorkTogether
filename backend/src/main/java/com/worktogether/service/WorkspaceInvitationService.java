@@ -23,8 +23,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Inviti a un workspace tramite link via email. Il bersaglio è risolto per username (displayName)
- * o email; l'invito viene accettato dall'utente loggato cliccando il link ricevuto.
+ * Inviti a un workspace tramite link via email. Il bersaglio è un utente GIÀ esistente, risolto per
+ * username (displayName) o email; l'invito viene accettato dall'utente loggato (via Authentik)
+ * cliccando il link ricevuto. Gli inviti non creano account.
  */
 @Service
 @RequiredArgsConstructor
@@ -37,7 +38,7 @@ public class WorkspaceInvitationService {
     private final WorkspaceMemberRepository memberRepository;
     private final UserRepository userRepository;
     private final WorkspaceService workspaceService;
-    private final EmailVerificationService verification;
+    private final MailService mailService;
     private final WorkspaceEventPublisher eventPublisher;
 
     @Value("${app.frontend.base-url:}")
@@ -53,8 +54,12 @@ public class WorkspaceInvitationService {
         User target;
         String email;
         if (identifier.contains("@")) {
+            // Gli account li crea solo l'admin di sistema (Authentik): l'invito porta in un
+            // workspace un utente che esiste già, non crea account.
             email = identifier.toLowerCase();
-            target = userRepository.findByEmail(email).orElse(null);
+            target = userRepository.findByEmail(email)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                            "Nessun utente con questa email: l'account va creato prima dall'amministratore"));
         } else {
             target = userRepository.findByDisplayName(identifier)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
@@ -112,7 +117,7 @@ public class WorkspaceInvitationService {
         invitationRepository.save(inv);
     }
 
-    /** Anteprima pubblica per la schermata di accettazione. */
+    /** Anteprima per la schermata di accettazione (utente autenticato). */
     @Transactional
     public InvitationPreviewResponse preview(String token) {
         WorkspaceInvitation inv = requirePendingInvitation(token);
@@ -172,6 +177,6 @@ public class WorkspaceInvitationService {
                 + "Per accettare l'invito apri questo link:\n\n"
                 + link + "\n\n"
                 + "L'invito scade tra 7 giorni. Se non ti aspettavi questo messaggio puoi ignorarlo.";
-        verification.sendEmail(inv.getEmail(), "Invito al workspace " + inv.getWorkspace().getName(), body);
+        mailService.sendEmail(inv.getEmail(), "Invito al workspace " + inv.getWorkspace().getName(), body);
     }
 }

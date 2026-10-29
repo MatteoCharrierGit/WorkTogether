@@ -47,9 +47,9 @@ public class InvitationController {
         return ResponseEntity.noContent().build();
     }
 
-    // ---- Anteprima pubblica (sotto /api/auth/** ⇒ permitAll) ----
+    // ---- Anteprima (utente autenticato: si arriva dal link dopo il login con Authentik) ----
 
-    @GetMapping("/api/auth/invitations/{token}")
+    @GetMapping("/api/invitations/{token}")
     public ResponseEntity<InvitationPreviewResponse> preview(@PathVariable String token) {
         return ResponseEntity.ok(invitationService.preview(token));
     }

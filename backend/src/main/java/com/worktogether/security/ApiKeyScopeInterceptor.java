@@ -76,6 +76,7 @@ public class ApiKeyScopeInterceptor implements HandlerInterceptor {
     private boolean deny(HttpServletResponse response, String message) throws Exception {
         response.setStatus(HttpStatus.FORBIDDEN.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding("UTF-8"); // messaggi con lettere accentate
         response.getWriter().write(objectMapper.writeValueAsString(Map.of("error", message)));
         return false;
     }

@@ -11,7 +11,6 @@ public record UserResponse(
         UUID id,
         String email,
         String displayName,
-        boolean mustResetPassword,
         boolean systemAdmin,
         boolean onboardingCompleted,
         String avatar,
@@ -20,6 +19,6 @@ public record UserResponse(
     public static UserResponse from(User u) {
         String url = u.getAvatarUrl();
         return new UserResponse(u.getId(), u.getEmail(), u.getDisplayName(),
-                u.isMustResetPassword(), u.isSystemAdmin(), u.isOnboardingCompleted(), url, url);
+                u.isSystemAdmin(), u.isOnboardingCompleted(), url, url);
     }
 }

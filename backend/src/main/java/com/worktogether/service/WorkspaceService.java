@@ -13,7 +13,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -32,7 +31,6 @@ public class WorkspaceService {
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceMemberRepository memberRepository;
     private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
     private final ElementRepository elementRepository;
     private final ChannelMemberRepository channelMemberRepository;
     private final AiConversationRepository aiConversationRepository;
@@ -236,43 +234,11 @@ public class WorkspaceService {
             if (orphan.getEmail() != null) {
                 orphan.setEmail(orphan.getEmail() + suffix);
             }
+            // Scollega anche l'identità Authentik: se la persona rientra, riparte da un account nuovo
+            // (coerente con nome/email liberati qui sopra) invece di ritrovare quello "rimosso".
+            orphan.setOidcSubject(null);
             userRepository.save(orphan);
         });
-    }
-
-    @Transactional
-    public UserResponse createUser(UUID workspaceId, CreateUserRequest req, User requester) {
-        assertRole(workspaceId, requester, WorkspaceRole.ADMIN);
-
-        String displayName = req.displayName().trim();
-        // display_name è l'handle di login: deve essere univoco.
-        if (userRepository.existsByDisplayName(displayName)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Username già in uso");
-        }
-        String email = (req.email() != null && !req.email().isBlank()) ? req.email().trim().toLowerCase() : null;
-        if (email != null && userRepository.existsByEmail(email)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email già in uso");
-        }
-        Workspace ws = workspaceRepository.findById(workspaceId)
-                .orElseThrow(() -> new EntityNotFoundException("Workspace not found"));
-
-        // Username-only: email e password restano null finché l'utente non completa l'onboarding
-        // al primo accesso. Se l'admin fornisce una password temporanea, si usa il flusso classico.
-        boolean hasTempPassword = req.temporaryPassword() != null && !req.temporaryPassword().isBlank();
-        User newUser = User.builder()
-                .email(email)
-                .displayName(displayName)
-                .passwordHash(hasTempPassword ? passwordEncoder.encode(req.temporaryPassword()) : null)
-                .mustResetPassword(hasTempPassword)
-                .build();
-        newUser = userRepository.save(newUser);
-        WorkspaceRole role = req.role() != null ? req.role() : WorkspaceRole.COLLABORATORE;
-        WorkspaceMember member = WorkspaceMember.builder()
-                .workspace(ws).user(newUser).role(role).build();
-        memberRepository.save(member);
-        publishAfterCommit(workspaceId, "MEMBER_ADDED",
-                Map.of("userId", newUser.getId().toString(), "role", String.valueOf(role)));
-        return UserResponse.from(newUser);
     }
 
     @Transactional

@@ -79,15 +79,6 @@ public class WorkspaceController {
         return ResponseEntity.noContent().build();
     }
 
-    @PostMapping("/{wsId}/users")
-    public ResponseEntity<UserResponse> createUser(
-            @PathVariable UUID wsId,
-            @Valid @RequestBody CreateUserRequest req,
-            @AuthenticationPrincipal User user) {
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(workspaceService.createUser(wsId, req, user));
-    }
-
     @PatchMapping("/{wsId}/settings")
     public ResponseEntity<WorkspaceResponse> updateSettings(
             @PathVariable UUID wsId,

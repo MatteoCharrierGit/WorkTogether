@@ -65,6 +65,13 @@
       <artifactId>flyway-database-postgresql</artifactId>
     </dependency>
 
+    <!-- Validazione degli access token OIDC di Authentik (JWT RS256 + JWKS, Nimbus) -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-oauth2-jose</artifactId>
+    </dependency>
+
+    <!-- JWT HS256 per i token di LiveKit -->
     <dependency>
       <groupId>io.jsonwebtoken</groupId>
       <artifactId>jjwt-api</artifactId>

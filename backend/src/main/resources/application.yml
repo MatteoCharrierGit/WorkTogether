@@ -42,17 +42,32 @@ spring:
           writetimeout: 5000
 
 app:
-  jwt:
-    secret: ${JWT_SECRET:please-change-this-secret-key-in-production}
-    expiry-ms: ${JWT_EXPIRY_MS:900000}
-    refresh-expiry-ms: ${JWT_REFRESH_EXPIRY_MS:604800000}
+  oidc:
+    # Login tramite Authentik (OIDC, Authorization Code + PKCE lato frontend). Il backend valida
+    # gli access token: firma RS256 (JWKS), iss = issuer, aud contiene audience (client id), exp.
+    issuer: ${OIDC_ISSUER:}
+    audience: ${OIDC_AUDIENCE:worktogether}
+    # Vuoto ⇒ <issuer>jwks/. In produzione l'URL interno (http://authentik-server:9000/...).
+    jwks-url: ${OIDC_JWKS_URL:}
+    # Collegamento per email al primo accesso e promozione ad admin solo con email_verified=true.
+    require-email-verified: ${OIDC_REQUIRE_EMAIL_VERIFIED:true}
+    # Le connessioni WebSocket vengono chiuse quando il token usato alla CONNECT è scaduto da
+    # più di questi secondi (il client si riconnette col token rinnovato).
+    ws-expiry-grace-seconds: ${OIDC_WS_GRACE_SECONDS:60}
+  authentik:
+    # API di amministrazione per creare gli account dal pannello Amministrazione.
+    api-url: ${AUTHENTIK_API_URL:}
+    api-token: ${AUTHENTIK_API_TOKEN:}
+    user-group: ${AUTHENTIK_USER_GROUP:worktogether}
   admin:
-    init-email: ${ADMIN_INIT_EMAIL:admin@example.com}
-    init-password: ${ADMIN_INIT_PASSWORD:Admin1234!}
+    # L'utente che accede con questa email (verificata da Authentik) diventa admin di sistema.
+    init-email: ${ADMIN_INIT_EMAIL:}
   upload:
     dir: ${UPLOAD_DIR:/app/uploads}
   ai:
-    # Segreto per cifrare la chiave OpenRouter a riposo (fallback: JWT secret).
+    # Segreto per cifrare le chiavi dei provider AI a riposo. Obbligatorio in produzione.
+    # JWT_SECRET resta solo come fallback legacy: le installazioni senza AI_SECRET cifravano con
+    # quello, quindi va mantenuto (o copiato in AI_SECRET) per poter decifrare le chiavi salvate.
     secret: ${AI_SECRET:${JWT_SECRET:please-change-this-secret-key-in-production}}
     base-url: ${OPENROUTER_BASE_URL:https://openrouter.ai/api/v1}
   livekit:
