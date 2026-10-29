@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.worktogether.domain.entity.*;
 import com.worktogether.domain.enums.*;
+import com.worktogether.dto.request.ElementFilter;
 import com.worktogether.dto.request.ElementRequest;
 import com.worktogether.dto.response.ElementResponse;
 import com.worktogether.repository.*;
@@ -46,10 +47,33 @@ public class ElementService {
      */
     @Transactional(readOnly = true)
     public List<ElementResponse> getElements(UUID workspaceId, User user, boolean includeBody) {
+        return getElements(workspaceId, user, includeBody, ElementFilter.NONE).items();
+    }
+
+    /** Una pagina di risultati filtrati e il totale dei risultati prima di limit/offset. */
+    public record ElementPage(List<ElementResponse> items, int total) {}
+
+    /**
+     * Elementi del workspace filtrati (vedi {@link ElementFilter}). I filtri sono applicati in memoria
+     * sulla lista del workspace (stesso ordine: position, poi data di creazione), poi offset e limit.
+     */
+    @Transactional(readOnly = true)
+    public ElementPage getElements(UUID workspaceId, User user, boolean includeBody, ElementFilter filter) {
         workspaceService.assertMember(workspaceId, user);
+        ElementFilter f = filter.validated();
         List<Element> elements = elementRepository.findByWorkspaceId(workspaceId);
-        Map<UUID, Integer> progress = toProgressMap(elementRepository.epicProgressByWorkspace(workspaceId));
-        return toResponses(elements, progress, includeBody);
+        if (f.filters()) {
+            elements = elements.stream().filter(f::matches).toList();
+        }
+        int total = elements.size();
+        int from = Math.min(f.offset() == null ? 0 : f.offset(), total);
+        int to = f.limit() == null ? total : (int) Math.min((long) from + f.limit(), total);
+        elements = elements.subList(from, to);
+        boolean needsProgress = elements.stream().anyMatch(e -> e.getType() == ElementType.EPICA);
+        Map<UUID, Integer> progress = needsProgress
+                ? toProgressMap(elementRepository.epicProgressByWorkspace(workspaceId))
+                : Map.of();
+        return new ElementPage(toResponses(elements, progress, includeBody), total);
     }
 
     // Tutti gli elementi assegnati all'utente, attraverso tutti i workspace.

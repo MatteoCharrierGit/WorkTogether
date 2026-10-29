@@ -4,7 +4,9 @@ import com.worktogether.domain.entity.User;
 import com.worktogether.domain.enums.WorkspaceRole;
 import com.worktogether.dto.request.*;
 import com.worktogether.dto.response.*;
+import com.worktogether.security.ApiKeyAuthFilter;
 import com.worktogether.service.WorkspaceService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.*;
@@ -32,10 +34,18 @@ public class WorkspaceController {
         return ResponseEntity.status(HttpStatus.CREATED).body(workspaceService.createWorkspace(user, req));
     }
 
+    /**
+     * Membri del workspace. Via API key (scope members:read) la risposta è ridotta
+     * ({@link ApiMemberResponse}: id, nome, ruolo) e omette i membri in modalità invisibile.
+     */
     @GetMapping("/{wsId}/members")
-    public ResponseEntity<List<MemberResponse>> members(
+    public ResponseEntity<List<?>> members(
             @PathVariable UUID wsId,
-            @AuthenticationPrincipal User user) {
+            @AuthenticationPrincipal User user,
+            HttpServletRequest request) {
+        if (request.getAttribute(ApiKeyAuthFilter.ATTR_API_KEY) != null) {
+            return ResponseEntity.ok(workspaceService.getMembersForApiKey(wsId, user));
+        }
         return ResponseEntity.ok(workspaceService.getMembers(wsId, user));
     }
 

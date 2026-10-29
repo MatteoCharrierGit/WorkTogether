@@ -13,7 +13,14 @@ public enum ApiScope {
     DRIVE_READ("drive:read", "drive", false),
     DRIVE_WRITE("drive:write", "drive", true),
     TAGS_READ("tags:read", "tags", false),
-    TAGS_WRITE("tags:write", "tags", true);
+    TAGS_WRITE("tags:write", "tags", true),
+    // Solo lettura dei membri (id, nome, ruolo): nessuna scrittura sui membri da API key.
+    MEMBERS_READ("members:read", "members", false),
+    // Lettura delle sprint.
+    SPRINTS_READ("sprints:read", "sprints", false),
+    // SOLO aggiungere/togliere un TASK a una sprint esistente (vedi ApiKeyScopeInterceptor):
+    // creare, modificare, avviare, chiudere ed eliminare sprint restano riservati agli utenti admin.
+    SPRINTS_WRITE("sprints:write", "sprints", true);
 
     private final String wire;
     private final String resource;

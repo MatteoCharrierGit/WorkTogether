@@ -86,6 +86,21 @@ public class WorkspaceService {
     }
 
     /**
+     * Membri visti da una API key (scope members:read). La chiave agisce per conto del suo autore
+     * (di solito un admin) ma NON ne eredita la visibilità degli admin in modalità invisibile: si
+     * applica la stessa regola dei non admin (i nascosti sono omessi, tranne l'autore stesso) e la
+     * risposta è ridotta a id, nome e ruolo.
+     */
+    @Transactional(readOnly = true)
+    public List<ApiMemberResponse> getMembersForApiKey(UUID workspaceId, User keyOwner) {
+        assertMember(workspaceId, keyOwner);
+        Set<UUID> hidden = hiddenMembers.hiddenUsers(workspaceId);
+        return memberRepository.findByWorkspaceId(workspaceId).stream()
+                .filter(m -> !hidden.contains(m.getUser().getId()) || m.getUser().getId().equals(keyOwner.getId()))
+                .map(ApiMemberResponse::from).toList();
+    }
+
+    /**
      * Attiva/disattiva la modalità invisibile per SE STESSI (solo ADMIN). Dopo il commit: cache
      * invalidata, presenza ridiffusa (l'admin sparisce/ricompare subito dagli "online") e un
      * MEMBERS_VISIBILITY_CHANGED solo sulle code personali degli ADMIN (che vedono la differenza
