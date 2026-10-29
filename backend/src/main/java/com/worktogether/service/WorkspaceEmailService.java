@@ -39,8 +39,13 @@ public class WorkspaceEmailService {
     private final ObjectMapper objectMapper;
     private final MarkdownEmailRenderer markdownRenderer;
 
-    @Value("${app.mail.from:}")
     private String from;
+
+    /** MAIL_FROM vuoto (il compose lo passa sempre, anche vuoto) ⇒ si usa la casella SMTP (MAIL_USERNAME). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setFrom(@Value("${app.mail.from:}") String from, @Value("${spring.mail.username:}") String username) {
+        this.from = from != null && !from.isBlank() ? from.trim() : (username == null ? "" : username.trim());
+    }
 
     /** Invia l'email ai membri con uno dei ruoli indicati. Ritorna il numero di destinatari. */
     public SendEmailResponse send(UUID workspaceId, SendEmailRequest req, User user) {
