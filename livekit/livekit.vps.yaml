@@ -1,0 +1,25 @@
+# Configurazione LiveKit per la VPS (deploy/compose.yaml). Le chiavi NON stanno qui: arrivano via env
+# LIVEKIT_KEYS ("chiave: segreto") dal compose. L'immagine non ha shell né envsubst e LiveKit non espande
+# variabili in questo file: per questo webhook.api_key è scritto in chiaro (è l'identificatore, non il segreto)
+# e deve combaciare con LIVEKIT_API_KEY in deploy/.env (default: worktogether).
+
+port: 7880          # signaling HTTP/WebSocket: pubblicato da Caddy come WSS (livekit.worktogether.<dominio>)
+log_level: info
+
+rtc:
+  tcp_port: 7881                # ICE/TCP, pubblicato sull'IP pubblico
+  port_range_start: 50000       # media UDP, pubblicati sull'IP pubblico
+  port_range_end: 50100
+  # VPS con IP pubblico: LiveKit lo scopre da solo (STUN) e lo annuncia nei candidati ICE. Niente node_ip.
+  use_external_ip: true
+
+# TURN integrato spento per ora: il TURN/TLS vorrebbe un certificato su 5349 che qui non c'è (il TLS lo fa Caddy
+# solo per il signaling). I client dietro reti che bloccano UDP ripiegano sull'ICE/TCP 7881.
+turn:
+  enabled: false
+
+# LiveKit avvisa il backend quando un partecipante entra/esce da una room (rete interna del compose).
+webhook:
+  api_key: worktogether
+  urls:
+    - http://backend:8080/api/livekit/webhook

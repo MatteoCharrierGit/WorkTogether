@@ -1,0 +1,147 @@
+# Produzione di WorkTogether sulla VPS. Da questa cartella:
+#   cp .env.example .env   # poi compilare i segreti (vedi docs/DEPLOY.md)
+#   docker compose up -d --build
+# Il compose di sviluppo (../docker-compose.yml) NON va usato in produzione: pubblica le porte e ha segreti di default.
+#
+# Nessuna porta pubblicata, TRANNE quelle media di LiveKit (UDP 50000-50100 e TCP 7881), legate all'IP pubblico
+# della VPS: mai 0.0.0.0, perché Tailscale possiede alcune porte sull'interfaccia tailscale0.
+# ATTENZIONE: Docker scavalca ufw (scrive direttamente in iptables): una porta pubblicata qui è aperta al mondo
+# anche se ufw la nega. Per questo il resto resta senza `ports` e passa dal Caddy pubblico (rete esterna `proxy`).
+name: worktogether
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-worktogether}
+      POSTGRES_USER: ${DB_USER:-wt}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in deploy/.env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [default]
+    <<: *hardening
+    # postgres parte come root, sistema i permessi del volume e scende a `postgres` (gosu)
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    logging: *logging
+
+  backend:
+    build:
+      context: ../backend
+    image: worktogether-backend:latest
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-worktogether}
+      DB_USER: ${DB_USER:-wt}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in deploy/.env}
+      # Login con Authentik: il backend verifica i token (issuer pubblico, audience = client_id)
+      OIDC_ISSUER: ${OIDC_ISSUER:?set OIDC_ISSUER in deploy/.env}
+      OIDC_AUDIENCE: ${OIDC_CLIENT_ID:?set OIDC_CLIENT_ID in deploy/.env}
+      # JWKS dalla rete Docker `proxy`, senza passare dal DNS pubblico e da Caddy
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:?set OIDC_JWKS_URL in deploy/.env}
+      # API di Authentik per creare utenti e impostare password (utente di servizio worktogether-service)
+      AUTHENTIK_API_URL: ${AUTHENTIK_API_URL:?set AUTHENTIK_API_URL in deploy/.env}
+      AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN:?set AUTHENTIK_API_TOKEN in deploy/.env}
+      AUTHENTIK_USER_GROUP: ${AUTHENTIK_USER_GROUP:-worktogether}
+      ADMIN_INIT_EMAIL: ${ADMIN_INIT_EMAIL:?set ADMIN_INIT_EMAIL in deploy/.env}
+      AI_SECRET: ${AI_SECRET:?set AI_SECRET in deploy/.env}
+      UPLOAD_DIR: /app/uploads
+      # Email facoltativa: vuote = nessuna mail
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-https://worktogether.mchaservice.tech}
+      # Voce (LiveKit). LIVEKIT_URL è quello PUBBLICO, usato dal browser.
+      LIVEKIT_URL: ${LIVEKIT_URL:-wss://livekit.worktogether.mchaservice.tech}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-worktogether}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in deploy/.env}
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # default: postgres, frontend, livekit. proxy: SOLO per raggiungere authentik-server:9000 (JWKS e API).
+    # Docker non permette di raggiungere un servizio esterno senza entrare nella sua rete; sulla `proxy` il
+    # backend non ha alias e nessuno lo pubblica: Caddy non lo conosce, ma altri container della `proxy`
+    # potrebbero raggiungerlo (è autenticato). Se un altro stack userasse il nome `backend` sulla `proxy`,
+    # vedi la nota in docs/DEPLOY.md.
+    networks: [default, proxy]
+    <<: *hardening
+    logging: *logging
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        VITE_OIDC_AUTHORITY: ${OIDC_ISSUER:?set OIDC_ISSUER in deploy/.env}
+        VITE_OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?set OIDC_CLIENT_ID in deploy/.env}
+        VITE_API_URL: ""
+    image: worktogether-frontend:latest
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      default:
+      proxy:
+        aliases:
+          - worktogether-web
+    <<: *hardening
+    # nginx parte come root: serve la 80, cambia utente per i worker e scrive nelle cache temporanee
+    cap_add: [CHOWN, SETGID, SETUID, NET_BIND_SERVICE]
+    logging: *logging
+
+  livekit:
+    # >= v1.8 per l'endpoint /rtc/v1 del client livekit-client 2.x
+    image: livekit/livekit-server:v1.9
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    environment:
+      # Formato "chiave: segreto"; la chiave deve combaciare con webhook.api_key di livekit.vps.yaml
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-worktogether}: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in deploy/.env}"
+    volumes:
+      - ../livekit/livekit.vps.yaml:/etc/livekit.yaml:ro
+    ports:
+      # Solo l'IP pubblico IPv4: mai 0.0.0.0 (Tailscale). Il signaling 7880 non è pubblicato: lo fa Caddy (WSS).
+      - "${PUBLIC_IPV4:?set PUBLIC_IPV4 in deploy/.env}:7881:7881/tcp"
+      - "${PUBLIC_IPV4}:50000-50100:50000-50100/udp"
+    networks:
+      default:
+      proxy:
+        aliases:
+          - worktogether-livekit
+    read_only: true
+    <<: *hardening
+    logging: *logging
+
+networks:
+  default: {}
+  proxy:
+    external: true
+
+volumes:
+  # database: nel backup notturno (pg_dump), vedi docs/DEPLOY.md
+  pgdata:
+  # file del Drive e avatar: nel backup notturno
+  uploads:
