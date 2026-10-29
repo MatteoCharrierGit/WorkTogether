@@ -93,6 +93,39 @@ class AuthentikClientTest {
     }
 
     @Test
+    void mustChangePasswordGoesInTheCreationBody() {
+        client().createUser("mario", "mario@example.com", "Mario Rossi", "Segreta123!", true);
+        assertTrue(calls.stream().anyMatch(c -> c.startsWith("POST /api/v3/core/users/ ")
+                && c.contains("\"attributes\":{\"must_change_password\":true}")), calls.toString());
+        // nessuna PATCH/PUT: basta il permesso add_user dell'utente di servizio
+        assertTrue(calls.stream().noneMatch(c -> c.startsWith("PATCH") || c.startsWith("PUT")));
+        assertTrue(calls.stream().noneMatch(c -> c.startsWith("DELETE")));
+    }
+
+    @Test
+    void withoutInviteNoAttributeIsSent() {
+        client().createUser("mario", "mario@example.com", "Mario Rossi", "Segreta123!", false);
+        assertTrue(calls.stream().filter(c -> c.startsWith("POST /api/v3/core/users/ "))
+                .noneMatch(c -> c.contains("attributes")), calls.toString());
+    }
+
+    @Test
+    void bodiesAreSentWithContentLength() throws Exception {
+        server.removeContext("/api/v3/");
+        List<String> lengths = new CopyOnWriteArrayList<>();
+        server.createContext("/api/v3/", ex -> {
+            if (ex.getRequestMethod().equals("POST")) {
+                lengths.add(String.valueOf(ex.getRequestHeaders().getFirst("Content-Length"))
+                        + "|" + String.valueOf(ex.getRequestHeaders().getFirst("Transfer-Encoding")));
+            }
+            handle(ex);
+        });
+        client().createUser("mario", "mario@example.com", "Mario Rossi", "Segreta123!", true);
+        assertFalse(lengths.isEmpty());
+        assertTrue(lengths.stream().allMatch(l -> !l.startsWith("null|") && l.endsWith("|null")), lengths.toString());
+    }
+
+    @Test
     void duplicateUsernameIsConflictWithoutCreating() {
         existingUsername = "mario";
         ResponseStatusException e = assertThrows(ResponseStatusException.class,

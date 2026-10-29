@@ -2,7 +2,7 @@ package com.worktogether.controller;
 
 import com.worktogether.domain.entity.User;
 import com.worktogether.dto.request.CreateUserRequest;
-import com.worktogether.dto.response.UserResponse;
+import com.worktogether.dto.response.CreatedUserResponse;
 import com.worktogether.service.AdminUserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -20,7 +20,7 @@ public class AdminUserController {
     private final AdminUserService adminUserService;
 
     @PostMapping
-    public ResponseEntity<UserResponse> create(
+    public ResponseEntity<CreatedUserResponse> create(
             @Valid @RequestBody CreateUserRequest req,
             @AuthenticationPrincipal User user) {
         return ResponseEntity.status(HttpStatus.CREATED).body(adminUserService.createUser(req, user));

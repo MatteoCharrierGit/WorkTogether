@@ -3,6 +3,7 @@ package com.worktogether.service;
 import com.worktogether.domain.entity.User;
 import com.worktogether.domain.enums.WorkspaceRole;
 import com.worktogether.dto.request.CreateUserRequest;
+import com.worktogether.dto.response.CreatedUserResponse;
 import com.worktogether.dto.response.UserResponse;
 import com.worktogether.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -27,8 +28,14 @@ public class AdminUserService {
     private final UserRepository userRepository;
     private final OidcUserService oidcUserService;
     private final WorkspaceService workspaceService;
+    private final AccountInviteService accountInviteService;
 
-    public UserResponse createUser(CreateUserRequest req, User requester) {
+    /**
+     * Con sendInvite: l'utente nasce in Authentik con l'obbligo di cambiare password al primo accesso
+     * e riceve un'email con le credenziali. Se l'email non parte l'account resta creato e la risposta
+     * lo dice (inviteSent=false, inviteError).
+     */
+    public CreatedUserResponse createUser(CreateUserRequest req, User requester) {
         if (!requester.isSystemAdmin()) {
             throw new AccessDeniedException("Solo l'amministratore può creare account");
         }
@@ -44,7 +51,8 @@ public class AdminUserService {
             workspaceService.assertRole(req.workspaceId(), requester, WorkspaceRole.ADMIN);
         }
 
-        AuthentikClient.CreatedUser created = authentik.createUser(username, email, name, req.password());
+        boolean invite = req.inviteRequested();
+        AuthentikClient.CreatedUser created = authentik.createUser(username, email, name, req.password(), invite);
 
         User user;
         try {
@@ -68,6 +76,10 @@ public class AdminUserService {
             workspaceService.addMember(req.workspaceId(), user.getId(), role, requester);
         }
         log.info("Account {} ({}) creato da {}", user.getId(), username, requester.getId());
-        return UserResponse.from(user);
+
+        UserResponse response = UserResponse.from(user);
+        if (!invite) return CreatedUserResponse.of(response, false, null);
+        AccountInviteService.Result result = accountInviteService.send(username, email, name, req.password());
+        return CreatedUserResponse.of(response, result.sent(), result.error());
     }
 }

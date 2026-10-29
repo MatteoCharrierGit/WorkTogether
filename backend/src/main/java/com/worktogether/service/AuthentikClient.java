@@ -33,6 +33,9 @@ public class AuthentikClient {
     /** Utente creato in Authentik: pk numerico e uid (= "sub" con la modalità di default hashed_user_id). */
     public record CreatedUser(long pk, String uid) {}
 
+    /** Attributo utente letto dal flusso di accesso per imporre il cambio della password temporanea. */
+    public static final String MUST_CHANGE_PASSWORD_ATTRIBUTE = "must_change_password";
+
     private final RestClient rest;
     private final ObjectMapper objectMapper;
     private final String groupName;
@@ -70,6 +73,17 @@ public class AuthentikClient {
      * fallisce, l'utente appena creato viene eliminato (niente account a metà).
      */
     public CreatedUser createUser(String username, String email, String name, String password) {
+        return createUser(username, email, name, password, false);
+    }
+
+    /**
+     * Come sopra; con {@code mustChangePassword} l'utente nasce con l'attributo
+     * {@value #MUST_CHANGE_PASSWORD_ATTRIBUTE} = true, che il flusso di accesso di Authentik usa per
+     * chiedere una nuova password al primo accesso (vedi docs/DEPLOY.md). L'attributo va nel POST di
+     * creazione: basta il permesso add_user, mentre una PATCH richiederebbe change_user.
+     */
+    public CreatedUser createUser(String username, String email, String name, String password,
+                                  boolean mustChangePassword) {
         requireConfigured();
         String groupPk = findGroupPk();
         if (exists("username", username)) {
@@ -84,6 +98,9 @@ public class AuthentikClient {
         body.put("name", name);
         body.put("email", email);
         body.put("is_active", true);
+        if (mustChangePassword) {
+            body.put("attributes", Map.of(MUST_CHANGE_PASSWORD_ATTRIBUTE, true));
+        }
         JsonNode created = call("creazione utente", () -> rest.post().uri("/core/users/")
                 .contentType(MediaType.APPLICATION_JSON).body(json(body)).retrieve().body(JsonNode.class));
         long pk = created.path("pk").asLong(-1);
