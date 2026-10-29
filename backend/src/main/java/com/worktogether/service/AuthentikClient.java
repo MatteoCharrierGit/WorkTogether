@@ -85,17 +85,17 @@ public class AuthentikClient {
         body.put("email", email);
         body.put("is_active", true);
         JsonNode created = call("creazione utente", () -> rest.post().uri("/core/users/")
-                .contentType(MediaType.APPLICATION_JSON).body(body).retrieve().body(JsonNode.class));
+                .contentType(MediaType.APPLICATION_JSON).body(json(body)).retrieve().body(JsonNode.class));
         long pk = created.path("pk").asLong(-1);
         if (pk < 0) throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Risposta di Authentik non valida");
         String uid = created.path("uid").asText(null);
 
         try {
             call("impostazione password", () -> rest.post().uri("/core/users/{pk}/set_password/", pk)
-                    .contentType(MediaType.APPLICATION_JSON).body(Map.of("password", password))
+                    .contentType(MediaType.APPLICATION_JSON).body(json(Map.of("password", password)))
                     .retrieve().toBodilessEntity());
             call("aggiunta al gruppo", () -> rest.post().uri("/core/groups/{group}/add_user/", groupPk)
-                    .contentType(MediaType.APPLICATION_JSON).body(Map.of("pk", pk))
+                    .contentType(MediaType.APPLICATION_JSON).body(json(Map.of("pk", pk)))
                     .retrieve().toBodilessEntity());
         } catch (RuntimeException e) {
             deleteUserQuietly(pk);
@@ -110,6 +110,18 @@ public class AuthentikClient {
             rest.delete().uri("/core/users/{pk}/", pk).retrieve().toBodilessEntity();
         } catch (Exception e) {
             log.warn("Authentik: eliminazione dell'utente {} non riuscita: {}", pk, e.getMessage());
+        }
+    }
+
+    /**
+     * Il body va come byte[]: così parte con Content-Length. Authentik non legge i body in
+     * Transfer-Encoding: chunked (risponde 400 "This field is required") e un Map verrebbe inviato a pezzi.
+     */
+    private byte[] json(Object body) {
+        try {
+            return objectMapper.writeValueAsBytes(body);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException(e);
         }
     }
 
