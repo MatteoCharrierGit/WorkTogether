@@ -109,7 +109,7 @@ services:
           - worktogether-web
     <<: *hardening
     # nginx parte come root: serve la 80, cambia utente per i worker e scrive nelle cache temporanee
-    cap_add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID, NET_BIND_SERVICE]
+    cap_add: [CHOWN, SETGID, SETUID, NET_BIND_SERVICE]
     logging: *logging
 
   livekit:
