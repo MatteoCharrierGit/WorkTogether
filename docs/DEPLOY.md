@@ -75,7 +75,8 @@ Copiare i due file in `~/srv/infra/authentik/blueprints/` (il worker li applica 
 minuti; non serve riavviare Authentik):
 
 ```bash
-cp worktogether.yaml worktogether-service.yaml ~/srv/infra/authentik/blueprints/
+# i file stanno in /home/akari/srv-tmp/wt/infra-proposte/ (fuori dal repo)
+cp /home/akari/srv-tmp/wt/infra-proposte/worktogether{,-service}.yaml ~/srv/infra/authentik/blueprints/
 ```
 
 - `worktogether.yaml`: gruppo `worktogether`, provider OAuth2 pubblico PKCE `worktogether`, applicazione
@@ -114,7 +115,7 @@ cancella il token dall'interfaccia e ripeti.
 
 ## 5. Caddy
 
-Aggiungi in fondo a `~/srv/infra/caddy/Caddyfile` il contenuto di `Caddyfile.snippet` (i blocchi
+Aggiungi in fondo a `~/srv/infra/caddy/Caddyfile` il contenuto di `/home/akari/srv-tmp/wt/infra-proposte/Caddyfile.snippet` (i blocchi
 `worktogether.{$DOMAIN}` e `livekit.worktogether.{$DOMAIN}`), poi, dalla cartella di Caddy:
 
 ```bash
@@ -157,7 +158,7 @@ Il database è gestito dalle migrazioni del backend all'avvio: fai prima un dump
 
 Volumi: `worktogether_pgdata` (database) e `worktogether_uploads` (file del Drive e avatar). Il backup notturno
 della VPS è `~/srv/infra/backup/vps-backup.sh`: il passo `worktogether` proposto (dump `pg_dump -Fc` più copia del
-volume dei file, sul modello dei passi Menace e PdR) è in `infra-proposte/backup-passo.sh.txt`, da applicare a
+volume dei file, sul modello dei passi Menace e PdR) è in `/home/akari/srv-tmp/wt/infra-proposte/backup-passo.sh.txt`, da applicare a
 mano. Il `deploy/.env` va salvato con il resto (contiene i segreti).
 
 Dump manuale:
