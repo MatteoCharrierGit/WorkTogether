@@ -16,14 +16,51 @@ import { Callout, QueryState, useConfirm } from '@/components/shared'
 import { formatDate } from '@/lib/utils'
 import { ListHeader, SettingsSection, apiError } from './shared'
 
-// Scope disponibili per le API key, con etichette leggibili.
-const SCOPE_OPTIONS: { id: ApiScope; label: string }[] = [
-  { id: 'elements:read', label: 'Leggere elementi (task, eventi, storie)' },
-  { id: 'elements:write', label: 'Creare e modificare elementi' },
-  { id: 'drive:read', label: 'Leggere i file del Drive' },
-  { id: 'drive:write', label: 'Caricare e modificare file' },
-  { id: 'tags:read', label: 'Leggere i tag' },
-  { id: 'tags:write', label: 'Gestire i tag' },
+// Scope disponibili per le API key, raggruppati per area, con etichette leggibili.
+// Nessuno scope ne implica un altro (salvo :write che include la lettura per elementi, Drive e tag).
+const SCOPE_GROUPS: { title: string; options: { id: ApiScope; label: string; hint?: string }[] }[] = [
+  {
+    title: 'Elementi',
+    options: [
+      { id: 'elements:read', label: 'Leggere elementi (task, eventi, storie, epiche) e allegati' },
+      { id: 'elements:write', label: 'Creare, modificare ed eliminare elementi e allegati' },
+    ],
+  },
+  {
+    title: 'Sprint',
+    options: [
+      { id: 'sprints:read', label: 'Leggere le sprint e i loro task' },
+      {
+        id: 'sprints:write',
+        label: 'Aggiungere o togliere task dalle sprint',
+        hint: 'Non crea, avvia, chiude né elimina sprint',
+      },
+    ],
+  },
+  {
+    title: 'Membri',
+    options: [
+      {
+        id: 'members:read',
+        label: 'Vedere i membri (nome e ruolo)',
+        hint: 'Serve per assegnare i task; niente email, nessuna modifica',
+      },
+    ],
+  },
+  {
+    title: 'Tag',
+    options: [
+      { id: 'tags:read', label: 'Leggere i tag' },
+      { id: 'tags:write', label: 'Gestire i tag' },
+    ],
+  },
+  {
+    title: 'Drive',
+    options: [
+      { id: 'drive:read', label: 'Leggere i file del Drive' },
+      { id: 'drive:write', label: 'Caricare e modificare file' },
+    ],
+  },
 ]
 
 // ─── Create API Key Dialog ────────────────────────────────────────────────────
@@ -96,16 +133,31 @@ function CreateApiKeyDialog({ wsId, open, onClose }: { wsId: string; open: boole
               </div>
               <fieldset className="space-y-2">
                 <legend className="mb-2 text-sm font-medium">Permessi (scope)</legend>
-                <div className="divide-y rounded-md border">
-                  {SCOPE_OPTIONS.map(s => (
-                    <label key={s.id} htmlFor={`scope-${s.id}`} className="flex cursor-pointer select-none items-center gap-2.5 px-3 py-2 text-sm hover:bg-accent/40">
-                      <Checkbox id={`scope-${s.id}`} checked={scopes.has(s.id)} onCheckedChange={() => toggleScope(s.id)} />
-                      <span className="min-w-0 flex-1">{s.label}</span>
-                      <code className="hidden font-mono text-2xs text-muted-foreground sm:inline">{s.id}</code>
-                    </label>
+                <div className="max-h-[45vh] divide-y overflow-y-auto rounded-md border">
+                  {SCOPE_GROUPS.map(g => (
+                    <div key={g.title} role="group" aria-labelledby={`scope-group-${g.title}`} className="divide-y">
+                      <p id={`scope-group-${g.title}`} className="bg-muted/40 px-3 py-1.5 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+                        {g.title}
+                      </p>
+                      {g.options.map(s => (
+                        <label key={s.id} htmlFor={`scope-${s.id}`} className="flex cursor-pointer select-none items-center gap-2.5 px-3 py-2 text-sm hover:bg-accent/40">
+                          <Checkbox id={`scope-${s.id}`} checked={scopes.has(s.id)} onCheckedChange={() => toggleScope(s.id)} />
+                          <span className="min-w-0 flex-1">
+                            {s.label}
+                            {s.hint && <span className="block text-caption text-muted-foreground">{s.hint}</span>}
+                          </span>
+                          <code className="hidden font-mono text-2xs text-muted-foreground sm:inline">{s.id}</code>
+                        </label>
+                      ))}
+                    </div>
                   ))}
                 </div>
               </fieldset>
+              {scopes.has('sprints:write') && (
+                <Callout variant="warning">
+                  Con <code className="font-mono">sprints:write</code> la chiave può spostare i task dentro e fuori dalle sprint, anche da quella attiva.
+                </Callout>
+              )}
               <div className="space-y-1.5">
                 <Label>Scadenza</Label>
                 <Select value={expiry} onValueChange={setExpiry}>

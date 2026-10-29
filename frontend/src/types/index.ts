@@ -163,6 +163,8 @@ export type ApiScope =
   | 'elements:read' | 'elements:write'
   | 'drive:read' | 'drive:write'
   | 'tags:read' | 'tags:write'
+  | 'members:read'
+  | 'sprints:read' | 'sprints:write'
 
 export interface ApiKey {
   id: string
