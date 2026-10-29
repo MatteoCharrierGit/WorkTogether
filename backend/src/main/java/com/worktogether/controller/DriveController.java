@@ -12,15 +12,26 @@ import com.worktogether.dto.response.LockResponse;
 import com.worktogether.service.DriveService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.http.*;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.context.request.NativeWebRequest;
+import org.springframework.web.context.request.async.AsyncWebRequest;
+import org.springframework.web.context.request.async.CallableProcessingInterceptor;
+import org.springframework.web.context.request.async.WebAsyncUtils;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 
 @RestController
 @RequestMapping("/api/workspaces/{wsId}/drive")
@@ -28,6 +39,12 @@ import java.util.UUID;
 public class DriveController {
 
     private final DriveService driveService;
+
+    private static final Object ZIP_TIMEOUT_KEY = DriveController.class.getName() + ".zipTimeout";
+
+    /** Durata massima del download di una cartella come ZIP (cartelle grandi, connessioni lente). */
+    @Value("${app.drive.zip-timeout:6h}")
+    private Duration zipTimeout = Duration.ofHours(6);
 
     // ---- Folders ----
 
@@ -83,18 +100,44 @@ public class DriveController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * Cartella come ZIP, scritto in streaming mentre viene prodotto (niente file temporanei né buffer in
+     * memoria). {@link StreamingResponseBody} gira in modalità asincrona: senza un timeout suo la richiesta
+     * avrebbe quello di default del container (30 s su Tomcat), allo scadere del quale lo ZIP veniva
+     * troncato e chiuso come se fosse completo. Qui il timeout è solo per questa rotta ({@code app.drive.zip-timeout}).
+     */
     @GetMapping("/folders/{folderId}/download")
     public ResponseEntity<StreamingResponseBody> downloadFolder(
             @PathVariable UUID wsId,
             @PathVariable UUID folderId,
-            @AuthenticationPrincipal User user) {
+            @AuthenticationPrincipal User user,
+            HttpServletRequest request) {
+        // Permessi ed esistenza verificati prima di iniziare la risposta: errori in JSON (404/403).
         String folderName = driveService.validateFolderDownload(wsId, folderId, user);
-        String zipName = folderName.replaceAll("[^A-Za-z0-9._-]", "_") + ".zip";
         StreamingResponseBody body = out -> driveService.writeFolderZip(wsId, folderId, out);
+        WebAsyncUtils.getAsyncManager(request).registerCallableInterceptor(ZIP_TIMEOUT_KEY, new CallableProcessingInterceptor() {
+            @Override
+            public <T> void beforeConcurrentHandling(NativeWebRequest req, Callable<T> task) {
+                // chiamato prima di startAsync(): l'unico momento in cui il timeout si può ancora cambiare
+                if (req instanceof AsyncWebRequest async) async.setTimeout(zipTimeout.toMillis());
+            }
+        });
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("application/zip"))
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + zipName + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, attachment(folderName + ".zip"))
                 .body(body);
+    }
+
+    /**
+     * Content-Disposition per nomi qualsiasi (RFC 6266): {@code filename} ASCII di ripiego e
+     * {@code filename*} UTF-8 con il nome vero. Barre, virgolette e caratteri di controllo diventano "_".
+     */
+    static String attachment(String filename) {
+        String safe = filename.replaceAll("[\\\\/\"\\p{Cntrl}]", "_");
+        String ascii = Normalizer.normalize(safe, Normalizer.Form.NFD).replaceAll("\\p{M}", "")
+                .replaceAll("[^ -~]", "_");
+        String encoded = URLEncoder.encode(safe, StandardCharsets.UTF_8).replace("+", "%20").replace("*", "%2A");
+        return "attachment; filename=\"" + ascii + "\"; filename*=UTF-8''" + encoded;
     }
 
     // ---- Files ----

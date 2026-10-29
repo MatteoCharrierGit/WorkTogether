@@ -1,6 +1,7 @@
 package com.worktogether.controller;
 
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.*;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -16,12 +17,12 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(EntityNotFoundException.class)
     public ResponseEntity<Map<String, String>> notFound(EntityNotFoundException e) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        return error(HttpStatus.NOT_FOUND, e.getMessage());
     }
 
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Map<String, String>> forbidden(AccessDeniedException e) {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", e.getMessage()));
+        return error(HttpStatus.FORBIDDEN, e.getMessage());
     }
 
     // Parametro di query/percorso con valore non convertibile (es. type=FOO, id non UUID): 400, non 500.
@@ -33,12 +34,12 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BadCredentialsException.class)
     public ResponseEntity<Map<String, String>> unauthorized(BadCredentialsException e) {
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", e.getMessage()));
+        return error(HttpStatus.UNAUTHORIZED, e.getMessage());
     }
 
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<Map<String, String>> responseStatus(ResponseStatusException e) {
-        return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason()));
+        return error(e.getStatusCode(), e.getReason());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -46,12 +47,24 @@ public class GlobalExceptionHandler {
         String msg = e.getBindingResult().getFieldErrors().stream()
                 .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
                 .findFirst().orElse("Validation error");
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", msg));
+        return error(HttpStatus.BAD_REQUEST, msg);
     }
 
+    /**
+     * Risposta già iniziata (es. ZIP o stream SSE a metà): non si può più scrivere un JSON, e "risolvere"
+     * l'eccezione farebbe chiudere la risposta come se fosse completa. Si rilancia: il container chiude
+     * la connessione e il client vede un download interrotto invece di un file troncato.
+     */
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, String>> generic(Exception e) {
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", "Internal server error"));
+    public ResponseEntity<Map<String, String>> generic(Exception e, HttpServletResponse response) throws Exception {
+        if (response.isCommitted()) throw e;
+        return error(HttpStatus.INTERNAL_SERVER_ERROR, "Internal server error");
+    }
+
+    // Content-Type esplicito: l'errore resta JSON anche se la rotta aveva già impostato un altro tipo
+    // (es. application/zip) o se il client accetta solo quello.
+    private static ResponseEntity<Map<String, String>> error(HttpStatusCode status, String message) {
+        return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("error", message == null ? "" : message));
     }
 }

@@ -41,16 +41,18 @@ export function userManager(): UserManager {
       scope: 'openid profile email offline_access',
       userStore: new WebStorageStateStore({ store: window.sessionStorage }),
       stateStore: new WebStorageStateStore({ store: window.sessionStorage }),
-      // Rinnovo automatico 30 s prima della scadenza, col refresh token (niente iframe).
-      // (Con token che durano meno di 30 s si rinnoverebbe in continuazione: Authentik usa minuti.)
-      automaticSilentRenew: true,
+      // Niente rinnovo automatico della libreria: farebbe una seconda richiesta col refresh token
+      // in parallelo a renewAccessToken() e, siccome Authentik ruota il refresh token, la seconda
+      // fallirebbe con invalid_grant (⇒ 401). Il rinnovo passa sempre da renewAccessToken().
+      automaticSilentRenew: false,
       accessTokenExpiringNotificationTimeInSeconds: EXPIRY_MARGIN_S,
       loadUserInfo: false,
     })
     manager.events.addUserLoaded(u => useAuthStore.getState().setAccessToken(u.access_token))
-    manager.events.addSilentRenewError(() => {
-      /* il prossimo 401 (o getAccessToken) riproverà e, se serve, riporterà al login */
-    })
+    // 30 s prima della scadenza (con token che durano meno di 30 s si rinnoverebbe in continuazione:
+    // Authentik usa minuti). Se il timer è rallentato (scheda in background) nessun problema: ogni
+    // chiamata passa da getAccessToken(), che rinnova da sé un token in scadenza o già scaduto.
+    manager.events.addAccessTokenExpiring(() => { void renewAccessToken() })
     manager.events.addUserSignedOut(() => clearLocalSession())
   }
   return manager
@@ -60,7 +62,18 @@ export function userManager(): UserManager {
 
 let renewing: Promise<string | null> | null = null
 
-/** Rinnova l'access token col refresh token (una sola richiesta alla volta). null se non si può. */
+/**
+ * Rinnova l'access token col refresh token. Single-flight: timer di scadenza, getAccessToken() e
+ * interceptor del 401 condividono la stessa promise, quindi in una scheda c'è al massimo una richiesta
+ * col refresh token alla volta (Authentik lo ruota: un secondo uso dello stesso darebbe invalid_grant).
+ * null se non si può (sessione finita).
+ *
+ * Più schede: i token stanno nel sessionStorage della scheda, quindi ogni scheda aperta normalmente ha
+ * la sua sessione e il suo refresh token e non si disturbano. Solo una scheda *duplicata* (che copia il
+ * sessionStorage, anche window.open) parte con lo stesso refresh token dell'originale: la prima che rinnova
+ * lo invalida e l'altra, scaduto il suo access token, finisce sulla schermata di accesso (un clic, la
+ * sessione Authentik è ancora valida).
+ */
 export function renewAccessToken(): Promise<string | null> {
   if (!oidcConfigured) return Promise.resolve(null)
   if (!renewing) {
