@@ -1,49 +1,35 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { authApi } from '@/lib/api'
+import { Navigate, useSearchParams } from 'react-router-dom'
+import { LogIn } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
+import { login, oidcConfigured } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { PasswordInput } from '@/components/shared'
-import { AuthField, AuthLayout, FormError } from './auth/AuthLayout'
+import { Callout } from '@/components/shared'
+import { AuthLayout, FormError } from './auth/AuthLayout'
 
+/**
+ * Schermata di accesso: l'autenticazione avviene su Authentik (account unico dei servizi).
+ * Nessuna registrazione: gli account li crea l'amministratore.
+ */
 export default function LoginPage() {
-  const navigate = useNavigate()
-  const setAuth = useAuthStore(s => s.setAuth)
-  const [identifier, setIdentifier] = useState('')
-  const [password, setPassword] = useState('')
+  const [params] = useSearchParams()
+  const status = useAuthStore(s => s.status)
+  const storeError = useAuthStore(s => s.error)
   const [error, setError] = useState('')
-  const [idError, setIdError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!identifier.trim()) { setIdError('Inserisci username o email'); return }
-    setIdError('')
+  const returnTo = params.get('returnTo') ?? '/'
+  if (status === 'authenticated') return <Navigate to={returnTo} replace />
+
+  const expired = params.get('expired') === '1'
+
+  const start = async () => {
     setError('')
     setLoading(true)
     try {
-      const data = await authApi.login(identifier, password)
-      // Primo accesso di un account creato col solo username: niente token, si va all'onboarding.
-      if (data.onboardingRequired) {
-        sessionStorage.setItem('wt-onboarding-token', data.onboardingToken)
-        sessionStorage.setItem('wt-onboarding-name', data.displayName ?? '')
-        navigate('/onboarding')
-        return
-      }
-      setAuth(
-        { id: data.userId, email: data.email, displayName: data.displayName, mustResetPassword: data.mustResetPassword, systemAdmin: data.systemAdmin, onboardingCompleted: data.onboardingCompleted, avatar: data.avatar },
-        data.accessToken,
-        data.refreshToken
-      )
-      if (data.mustResetPassword) {
-        navigate('/force-reset')
-      } else {
-        navigate('/')
-      }
-    } catch (err: any) {
-      setError(err.response?.data?.error ?? 'Credenziali non valide')
-    } finally {
+      await login(returnTo) // redirect: la pagina viene lasciata
+    } catch {
+      setError('Impossibile raggiungere il servizio di accesso. Riprova tra poco.')
       setLoading(false)
     }
   }
@@ -51,43 +37,27 @@ export default function LoginPage() {
   return (
     <AuthLayout
       title="Accedi"
-      description="Bentornato. Entra nel tuo spazio di lavoro."
+      description="Bentornato. Entra nel tuo spazio di lavoro con il tuo account."
       footer="Nessuna registrazione pubblica: per un account contatta il tuo admin."
     >
-      <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-        <AuthField id="identifier" label="Username o email" error={idError}>
-          <Input
-            type="text"
-            placeholder="mario.rossi o tu@esempio.it"
-            value={identifier}
-            onChange={e => { setIdentifier(e.target.value); if (idError) setIdError('') }}
-            autoComplete="username"
-            autoCapitalize="none"
-            autoFocus
-          />
-        </AuthField>
-        <AuthField
-          id="password"
-          label="Password"
-          hint="Primo accesso? Inserisci solo lo username: imposterai email e password al passo successivo."
-          aside={
-            <Link to="/forgot-password" className="focus-ring rounded-sm text-caption text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
-              Password dimenticata?
-            </Link>
-          }
-        >
-          <PasswordInput
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            placeholder="Lascia vuoto al primo accesso"
-            autoComplete="current-password"
-          />
-        </AuthField>
-        <FormError>{error}</FormError>
-        <Button type="submit" className="w-full" loading={loading}>
-          {loading ? 'Accesso in corso…' : 'Accedi'}
+      <div className="space-y-4">
+        {expired && !storeError && !error && (
+          <Callout variant="info">La sessione è scaduta: accedi di nuovo per continuare.</Callout>
+        )}
+        {!oidcConfigured && (
+          <Callout variant="destructive">
+            Accesso non configurato: manca <code>VITE_OIDC_AUTHORITY</code> nella build del frontend.
+          </Callout>
+        )}
+        <FormError>{storeError || error}</FormError>
+        <Button className="w-full" onClick={start} loading={loading} disabled={!oidcConfigured || status === 'loading'}>
+          {!loading && <LogIn className="h-4 w-4" />}
+          {loading ? 'Reindirizzamento…' : 'Accedi con Authentik'}
         </Button>
-      </form>
+        <p className="text-center text-caption text-muted-foreground lg:text-left">
+          Verrai portato alla pagina di accesso comune ai servizi e poi riportato qui.
+        </p>
+      </div>
     </AuthLayout>
   )
 }

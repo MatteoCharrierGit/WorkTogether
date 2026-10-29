@@ -14,13 +14,13 @@ const ROLE_LABELS: Record<string, string> = { ADMIN: 'Admin', COLLABORATORE: 'Co
 
 /**
  * Schermata di accettazione di un invito (link ricevuto via email: /invite/:token).
- * L'anteprima è pubblica; per accettare serve essere loggati con l'account invitato.
+ * Route protetta: chi non è loggato passa da Authentik e torna qui. L'invito porta in un
+ * workspace un account già esistente (non ne crea).
  */
 export default function AcceptInvitePage() {
   const { token = '' } = useParams()
   const navigate = useNavigate()
   const user = useAuthStore(s => s.user)
-  const isAuthed = useAuthStore(s => !!s.accessToken)
 
   const [preview, setPreview] = useState<InvitationPreview | null>(null)
   const [error, setError] = useState('')
@@ -87,25 +87,12 @@ export default function AcceptInvitePage() {
             </div>
           </div>
           <FormError>{error}</FormError>
-          {isAuthed ? (
-            <>
-              <Button className="w-full" onClick={accept} loading={accepting}>
-                {accepting ? 'Accetto…' : 'Accetta invito'}
-              </Button>
-              <p className="text-center text-caption text-muted-foreground">
-                Stai accedendo come <strong className="text-foreground">{user?.displayName}</strong>. L&apos;invito è per {preview.email}.
-              </p>
-            </>
-          ) : (
-            <>
-              <Button className="w-full" asChild>
-                <Link to="/login">Accedi per accettare</Link>
-              </Button>
-              <p className="text-center text-caption text-muted-foreground">
-                Accedi con l&apos;account <strong className="text-foreground">{preview.email}</strong> per accettare.
-              </p>
-            </>
-          )}
+          <Button className="w-full" onClick={accept} loading={accepting}>
+            {accepting ? 'Accetto…' : 'Accetta invito'}
+          </Button>
+          <p className="text-center text-caption text-muted-foreground">
+            Stai accedendo come <strong className="text-foreground">{user?.displayName}</strong>. L&apos;invito è per {preview.email}.
+          </p>
         </div>
       ) : null}
     </AuthLayout>

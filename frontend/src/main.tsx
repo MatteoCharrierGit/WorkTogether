@@ -2,6 +2,10 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import './index.css'
+import { initAuth } from './lib/auth'
+
+// Ripristina la sessione OIDC salvata (sessionStorage) prima di decidere login/app.
+void initAuth()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

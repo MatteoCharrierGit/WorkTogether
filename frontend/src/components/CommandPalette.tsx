@@ -14,7 +14,7 @@ import {
 import { aiApi, elementsApi, workspacesApi } from '@/lib/api'
 import { TYPE_LABELS } from '@/lib/utils'
 import { useUiStore } from '@/store/uiStore'
-import { useAuthStore } from '@/store/authStore'
+import { logout } from '@/lib/auth'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import type { Element, Workspace } from '@/types'
 
@@ -37,8 +37,6 @@ export function CommandPalette() {
   const { pathname } = useLocation()
   const currentId = useWorkspaceStore(s => s.current?.id)
   const setCurrent = useWorkspaceStore(s => s.setCurrent)
-  const mustReset = useAuthStore(s => !!s.user?.mustResetPassword)
-  const logout = useAuthStore(s => s.logout)
   const { theme, setTheme } = useTheme()
   const [search, setSearch] = useState('')
 
@@ -46,14 +44,13 @@ export function CommandPalette() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
-        if (mustReset) return
         e.preventDefault()
         setOpen(!useUiStore.getState().commandOpen)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [mustReset, setOpen])
+  }, [setOpen])
 
   useEffect(() => { if (!open) setSearch('') }, [open])
 
@@ -179,7 +176,7 @@ export function CommandPalette() {
               {theme === t.value && <Check className="ml-auto h-4 w-4 text-primary" aria-label="Attivo" />}
             </CommandItem>
           ))}
-          <CommandItem value="esci disconnetti logout" onSelect={() => run(() => { logout(); navigate('/login') })}>
+          <CommandItem value="esci disconnetti logout" onSelect={() => run(() => { void logout() })}>
             <LogOut className="h-4 w-4 text-muted-foreground" />
             Disconnetti
           </CommandItem>

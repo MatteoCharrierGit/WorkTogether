@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
-import { usersApi, authApi } from '@/lib/api'
+import { usersApi } from '@/lib/api'
+import { accountUrl } from '@/lib/auth'
 import { useAuthStore } from '@/store/authStore'
 import { useTheme, THEMES, ACCENTS } from '@/components/layout/ThemeProvider'
 import { Button } from '@/components/ui/button'
@@ -7,19 +8,18 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { toast } from '@/components/ui/toast'
-import { Callout, PageHeader, PasswordInput, SettingRow, SettingsSection, UserAvatar } from '@/components/shared'
+import { Callout, PageHeader, SettingRow, SettingsSection, UserAvatar } from '@/components/shared'
 import { getErrorMessage, resizeImageToDataUrl } from '@/lib/utils'
 import {
   notificationsSupported, notificationsEnabled, setNotificationsEnabled,
   notificationPermission, requestNotificationPermission,
 } from '@/lib/notifications'
 import { InAppNotificationSettings } from '@/components/notifications/InAppNotificationSettings'
-import { Camera, Check, Trash2, Palette, UserCircle, Lock, Bell, Sun, Moon, Monitor, Settings } from 'lucide-react'
+import { Camera, Check, Trash2, Palette, UserCircle, Lock, Bell, Sun, Moon, Monitor, Settings, ExternalLink } from 'lucide-react'
 
 export default function SettingsPage() {
   const user = useAuthStore(s => s.user)
   const updateUser = useAuthStore(s => s.updateUser)
-  const setTokens = useAuthStore(s => s.setTokens)
   const { theme, setTheme, accent, setAccent } = useTheme()
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -30,11 +30,6 @@ export default function SettingsPage() {
   const [notifyOn, setNotifyOn] = useState(notificationsEnabled())
   const [perm, setPerm] = useState(notificationPermission())
 
-  const [current, setCurrent] = useState('')
-  const [next, setNext] = useState('')
-  const [confirm, setConfirm] = useState('')
-  const [pwError, setPwError] = useState('')
-  const [pwBusy, setPwBusy] = useState(false)
 
   const handleAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -93,26 +88,7 @@ export default function SettingsPage() {
     }
   }
 
-  const handleChangePassword = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (next.length < 8) { setPwError('La nuova password deve avere almeno 8 caratteri'); return }
-    if (next !== confirm) { setPwError('Le password non coincidono'); return }
-    setPwError('')
-    setPwBusy(true)
-    try {
-      const data = await authApi.resetPassword(current, next)
-      setTokens(data.accessToken, data.refreshToken)
-      setCurrent(''); setNext(''); setConfirm('')
-      toast('Password aggiornata')
-    } catch (err: any) {
-      setPwError(err.response?.data?.error ?? 'Errore nel cambio password')
-    } finally {
-      setPwBusy(false)
-    }
-  }
-
   const nameUnchanged = !displayName.trim() || displayName.trim() === user?.displayName
-  const mismatch = confirm.length > 0 && next !== confirm
 
   return (
     <div className="h-full overflow-y-auto">
@@ -249,33 +225,19 @@ export default function SettingsPage() {
         {/* Notifiche in app (campanella): preferenze per tipo, salvate sul server */}
         <InAppNotificationSettings />
 
-        {/* Sicurezza */}
-        <SettingsSection icon={Lock} title="Sicurezza" description="Cambia la password di accesso. Almeno 8 caratteri.">
-          <form onSubmit={handleChangePassword} className="max-w-sm space-y-3" noValidate>
-            <div className="space-y-1.5">
-              <Label htmlFor="pw-current">Password attuale</Label>
-              <PasswordInput id="pw-current" value={current} onChange={e => setCurrent(e.target.value)} required autoComplete="current-password" />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pw-next">Nuova password</Label>
-              <PasswordInput id="pw-next" value={next} onChange={e => setNext(e.target.value)} required minLength={8} autoComplete="new-password" />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pw-confirm">Conferma nuova password</Label>
-              <PasswordInput
-                id="pw-confirm"
-                value={confirm}
-                onChange={e => setConfirm(e.target.value)}
-                required
-                autoComplete="new-password"
-                aria-invalid={mismatch || undefined}
-                aria-describedby={mismatch ? 'pw-confirm-err' : undefined}
-              />
-              {mismatch && <p id="pw-confirm-err" className="text-caption text-destructive">Le password non coincidono</p>}
-            </div>
-            {pwError && <p role="alert" className="text-sm text-destructive">{pwError}</p>}
-            <Button type="submit" loading={pwBusy} disabled={!current || !next || !confirm}>Cambia password</Button>
-          </form>
+        {/* Account: password, nome ed email si gestiscono su Authentik (account unico dei servizi) */}
+        <SettingsSection icon={Lock} title="Account e sicurezza" description="Password, email e verifica in due passaggi sono gestite dall'account unico dei servizi (Authentik).">
+          <div className="space-y-3">
+            {accountUrl ? (
+              <Button asChild variant="outline">
+                <a href={accountUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-3.5 w-3.5" /> Gestisci account su Authentik
+                </a>
+              </Button>
+            ) : (
+              <Callout variant="warning">Accesso non configurato: link all'account non disponibile.</Callout>
+            )}
+          </div>
         </SettingsSection>
       </div>
     </div>

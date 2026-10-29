@@ -78,8 +78,8 @@ export function WelcomeTour() {
   const [rect, setRect] = useState<Rect | null>(null)
   const [done, setDone] = useState(false)
 
-  // Mostra il tour solo al primo accesso assoluto (non durante il reset password forzato).
-  const shouldShow = !!user && user.onboardingCompleted === false && !user.mustResetPassword && !done
+  // Mostra il tour solo al primo accesso assoluto.
+  const shouldShow = !!user && user.onboardingCompleted === false && !done
 
   const step = STEPS[index]
 

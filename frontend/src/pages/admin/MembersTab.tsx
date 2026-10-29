@@ -1,102 +1,98 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { EyeOff, Mail, Search, Trash2, UserPlus, Users } from 'lucide-react'
-import { workspacesApi, invitationsApi, visibilityApi } from '@/lib/api'
+import { workspacesApi, invitationsApi, visibilityApi, adminUsersApi } from '@/lib/api'
 import type { Invitation, Member, WorkspaceRole } from '@/types'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { toast } from '@/components/ui/toast'
-import { Callout, EmptyState, QueryState, SettingRow, UserAvatar, useConfirm } from '@/components/shared'
+import { Callout, EmptyState, PasswordInput, QueryState, SettingRow, UserAvatar, useConfirm } from '@/components/shared'
 import { useAuthStore } from '@/store/authStore'
 import { formatDate } from '@/lib/utils'
 import { ListHeader, ROLE_LABELS, RoleSelectItems, SettingsSection, apiError } from './shared'
 
 // ─── Create User Dialog ───────────────────────────────────────────────────────
+// Solo admin di sistema: l'account nasce in Authentik (password iniziale + gruppo dell'app) e
+// viene subito aggiunto a questo workspace. Niente registrazione pubblica.
 function CreateUserDialog({ wsId, open, onClose }: { wsId: string; open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient()
-  const [displayName, setDisplayName] = useState('')
-  const [role, setRole] = useState<WorkspaceRole>('COLLABORATORE')
-  // Opzionale: l'admin può preimpostare email + password temporanea. Altrimenti l'utente
-  // le imposta al primo accesso (onboarding con verifica email).
-  const [manualCreds, setManualCreds] = useState(false)
+  const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
+  const [name, setName] = useState('')
   const [password, setPassword] = useState('')
+  const [role, setRole] = useState<WorkspaceRole>('COLLABORATORE')
+  const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
   const reset = () => {
-    setDisplayName(''); setRole('COLLABORATORE'); setManualCreds(false); setEmail(''); setPassword('')
+    setUsername(''); setEmail(''); setName(''); setPassword(''); setRole('COLLABORATORE'); setError('')
   }
 
   const handle = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (password.length < 8) { setError('La password iniziale deve avere almeno 8 caratteri'); return }
+    setError('')
     setLoading(true)
     try {
-      await workspacesApi.createUser(wsId, {
-        displayName,
+      await adminUsersApi.create({
+        username: username.trim(),
+        email: email.trim(),
+        name: name.trim() || undefined,
+        password,
+        workspaceId: wsId,
         role,
-        email: manualCreds && email ? email : undefined,
-        temporaryPassword: manualCreds && password ? password : undefined,
       })
       queryClient.invalidateQueries({ queryKey: ['members', wsId] })
-      toast(manualCreds
-        ? 'Utente creato. Dovrà cambiare la password al primo accesso.'
-        : 'Utente creato. Al primo accesso imposterà email e password.')
+      toast('Account creato. Comunica username e password iniziale: potrà cambiarla dal suo account.')
       onClose()
       reset()
     } catch (err) {
-      toast(apiError(err), 'destructive')
+      setError(apiError(err, 'Impossibile creare l\'account'))
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+    <Dialog open={open} onOpenChange={v => { if (!v) { onClose(); setError('') } }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Nuovo utente</DialogTitle>
-          <DialogDescription>Crea un account e aggiungilo direttamente al workspace.</DialogDescription>
+          <DialogDescription>Crea l&apos;account di accesso (Authentik) e aggiungilo a questo workspace.</DialogDescription>
         </DialogHeader>
         <form onSubmit={handle} className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="cu-name">Username</Label>
-            <Input id="cu-name" value={displayName} onChange={e => setDisplayName(e.target.value)} required placeholder="mario.rossi" autoComplete="off" />
-            <p className="text-caption text-muted-foreground">
-              È l&apos;identificativo di accesso. L&apos;utente completerà email e password al primo login.
-            </p>
+            <Label htmlFor="cu-username">Username</Label>
+            <Input id="cu-username" value={username} onChange={e => setUsername(e.target.value)} required placeholder="mario.rossi" autoComplete="off" autoCapitalize="none" pattern="[A-Za-z0-9._@+\-]+" />
+            <p className="text-caption text-muted-foreground">Serve per accedere. Lettere, numeri e . _ @ + -</p>
           </div>
           <div className="space-y-1.5">
-            <Label>Ruolo</Label>
+            <Label htmlFor="cu-email">Email</Label>
+            <Input id="cu-email" type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="mario@esempio.it" autoComplete="off" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="cu-name">Nome</Label>
+            <Input id="cu-name" value={name} onChange={e => setName(e.target.value)} placeholder="Mario Rossi" autoComplete="off" />
+            <p className="text-caption text-muted-foreground">Come lo vedranno gli altri. Se vuoto si usa lo username.</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="cu-pw">Password iniziale</Label>
+            <PasswordInput id="cu-pw" value={password} onChange={e => setPassword(e.target.value)} required minLength={8} placeholder="Min. 8 caratteri" autoComplete="new-password" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Ruolo nel workspace</Label>
             <Select value={role} onValueChange={v => setRole(v as WorkspaceRole)}>
               <SelectTrigger aria-label="Ruolo"><SelectValue /></SelectTrigger>
               <SelectContent><RoleSelectItems /></SelectContent>
             </Select>
           </div>
-          <div className="flex items-center gap-2.5">
-            <Checkbox id="cu-manual" checked={manualCreds} onCheckedChange={v => setManualCreds(v === true)} />
-            <Label htmlFor="cu-manual" className="cursor-pointer font-normal">
-              Imposta manualmente email e password temporanea
-            </Label>
-          </div>
-          {manualCreds && (
-            <div className="space-y-3 rounded-md border bg-surface-2 p-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="cu-email">Email</Label>
-                <Input id="cu-email" type="email" value={email} onChange={e => setEmail(e.target.value)} required={manualCreds} placeholder="mario@esempio.it" />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="cu-pw">Password temporanea</Label>
-                <Input id="cu-pw" type="password" value={password} onChange={e => setPassword(e.target.value)} required={manualCreds} minLength={8} placeholder="Min. 8 caratteri" autoComplete="new-password" />
-              </div>
-            </div>
-          )}
+          {error && <Callout variant="destructive">{error}</Callout>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Annulla</Button>
             <Button type="submit" loading={loading}>Crea utente</Button>
@@ -214,6 +210,7 @@ export function MembersTab({ wsId }: { wsId: string }) {
   const queryClient = useQueryClient()
   const confirm = useConfirm()
   const meId = useAuthStore(s => s.user?.id)
+  const isSystemAdmin = useAuthStore(s => !!s.user?.systemAdmin)
   const [createUserOpen, setCreateUserOpen] = useState(false)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [filter, setFilter] = useState('')
@@ -292,15 +289,18 @@ export function MembersTab({ wsId }: { wsId: string }) {
       <SettingsSection
         icon={Users}
         title="Membri"
-        description="Gestisci i ruoli, invita persone o crea nuovi account."
+        description={isSystemAdmin ? "Gestisci i ruoli, invita persone o crea nuovi account." : "Gestisci i ruoli e invita persone che hanno già un account."}
         actions={
           <>
             <Button size="sm" variant="outline" onClick={() => setInviteOpen(true)}>
               <Mail className="h-3.5 w-3.5" /> Invita
             </Button>
-            <Button size="sm" onClick={() => setCreateUserOpen(true)}>
-              <UserPlus className="h-3.5 w-3.5" /> Nuovo utente
-            </Button>
+            {/* Creare account è riservato all'admin di sistema (gli account vivono in Authentik). */}
+            {isSystemAdmin && (
+              <Button size="sm" onClick={() => setCreateUserOpen(true)}>
+                <UserPlus className="h-3.5 w-3.5" /> Nuovo utente
+              </Button>
+            )}
           </>
         }
         contentClassName="space-y-3"
@@ -412,7 +412,7 @@ export function MembersTab({ wsId }: { wsId: string }) {
         )}
       </SettingsSection>
 
-      <CreateUserDialog wsId={wsId} open={createUserOpen} onClose={() => setCreateUserOpen(false)} />
+      {isSystemAdmin && <CreateUserDialog wsId={wsId} open={createUserOpen} onClose={() => setCreateUserOpen(false)} />}
       <InviteMemberDialog wsId={wsId} open={inviteOpen} onClose={() => setInviteOpen(false)} />
     </div>
   )

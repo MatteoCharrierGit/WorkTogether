@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
+import { logout } from '@/lib/auth'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { useIsOnline } from '@/store/presenceStore'
 import { useUiStore } from '@/store/uiStore'
@@ -220,7 +221,6 @@ export function Sidebar({ collapsed = false, variant = 'desktop' }: SidebarProps
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const user = useAuthStore(s => s.user)
-  const logout = useAuthStore(s => s.logout)
   const currentId = useWorkspaceStore(s => s.current?.id)
   const persistedCurrent = useWorkspaceStore(s => s.current)
   const setCurrent = useWorkspaceStore(s => s.setCurrent)
@@ -262,10 +262,8 @@ export function Sidebar({ collapsed = false, variant = 'desktop' }: SidebarProps
     [workspace, aiStatus?.enabled],
   )
 
-  const handleLogout = () => {
-    logout()
-    navigate('/login')
-  }
+  // Logout completo: sessione locale + sessione Authentik (end-session), poi /login.
+  const handleLogout = () => { void logout() }
 
   const isDark = resolvedTheme === 'dark'
   const themeToggle = (

@@ -1,76 +1,38 @@
 import axios from 'axios'
 import { useAuthStore } from '@/store/authStore'
+import { getAccessToken, renewAccessToken, sessionExpired } from '@/lib/auth'
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api',
 })
 
-api.interceptors.request.use(config => {
-  const token = useAuthStore.getState().accessToken
+// Ogni richiesta porta l'access token di Authentik corrente (rinnovato se sta per scadere).
+api.interceptors.request.use(async config => {
+  const token = await getAccessToken()
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
 
-// Refresh condiviso: tutte le richieste che ricevono 401 contemporaneamente
-// (tipico al caricamento pagina) riusano un'unica chiamata a /auth/refresh.
-// Senza questa deduplica, ogni richiesta chiamerebbe il refresh con lo stesso
-// token; il backend ruota il refresh token, quindi solo la prima andrebbe a
-// buon fine e le altre verrebbero disconnesse → logout casuali.
-let refreshPromise: Promise<string> | null = null
-
-async function refreshAccessToken(): Promise<string> {
-  const refreshToken = useAuthStore.getState().refreshToken
-  if (!refreshToken) throw new Error('no refresh token')
-  const res = await axios.post('/api/auth/refresh', { refreshToken })
-  useAuthStore.getState().setTokens(res.data.accessToken, res.data.refreshToken)
-  return res.data.accessToken as string
-}
-
+// 401: si prova un rinnovo (refresh token, deduplicato in lib/auth) e si ripete la richiesta una
+// volta; se non basta la sessione è finita ⇒ schermata di accesso.
 api.interceptors.response.use(
   res => res,
   async err => {
     const original = err.config
-    const isRefreshCall = original?.url?.includes('/auth/refresh')
-    if (err.response?.status === 401 && original && !original._retry && !isRefreshCall) {
+    if (err.response?.status === 401 && original && !original._retry) {
       original._retry = true
-      try {
-        // Avvia il refresh solo se non ce n'è già uno in corso.
-        if (!refreshPromise) {
-          refreshPromise = refreshAccessToken().finally(() => { refreshPromise = null })
-        }
-        const newAccessToken = await refreshPromise
-        original.headers.Authorization = `Bearer ${newAccessToken}`
+      const token = await renewAccessToken()
+      if (token) {
+        original.headers.Authorization = `Bearer ${token}`
         return api(original)
-      } catch {
-        useAuthStore.getState().logout()
-        window.location.href = '/login'
       }
+      sessionExpired()
     }
     return Promise.reject(err)
   }
 )
 
 export default api
-
-// Auth
-export const authApi = {
-  // identifier = username (display name) oppure email
-  login: (identifier: string, password: string) =>
-    api.post('/auth/login', { identifier, password }).then(r => r.data),
-  resetPassword: (currentPassword: string, newPassword: string) =>
-    api.post('/auth/reset-password', { currentPassword, newPassword }).then(r => r.data),
-  logout: () => api.post('/auth/logout'),
-  // Onboarding primo accesso (account creato col solo username)
-  onboardingStart: (onboardingToken: string, email: string, password: string) =>
-    api.post('/auth/onboarding/start', { onboardingToken, email, password }),
-  onboardingVerify: (onboardingToken: string, code: string) =>
-    api.post('/auth/onboarding/verify', { onboardingToken, code }).then(r => r.data),
-  // Reset password via OTP email
-  passwordResetRequest: (identifier: string) =>
-    api.post('/auth/password-reset/request', { identifier }),
-  passwordResetVerify: (identifier: string, code: string, newPassword: string) =>
-    api.post('/auth/password-reset/verify', { identifier, code, newPassword }).then(r => r.data),
-}
 
 // Inviti al workspace
 export const invitationsApi = {
@@ -79,7 +41,7 @@ export const invitationsApi = {
     api.post(`/workspaces/${wsId}/invitations`, { identifier, role }).then(r => r.data),
   revoke: (wsId: string, id: string) =>
     api.delete(`/workspaces/${wsId}/invitations/${id}`),
-  preview: (token: string) => api.get(`/auth/invitations/${token}`).then(r => r.data),
+  preview: (token: string) => api.get(`/invitations/${token}`).then(r => r.data),
   accept: (token: string) => api.post(`/invitations/${token}/accept`).then(r => r.data),
 }
 
@@ -95,8 +57,6 @@ export const workspacesApi = {
     api.patch(`/workspaces/${wsId}/members/${userId}/role?role=${role}`),
   removeMember: (wsId: string, userId: string) =>
     api.delete(`/workspaces/${wsId}/members/${userId}`),
-  createUser: (wsId: string, data: { email?: string; displayName: string; temporaryPassword?: string; role?: string }) =>
-    api.post(`/workspaces/${wsId}/users`, data).then(r => r.data),
   updateSettings: (wsId: string, data: { avatar?: string; cardShowTags?: boolean; cardShowAssignees?: boolean; cardShowDueDate?: boolean; reminderDaysBefore?: number; eventRemindersEnabled?: boolean; weeklyRecapEnabled?: boolean; mondayDigestEnabled?: boolean; sprintEnabled?: boolean }) =>
     api.patch(`/workspaces/${wsId}/settings`, data).then(r => r.data),
   // Backup / trasporto: export delle sezioni selezionate → JSON; import → nuova workspace.
@@ -147,6 +107,12 @@ export const tagsApi = {
   update: (wsId: string, id: string, data: { name: string; color?: string }) =>
     api.put(`/workspaces/${wsId}/tags/${id}`, data).then(r => r.data),
   delete: (wsId: string, id: string) => api.delete(`/workspaces/${wsId}/tags/${id}`),
+}
+
+// Account (solo admin di sistema): creati in Authentik + utente interno collegato.
+export const adminUsersApi = {
+  create: (data: { username: string; email: string; name?: string; password: string; workspaceId?: string; role?: string }) =>
+    api.post<import('@/types').User>('/admin/users', data).then(r => r.data),
 }
 
 // Users
@@ -253,7 +219,7 @@ export interface AiStreamHandlers {
 
 // Legge una risposta SSE via fetch (per poter inviare il Bearer token).
 async function aiStreamSse(path: string, body: object, handlers: AiStreamHandlers) {
-  const token = useAuthStore.getState().accessToken
+  const token = await getAccessToken()
   const base = (import.meta as any).env?.VITE_API_URL || '/api'
   let res: Response
   try {

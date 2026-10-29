@@ -3,7 +3,7 @@ import { Client, StompSubscription } from '@stomp/stompjs'
 import SockJS from 'sockjs-client'
 import { WsEvent } from '@/types'
 import { useAuthStore } from '@/store/authStore'
-import { usersApi } from '@/lib/api'
+import { getAccessToken } from '@/lib/auth'
 
 /**
  * Connessione STOMP unica per tutta l'app.
@@ -76,41 +76,12 @@ function doSubscribeUser() {
   })
 }
 
-/** Scadenza (ms epoch) di un JWT, null se illeggibile. */
-function jwtExpiry(token: string): number | null {
-  try {
-    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
-    const payload = JSON.parse(atob(base64))
-    return typeof payload.exp === 'number' ? payload.exp * 1000 : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * Token corrente per la CONNECT. Se è scaduto (o sta per scadere) fa una chiamata autenticata
- * leggera: l'interceptor di axios rinnova il token col refresh token (deduplicato) e lo salva
- * nello store, da cui lo rileggiamo.
- */
-async function freshAccessToken(): Promise<string | null> {
-  let token = useAuthStore.getState().accessToken
-  if (!token) return null
-  const exp = jwtExpiry(token)
-  if (exp !== null && exp - Date.now() < 30_000) {
-    try {
-      await usersApi.me()
-    } catch {
-      /* refresh fallito: l'interceptor gestisce il logout; tentiamo comunque */
-    }
-    token = useAuthStore.getState().accessToken
-  }
-  return token
-}
-
 /**
  * Avvia (una volta) la connessione. Il token passato è ignorato: a ogni (ri)connessione
- * `beforeConnect` legge il token CORRENTE dallo store (l'access token scade dopo 15 minuti e le
- * riconnessioni usavano quello vecchio).
+ * `beforeConnect` chiede l'access token CORRENTE a lib/auth (rinnovato col refresh token se sta
+ * per scadere). Il server chiude la connessione quando il token usato alla CONNECT scade
+ * (i token di Authentik durano pochi minuti): il client si riconnette da solo dopo
+ * `reconnectDelay` con il token nuovo e `onWSConnect({ reconnect: true })` riallinea i dati.
  */
 export function connectWS(_token?: string): Client {
   if (client) return client
@@ -119,7 +90,7 @@ export function connectWS(_token?: string): Client {
     webSocketFactory: () => new SockJS('/ws'),
     reconnectDelay: 3000,
     beforeConnect: async stomp => {
-      const token = await freshAccessToken()
+      const token = await getAccessToken()
       if (!token) {
         // Sessione chiusa nel frattempo: niente connessione.
         void stomp.deactivate()

@@ -4,9 +4,9 @@ export type WorkspaceRole = 'ADMIN' | 'COLLABORATORE' | 'GUEST'
 
 export interface User {
   id: string
-  email: string
+  /** null per account legacy mai collegati a un'email verificata. */
+  email: string | null
   displayName: string
-  mustResetPassword: boolean
   systemAdmin: boolean
   onboardingCompleted?: boolean
   avatar?: string
@@ -140,21 +140,6 @@ export interface InvitationPreview {
   inviterName: string
   email: string
   role: WorkspaceRole
-}
-
-// Risposta del login: o autenticazione completa, o richiesta di onboarding (primo accesso).
-export interface AuthResponse {
-  accessToken: string | null
-  refreshToken: string | null
-  userId: string
-  email: string | null
-  displayName: string
-  mustResetPassword: boolean
-  systemAdmin: boolean
-  onboardingCompleted: boolean
-  avatar?: string
-  onboardingRequired: boolean
-  onboardingToken: string | null
 }
 
 export interface Attachment {
@@ -319,9 +304,6 @@ export type NotificationPreferences = Record<NotificationType, boolean>
 // Le foto profilo non viaggiano più come data URL base64 nei JSON: `avatarUrl` (e l'alias legacy
 // `avatar`, stesso valore) è un URL versionato `/api/users/{id}/avatar?v=N` servito con cache.
 export interface User {
-  avatarUrl?: string
-}
-export interface AuthResponse {
   avatarUrl?: string
 }
 export interface ChannelMemberDto {

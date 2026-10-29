@@ -10,9 +10,7 @@ import { ConfirmProvider } from '@/components/shared'
 // Pagine caricate on-demand (code-splitting): ogni route diventa un chunk separato,
 // così l'avvio non scarica tutto il codice di tutte le pagine in un colpo solo.
 const LoginPage = lazy(() => import('@/pages/LoginPage'))
-const ForceResetPage = lazy(() => import('@/pages/ForceResetPage'))
-const OnboardingPage = lazy(() => import('@/pages/OnboardingPage'))
-const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage'))
+const CallbackPage = lazy(() => import('@/pages/CallbackPage'))
 const AcceptInvitePage = lazy(() => import('@/pages/AcceptInvitePage'))
 const WorkspaceHomePage = lazy(() => import('@/pages/WorkspaceHomePage'))
 const KanbanPage = lazy(() => import('@/pages/KanbanPage'))
@@ -49,15 +47,14 @@ export default function App() {
         <BrowserRouter>
           <Suspense fallback={<RouteFallback />}>
           <Routes>
-            {/* Public */}
+            {/* Public: accesso via Authentik (OIDC) */}
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/force-reset" element={<ForceResetPage />} />
-            <Route path="/onboarding" element={<OnboardingPage />} />
-            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-            <Route path="/invite/:token" element={<AcceptInvitePage />} />
+            <Route path="/callback" element={<CallbackPage />} />
 
             {/* Protected */}
             <Route element={<ProtectedRoute />}>
+              {/* Invito: serve essere loggati (dopo il login si torna qui) */}
+              <Route path="/invite/:token" element={<AcceptInvitePage />} />
               <Route element={<Layout />}>
                 <Route path="/" element={<WorkspaceHomePage />} />
                 <Route path="/my-tasks" element={<MyTasksPage />} />

@@ -1,4 +1,4 @@
-import { useAuthStore } from '@/store/authStore'
+import { getAccessToken } from '@/lib/auth'
 
 /** Dettagli di un errore dello stream dell'agente (es. 429 con Retry-After). */
 export interface AiStreamErrorInfo {
@@ -24,7 +24,7 @@ export interface AiStreamCallbacks {
  * status HTTP, codice e Retry-After degli errori di limite d'uso (429/503).
  */
 export async function aiStream(path: string, body: object, cb: AiStreamCallbacks) {
-  const token = useAuthStore.getState().accessToken
+  const token = await getAccessToken()
   const base = (import.meta as any).env?.VITE_API_URL || '/api'
   let res: Response
   try {
