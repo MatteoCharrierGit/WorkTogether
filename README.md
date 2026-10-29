@@ -36,9 +36,7 @@ Stack: **Spring Boot 3 / Java 21 / PostgreSQL** (backend) · **React + Vite + Ty
 - **Cartelle in sola lettura (cascata)**: il proprietario o un admin può marcare una cartella come
   sola lettura; il flag si propaga **in cascata** a tutti i file e sottocartelle contenuti, e i nuovi
   contenuti aggiunti **ereditano** il permesso della cartella.
-- **Sessione singola**: a ogni login le sessioni preesistenti dello stesso account (su altri
-  dispositivi/browser) vengono **invalidate e disconnesse immediatamente** (versione di sessione nel
-  token, vedi [docs/BACKEND.md](./docs/BACKEND.md)).
+- ~~**Sessione singola**~~: superata dal login tramite Authentik (vedi *Autenticazione*).
 
 ## Novità v1.1 (giugno 2026)
 
@@ -102,7 +100,7 @@ La documentazione è divisa per area. Parti da qui:
 
 ```bash
 cp .env.example .env
-# modifica password, JWT_SECRET (e, per la voce, le variabili LIVEKIT_*) in .env
+# imposta password del DB, OIDC_*/AUTHENTIK_*, AI_SECRET (e, per la voce, LIVEKIT_*) in .env
 
 # Solo postgres + backend
 docker compose up -d --build
@@ -114,7 +112,37 @@ docker compose --profile frontend up -d --build
 docker compose --profile media up -d --build
 ```
 
-Credenziali admin iniziali e flusso di setup: vedi [AVVIO.md](./AVVIO.md).
+Primo admin e flusso di setup: vedi *Autenticazione* qui sotto e [AVVIO.md](./AVVIO.md).
+
+## Autenticazione
+
+L'accesso avviene tramite **Authentik** (OIDC, Authorization Code + PKCE, client pubblico
+`worktogether`), come gli altri servizi: l'app non gestisce password, registrazioni né reset.
+
+- **Chi entra**: chi ha un account Authentik nel gruppo `worktogether` (policy dell'applicazione).
+  Al primo accesso l'utente interno viene creato, o collegato per email verificata a un account
+  esistente. L'utente con email `ADMIN_INIT_EMAIL` diventa admin dell'app.
+- **Nuovi account**: solo l'admin dell'app, da *Amministrazione → Membri → Nuovo utente* (username,
+  email, nome, password iniziale): il backend crea l'account in Authentik via API e lo aggiunge al
+  gruppo e al workspace. Gli inviti servono per account già esistenti.
+- **Password e profilo**: dalla pagina account di Authentik (link in *Impostazioni*).
+- **Integrazioni**: le API key `wt_…` funzionano come prima.
+
+| Variabile | Dove | Note |
+|-----------|------|------|
+| `OIDC_ISSUER` | backend | `https://auth.mchaservice.tech/application/o/worktogether/` (controllato nel token) |
+| `OIDC_AUDIENCE` | backend | client id, `worktogether` |
+| `OIDC_JWKS_URL` | backend (opz.) | vuoto = `<issuer>jwks/`; in Docker `http://authentik-server:9000/application/o/worktogether/jwks/` |
+| `AUTHENTIK_API_URL` · `AUTHENTIK_API_TOKEN` | backend | API v3 e token di servizio per creare gli account |
+| `AUTHENTIK_USER_GROUP` | backend | default `worktogether` |
+| `ADMIN_INIT_EMAIL` | backend (opz.) | primo admin dell'app |
+| `AI_SECRET` | backend | obbligatorio in produzione (`JWT_SECRET` solo come fallback legacy) |
+| `VITE_OIDC_AUTHORITY` · `VITE_OIDC_CLIENT_ID` | build del frontend | issuer e client id per `oidc-client-ts` |
+
+Redirect URI da registrare nel provider: `https://worktogether.mchaservice.tech/callback`; per il
+ritorno dopo il logout anche `https://worktogether.mchaservice.tech/login`. Il provider deve
+emettere refresh token (scope `offline_access`). Dettagli in [docs/BACKEND.md](./docs/BACKEND.md) §3
+e [docs/FRONTEND.md](./docs/FRONTEND.md) §12.
 
 ## Sviluppo locale
 
@@ -131,7 +159,7 @@ cd frontend && npm install && npm run dev
 ```
 worktogether/
 ├── docker-compose.yml      # postgres + backend (+ profili: frontend, media)
-├── .env.example            # variabili d'ambiente (DB, JWT, mail, LiveKit)
+├── .env.example            # variabili d'ambiente (DB, OIDC/Authentik, mail, LiveKit)
 ├── livekit/
 │   └── livekit.yaml         # config del media server (voce/screen share)
 ├── backend/                 # Spring Boot 3 + Java 21
@@ -148,7 +176,7 @@ worktogether/
 ## Capacità in breve
 
 - **Ruoli**: `ADMIN` · `COLLABORATORE` · `GUEST` (i guest sono in sola lettura).
-- **Auth**: JWT (access + refresh token) per le persone; **API key** `wt_…` con scope per i servizi.
+- **Auth**: login con **Authentik** (OIDC + PKCE) per le persone; **API key** `wt_…` con scope per i servizi.
 - **Realtime**: WebSocket STOMP (broadcast sul workspace) per eventi su elementi, chat, presenza.
 - **Voce/Schermo**: container LiveKit dedicato; Spring firma i token d'accesso. Niente webcam, niente registrazioni.
 

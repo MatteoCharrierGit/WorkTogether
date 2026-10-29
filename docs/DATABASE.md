@@ -6,14 +6,15 @@
 ## 1. Tabelle principali
 
 ### Identità e workspace
-- **users** — `id, email (unique), display_name, password_hash, must_reset_password,
-  is_system_admin, avatar, onboarding_completed, created_at, updated_at`.
+- **users** — `id, email (unique), display_name (unique), oidc_subject (unique),
+  is_system_admin, avatar_version, onboarding_completed, created_at, updated_at` — `oidc_subject` è il
+  claim `sub` di Authentik (colonne legacy non
+  più usate: `password_hash`, `must_reset_password`, `token_version`).
 - **workspaces** — `id, name, description, created_by, avatar` + impostazioni card Kanban
   (`card_show_tags/assignees/due_date`), automazioni email
   (`reminder_days_before, event_reminders_enabled, weekly_recap_enabled, monday_digest_enabled`) e
   visibilità sezioni (`sprint_enabled`, default FALSE: toggle admin per mostrare la sezione Sprint).
 - **workspace_members** — appartenenza + ruolo `ADMIN|COLLABORATORE|GUEST`, unico per `(workspace, user)`.
-- **refresh_tokens** — token di refresh persistiti (`token unique, expires_at`).
 
 ### Lavoro (Kanban / Roadmap / Calendario)
 - **elements** — entità centrale: `type (EPICA|STORIA|TASK|EVENTO)`, `status
@@ -89,11 +90,13 @@
 | **V16** `user_management` | `users.email`/`password_hash` nullable, `display_name` univoco (handle di login), supporto OTP/inviti. |
 | **V17** `sprints` | tabella `sprints` (ciclo PLANNED→ACTIVE→CLOSED, indice unico parziale 1 attiva/workspace); `elements.sprint_id`/`completed_at`/`is_blocked`; `channels.sprint_id` + tipo canale `SPRINT`. |
 | **V18** `workspace_sprint_enabled` | `workspaces.sprint_enabled` (default FALSE): toggle admin per la visibilità della sezione Sprint. |
+| … | (V19–V23: vedi i file in `db/migration`) |
+| **V24** `oidc_authentik` | login tramite Authentik: `users.oidc_subject` (unique); eliminate `refresh_tokens` e `verification_codes`; `password_hash`, `must_reset_password`, `token_version` restano ma non sono più usate. |
 
 ## 3. Note operative
 
 - **Backup**: tutto è in Postgres (volume `postgres_data`); i media voce/screen share **non vengono
   registrati**, quindi non c'è storage extra. I file/allegati stanno nel volume di `UPLOAD_DIR`.
-- **Nuove migration**: la prossima parte da **V19**. Mantenere `ddl-auto: validate` ⇒ ogni cambio di
+- **Nuove migration**: la prossima parte da **V25**. Mantenere `ddl-auto: validate` ⇒ ogni cambio di
   schema passa da una migration Flyway.
 - Verifica all'avvio: nei log del backend Flyway elenca le versioni applicate (utile dopo un deploy).

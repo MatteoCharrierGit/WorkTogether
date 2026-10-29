@@ -14,7 +14,7 @@ cd worktogether
 
 # 2. Copia e configura le variabili d'ambiente
 cp .env.example .env
-nano .env          # cambia le password e il JWT_SECRET
+nano .env          # password del DB, OIDC_*/AUTHENTIK_*, AI_SECRET
 
 # 3. Avvia tutto
 docker compose up -d --build
@@ -37,21 +37,21 @@ docker compose --profile media up -d --build       # media server LiveKit (voce/
 Per la **voce** servono inoltre le variabili `LIVEKIT_*` in `.env` e il provisioning ops (TLS, DNS,
 firewall): vedi [docs/REALTIME_VOCE.md](./docs/REALTIME_VOCE.md).
 
-## Credenziali iniziali
+## Accesso e primo admin
 
-Al primo avvio viene creato automaticamente l'account admin:
-- Email: `ADMIN_INIT_EMAIL` (default: `admin@example.com`)
-- Password: `ADMIN_INIT_PASSWORD` (default: `Admin1234!`)
-
-> Cambia la password dalla pagina profilo dopo il primo accesso.
+Il login avviene su **Authentik** (OIDC): l'app non ha password proprie. Configura `OIDC_ISSUER`,
+`OIDC_AUDIENCE`, `AUTHENTIK_API_URL`, `AUTHENTIK_API_TOKEN` (backend) e `VITE_OIDC_AUTHORITY`,
+`VITE_OIDC_CLIENT_ID` (build del frontend). L'utente Authentik con email `ADMIN_INIT_EMAIL`
+(verificata) diventa admin dell'app al primo accesso.
 
 ## Flusso admin tipico
 
-1. Accedi con l'account admin
-2. Vai su **Admin → Membri** e crea gli account del team (email + password temporanea + ruolo)
-3. I nuovi utenti accedono e cambiano la password al primo login
-4. Crea il primo workspace (solo system admin)
-5. Aggiungi i membri al workspace con i rispettivi ruoli
+1. Accedi con il tuo account Authentik (email = `ADMIN_INIT_EMAIL`)
+2. Crea il primo workspace (solo admin di sistema)
+3. In **Amministrazione → Membri → Nuovo utente** crea gli account del team (username, email, nome,
+   password iniziale, ruolo): vengono creati in Authentik e aggiunti al workspace
+4. I nuovi utenti accedono con quelle credenziali e cambiano la password dal loro account Authentik
+5. Per aggiungere a un altro workspace un account esistente usa **Invita**
 
 ## Sviluppo locale
 

@@ -33,13 +33,16 @@ src/
     PresenceManager, QuickCapture, WelcomeTour, UserAvatar, ProtectedRoute, …
   contexts/VoiceSession.tsx  # sessione voce/screen share globale (LiveKit)
   store/                     # zustand: authStore, workspaceStore, presenceStore
-  lib/                       # api.ts, websocket.ts, markdown.ts, utils, hook vari
+  lib/                       # auth.ts (OIDC), api.ts, websocket.ts, markdown.ts, utils, hook vari
   types/index.ts             # tipi condivisi (entità, WsEvent, …)
 ```
 
 ## 3. Routing (`App.tsx`)
 
-Route pubbliche: `/login`, `/force-reset`. Tutto il resto è dietro `ProtectedRoute` + `Layout`:
+Route pubbliche: `/login` (schermata di accesso con il pulsante *Accedi con Authentik*, nessuna
+registrazione) e `/callback` (rientro da Authentik). Tutto il resto è dietro `ProtectedRoute`
+(che attende il ripristino della sessione e altrimenti manda a `/login?returnTo=…`); `/invite/:token`
+è protetta ma fuori dal `Layout`. Le altre route stanno anche dentro `Layout`:
 
 | Route | Pagina |
 |-------|--------|
@@ -73,7 +76,7 @@ Vi sono ancorati gli elementi che devono persistere:
 
 | Store | Contenuto |
 |-------|-----------|
-| `store/authStore` | utente corrente + access/refresh token (persistito) |
+| `store/authStore` | stato della sessione (`loading/authenticated/anonymous`), utente dell'app, copia dell'access token corrente (non persistito: i token li tiene oidc-client-ts in sessionStorage) |
 | `store/workspaceStore` | workspace corrente (persistito) |
 | `store/presenceStore` | mappa `userId → { inCallChannelId }` degli utenti online |
 
@@ -82,8 +85,12 @@ React Query gestisce liste/cache (es. `['channels', wsId]`, `['messages', wsId, 
 
 ## 6. Livello API e realtime (`lib/`)
 
-- **`lib/api.ts`** — istanza axios + interceptor (aggiunge il Bearer, fa refresh del token su `401`).
-  Espone i moduli: `authApi`, `workspacesApi`, `elementsApi`, `tagsApi`, `usersApi`, `driveApi`,
+- **`lib/auth.ts`** — login tramite **Authentik** con `oidc-client-ts` (vedi §12): `initAuth`,
+  `login(returnTo)`, `completeLogin`, `logout`, `getAccessToken` (rinnova se scade entro 30 s),
+  `renewAccessToken` (refresh token, deduplicato), `accountUrl` (pagina account di Authentik).
+- **`lib/api.ts`** — istanza axios + interceptor: aggiunge il Bearer corrente; su `401` rinnova una
+  volta e ripete la richiesta, altrimenti torna alla schermata di accesso.
+  Espone i moduli: `adminUsersApi`, `workspacesApi`, `elementsApi`, `tagsApi`, `usersApi`, `driveApi`,
   `apiKeysApi`, `aiApi`, `emailApi`, `channelsApi` (incl. `voiceToken`), `attachmentsApi`,
   `presenceApi`. I tipi `VoiceToken` e `PresenceEntryDto` vivono qui.
 - **`lib/websocket.ts`** — singola connessione STOMP condivisa; `subscribeWorkspace` consente **più
@@ -134,8 +141,7 @@ Dettagli su token, qualità (audio Opus; screen share 1080p a ~15 fps), presenza
   `{ file, relPath }` caricata da `uploadEntries` (stessa logica dell'upload cartella da input).
 - **Drive — cartelle sola lettura**: toggle nel menu della cartella (solo proprietario/admin) che
   applica il permesso in cascata; badge "sola lettura" su file e cartelle bloccati.
-- **Sessione singola**: nessuna modifica UI dedicata — quando la sessione viene invalidata altrove,
-  l'interceptor axios (401 → refresh fallito) esegue logout e redirect a `/login`.
+- ~~**Sessione singola**~~: rimossa con il login tramite Authentik (§12).
 
 ## 11. Novità v1.3
 
@@ -152,3 +158,31 @@ Dettagli su token, qualità (audio Opus; screen share 1080p a ~15 fps), presenza
 - **Visibilità Sprint (toggle admin)**: la voce in `Sidebar` compare solo se `workspace.sprintEnabled`;
   **di default è nascosta**. L'admin la attiva in `AdminPage` (Impostazioni → *Funzionalità*). La route
   `SprintPage` è protetta: con sezione disattivata l'accesso diretto via URL reindirizza alla home del workspace.
+
+## 12. Accesso con Authentik (OIDC)
+
+- **Libreria**: `oidc-client-ts`, configurata in `lib/auth.ts` con `VITE_OIDC_AUTHORITY` (issuer,
+  es. `https://auth.mchaservice.tech/application/o/worktogether/`) e `VITE_OIDC_CLIENT_ID`
+  (`worktogether`), passati come build arg (vedi `frontend/Dockerfile`). Frontend e API stanno sulla
+  stessa origine (`VITE_API_URL` vuoto).
+- **Flusso**: `/login` → `signinRedirect` (Authorization Code + **PKCE**, scope
+  `openid profile email offline_access`, `returnTo` nello `state`) → Authentik → `/callback`
+  (`CallbackPage` → `completeLogin`: scambio del codice, `GET /api/users/me`, apertura di `returnTo`).
+  Se il backend rifiuta l'account (403 con messaggio) la pagina mostra l'errore con *Riprova* /
+  *Esci da Authentik*, senza rimandare in automatico ad Authentik (niente loop).
+- **Token**: in `sessionStorage` (user store e state store di oidc-client-ts), mai in localStorage.
+  Rinnovo automatico col **refresh token** 30 s prima della scadenza; `getAccessToken()` lo usa anche
+  su richiesta. All'avvio `initAuth()` (in `main.tsx`) riprende la sessione della scheda.
+- **401**: l'interceptor rinnova una volta e ripete; se non basta → `/login?returnTo=…&expired=1`.
+  Le chiamate `fetch` (stream SSE di Akari) prendono il token da `getAccessToken()`.
+- **WebSocket**: `beforeConnect` usa `getAccessToken()`; il server chiude la connessione quando il
+  token della CONNECT scade e STOMP si riconnette da solo col token nuovo (`onWSConnect` con
+  `reconnect: true` riallinea i dati).
+- **Logout**: *Disconnetti* (sidebar o palette comandi) pulisce lo stato locale e passa dall'
+  **end-session** di Authentik, che riporta a `/login`.
+- **Account**: password, email e MFA si gestiscono su Authentik (link in *Impostazioni → Account e
+  sicurezza*); in app restano nome visualizzato e foto. Rimosse le pagine di login con password,
+  onboarding, password dimenticata e cambio password forzato.
+- **Nuovi account**: *Amministrazione → Membri → Nuovo utente* (visibile solo all'admin di sistema):
+  username, email, nome, password iniziale e ruolo → `POST /api/admin/users`, che crea l'account in
+  Authentik e lo aggiunge al workspace. Gli inviti servono solo per account già esistenti.

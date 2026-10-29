@@ -13,7 +13,7 @@
 | Simbolo | Significato |
 |---------|-------------|
 | 🌐 | **Pubblico** — nessuna autenticazione |
-| 👤 | Token utente (JWT) — qualsiasi membro del workspace |
+| 👤 | Token utente (access token di Authentik) — qualsiasi membro del workspace |
 | 🛡️ | Token utente con ruolo **ADMIN** (del workspace) |
 | ⭐ | Token utente **system admin** |
 | 🔑 `scope` | Utilizzabile anche da **API key** con lo scope indicato |
@@ -24,43 +24,50 @@
 
 Due modi, entrambi con header `Authorization: Bearer <token>`.
 
-**a) Token utente (JWT)** — per le persone. Access token a breve durata (default 15 min) +
-refresh token (default 7 giorni). Dà accesso a tutto ciò che il ruolo consente.
+**a) Token utente (access token OIDC di Authentik)** — per le persone. Il login avviene su
+Authentik (`https://auth.mchaservice.tech/application/o/worktogether/`, client pubblico
+`worktogether`, Authorization Code + PKCE, scope `openid profile email offline_access`); il frontend
+manda l'access token (JWT RS256, durata breve, rinnovato col refresh token). Il backend verifica
+firma (JWKS), `iss`, `aud` (= client id) ed `exp`; al primo accesso crea o collega l'utente interno
+(per `sub`, o per email verificata). Dà accesso a tutto ciò che il ruolo consente.
 
 **b) API key (`wt_…`)** — per bot/integrazioni. Non scade (se non imposti una scadenza), è revocabile,
 e ha **permessi limitati**: agisce **solo** sul suo workspace e **solo** sulle risorse `elements`,
 `drive`, `tags` (più gli allegati), filtrata dagli **scope**. Le API key **non** possono gestire
-membri, impostazioni, utenti, altre chiavi, AI, chat/voce, presenza, email, né fare login.
+membri, impostazioni, utenti, altre chiavi, AI, chat/voce, presenza, email.
+
+Non esistono endpoint di login, registrazione, refresh o reset password: tutto passa da Authentik
+(cambio password e dati dell'account nella pagina utente di Authentik). Gli account li crea solo
+l'admin di sistema (§2).
 
 ### Endpoint pubblici (nessun token)
 | Metodo | Endpoint | Note |
 |--------|----------|------|
-| 🌐 POST | `/api/auth/login` | Login con email e password |
-| 🌐 POST | `/api/auth/refresh` | Rinnova l'access token (`{ "refreshToken": "…" }`) |
-| 🌐 GET | `/ws/**` | Handshake WebSocket/SockJS (STOMP) |
+| 🌐 GET | `/ws/**` | Handshake WebSocket/SockJS (il token si verifica alla CONNECT STOMP) |
 | 🌐 GET | `/actuator/health` | Health check |
+| 🌐 GET | `/api/users/{id}/avatar` | Foto profilo (per gli `<img>`) |
+| 🌐 POST | `/api/livekit/webhook` | Webhook LiveKit (verificato per firma) |
 
 ---
 
-## 2. Auth — `/api/auth`
+## 2. Account — `/api/admin/users`
 | Metodo | Endpoint | Accesso | Note |
 |--------|----------|---------|------|
-| POST | `/login` | 🌐 | `{ email, password }` → `{ accessToken, refreshToken, user }` |
-| POST | `/refresh` | 🌐 | `{ refreshToken }` → nuovi token |
-| POST | `/reset-password` | 👤 | Cambia password dell'utente loggato |
-| POST | `/logout` | 👤 | Invalida il refresh token |
+| POST | `` | ⭐ | Crea l'account in Authentik (utente + password iniziale + gruppo `AUTHENTIK_USER_GROUP`) e l'utente interno collegato; con `workspaceId` lo aggiunge al workspace (serve essere ADMIN di quel workspace) |
 
-> **Sessione singola (v1.2)**: a ogni `login` la "versione di sessione" dell'utente viene incrementata
-> e inclusa negli access token (claim `sv`). Gli access token emessi prima (su altri dispositivi)
-> hanno una versione diversa e vengono **rifiutati immediatamente** (401); essendo già stati eliminati
-> anche i refresh token, quelle sessioni vengono disconnesse. In pratica: **un solo accesso attivo per
-> account alla volta**.
+Body: `{ username, email, name?, password (min 8), workspaceId?, role? }` → `201` con l'utente
+(`UserResponse`). Errori: `409` username/email già esistenti (in Authentik o nell'app), `400` dati o
+password rifiutati da Authentik (messaggio con il dettaglio), `502` Authentik irraggiungibile o token
+API rifiutato, `503` API di Authentik non configurata.
+
+> **Sessione singola**: rimossa. Con i token di Authentik la durata della sessione è decisa da
+> Authentik (access token brevi + refresh token); si può essere connessi da più dispositivi.
 
 ## 3. Utenti — `/api/users`
 | Metodo | Endpoint | Accesso | Note |
 |--------|----------|---------|------|
-| GET | `/me` | 👤 | Profilo corrente |
-| PATCH | `/me` | 👤 | Aggiorna `displayName` / `avatar` |
+| GET | `/me` | 👤 | Profilo corrente (`id, email, displayName, systemAdmin, onboardingCompleted, avatarUrl`); al primo accesso crea/collega l'utente |
+| PATCH | `/me` | 👤 | Aggiorna `displayName` / `avatar` (nome visualizzato nell'app; password ed email si cambiano su Authentik) |
 | POST | `/me/complete-onboarding` | 👤 | Segna il tour di benvenuto come completato |
 | GET | `/me/tasks` | 👤 | Elementi assegnati all'utente |
 | GET | `` (`/api/users`) | ⭐ | Tutti gli utenti del sistema |
@@ -74,11 +81,20 @@ membri, impostazioni, utenti, altre chiavi, AI, chat/voce, presenza, email, né 
 | POST | `/{wsId}/members?userId=&role=` | 🛡️ | Aggiunge un membro |
 | PATCH | `/{wsId}/members/{userId}/role?role=` | 🛡️ | Cambia ruolo |
 | DELETE | `/{wsId}/members/{userId}` | 🛡️ | Rimuove un membro |
-| POST | `/{wsId}/users` | 🛡️ | Crea un nuovo utente nel workspace |
 | PATCH | `/{wsId}/settings` | 🛡️ | Impostazioni (avatar, card Kanban, automazioni email, `sprintEnabled`: visibilità sezione Sprint) |
 | DELETE | `/{wsId}` | 🛡️ | Elimina il workspace e tutti i suoi dati (irreversibile) |
 
 `role` ∈ `ADMIN | COLLABORATORE | GUEST`.
+
+**Inviti** (per account già esistenti: un invito non crea account)
+
+| Metodo | Endpoint | Accesso | Note |
+|--------|----------|---------|------|
+| POST | `/api/workspaces/{wsId}/invitations` | 🛡️ | `{ identifier, role }`: username o email di un utente esistente (404 altrimenti); invia il link via email |
+| GET | `/api/workspaces/{wsId}/invitations` | 🛡️ | Inviti pendenti |
+| DELETE | `/api/workspaces/{wsId}/invitations/{id}` | 🛡️ | Revoca |
+| GET | `/api/invitations/{token}` | 👤 | Anteprima (workspace, chi invita, email, ruolo) |
+| POST | `/api/invitations/{token}/accept` | 👤 | Accetta (solo l'account invitato) |
 
 ## 5. Elementi — `/api/workspaces/{wsId}/elements`
 
@@ -321,7 +337,8 @@ members[], lastMessage?, unreadCount, …`
 | Codice | Significato |
 |--------|-------------|
 | 400 | Richiesta non valida (campo mancante, scope inesistente) |
-| 401 | Non autenticato (token assente/scaduto/non valido) |
+| 401 | Non autenticato (token assente/scaduto/non valido: firma, `iss`, `aud` o `exp`) |
+| 403 + `code: OIDC_ACCOUNT` | Token valido ma account non collegabile (es. email già usata e non verificata da Authentik) |
 | 403 | Permesso negato (ruolo insufficiente, scope mancante, workspace diverso) |
 | 404 | Risorsa non trovata |
 | 409 | Conflitto (cartella non vuota, file in modifica da altri) |
@@ -339,7 +356,9 @@ members[], lastMessage?, unreadCount, …`
 - **Azioni dell'agente AI**: i tool di Akari girano sugli stessi servizi interni delle rotte REST
   (`ElementService`, `DriveService`, `TagService`), quindi emettono gli stessi eventi
   (`ELEMENT_*`, `DRIVE_CHANGED`, `TAG_CHANGED`): la UI si aggiorna in tempo reale anche per le azioni AI.
-- Le scritture passano da REST; il WebSocket è solo broadcast e non è autenticato a livello STOMP.
+- Le scritture passano da REST; il WebSocket è solo ricezione. La CONNECT STOMP richiede l'header
+  nativo `Authorization: Bearer <access token>`; il server chiude la connessione quando quel token è
+  scaduto (più `OIDC_WS_GRACE_SECONDS`) e il client si riconnette con il token rinnovato.
   Dettagli in [docs/REALTIME_VOCE.md](./docs/REALTIME_VOCE.md).
 
 ---

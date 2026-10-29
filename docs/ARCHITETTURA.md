@@ -50,14 +50,14 @@ Vantaggio: la parte "scomoda" (NAT, porte UDP, TLS, TURN) è isolata e non tocca
 ## 4. Sicurezza e accesso
 
 - **Due autenticazioni** (header `Authorization: Bearer …`):
-  - **JWT utente** — access token a breve durata + refresh token; per le persone.
+  - **Access token di Authentik** (OIDC, PKCE) — per le persone; il backend lo valida via JWKS (`iss`, `aud`, `exp`).
   - **API key** `wt_…` — per servizi/bot, con **scope** per risorsa e limitata a un singolo workspace.
-- **Filtri**: `ApiKeyAuthFilter` (precede) → `JwtAuthFilter`. Endpoint pubblici: `/api/auth/**`,
-  `/ws/**`, `/actuator/health`; tutto il resto richiede autenticazione.
+- **Filtri**: `ApiKeyAuthFilter` (precede) → `OidcAuthFilter`. Endpoint pubblici: `/ws/**` (token
+  verificato alla CONNECT), `/actuator/health`, avatar, webhook LiveKit; tutto il resto richiede autenticazione.
 - **Ruoli workspace**: `ADMIN` · `COLLABORATORE` · `GUEST`. Le verifiche stanno in
   `WorkspaceService.assertMember` / `assertRole`, riusate da tutti i service (inclusi stanze e voce).
 - **Segreti a riposo**: la chiave OpenRouter è cifrata in DB (AES-256/GCM, `AiKeyCipher`). Le
-  credenziali d'infra (JWT secret, mail, LiveKit) sono variabili d'ambiente, non cifrate.
+  credenziali d'infra (AI_SECRET, token API di Authentik, mail, LiveKit) sono variabili d'ambiente, non cifrate.
 
 ## 5. Componenti principali
 
@@ -65,7 +65,7 @@ Vantaggio: la parte "scomoda" (NAT, porte UDP, TLS, TURN) è isolata e non tocca
 |------|-----------|------|
 | API REST | Spring MVC (`@RestController`) | `backend/.../controller` |
 | Dominio/DB | JPA + Flyway | `backend/.../domain`, `.../repository`, `resources/db/migration` |
-| Auth | JWT (jjwt) + API key SHA-256 | `backend/.../security` |
+| Auth | OIDC Authentik (Nimbus, JWKS) + API key SHA-256 | `backend/.../security` |
 | AI "Akari" | OpenRouter + tool registry + SSE | `backend/.../service/Ai*`, `AgentToolRegistry` |
 | Email | JavaMail + CommonMark | `WorkspaceEmailService`, `MarkdownEmailRenderer` |
 | Automazioni | `@Scheduled` | `AutomationService` |
@@ -76,8 +76,8 @@ Vantaggio: la parte "scomoda" (NAT, porte UDP, TLS, TURN) è isolata e non tocca
 
 ## 6. Flussi chiave
 
-- **Login** → `POST /api/auth/login` → access+refresh token → il frontend li salva e rinnova via
-  `/api/auth/refresh` quando riceve un `401`.
+- **Login** → redirect ad Authentik (Authorization Code + PKCE) → `/callback` → token in sessionStorage,
+  rinnovati col refresh token di Authentik; `GET /api/users/me` crea o collega l'utente interno.
 - **Chat** → scrittura via `POST …/channels/{id}/messages`; gli altri client ricevono `MESSAGE_CREATED`
   sul topic e rifanno la fetch dei messaggi.
 - **Voce** → `POST …/channels/{id}/voice/token` (Spring valida accesso + `voiceEnabled`, firma il token)

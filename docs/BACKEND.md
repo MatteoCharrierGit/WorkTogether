@@ -17,14 +17,15 @@ dto/
   request/     record di input (validati con jakarta.validation)
   response/     record/DTO di output
 repository/    Spring Data JPA repository
-security/      JWT + API key (filtri, util, scope interceptor)
+security/      OIDC Authentik (validazione token, filtro) + API key (filtro, scope interceptor)
 service/       logica applicativa (22 service)
 websocket/     WorkspaceEventPublisher (broadcast STOMP)
 ```
 
 Build: **Maven** (`pom.xml`), parent `spring-boot-starter-parent:3.3.0`. Dipendenze principali:
-web, data-jpa, security, websocket, validation, actuator, mail; PostgreSQL + Flyway; **jjwt**
-(0.12.5) per i token; **commonmark** per le email Markdown; Lombok.
+web, data-jpa, security, websocket, validation, actuator, mail; PostgreSQL + Flyway;
+**spring-security-oauth2-jose** (Nimbus) per validare gli access token di Authentik; **jjwt** (0.12.5)
+per i token LiveKit; **commonmark** per le email Markdown; Lombok.
 
 ## 2. Controller e rotte
 
@@ -33,9 +34,9 @@ Ogni controller è sotto `/api`. Tabella completa delle rotte (pubbliche e priva
 
 | Controller | Base path | Scopo |
 |-----------|-----------|-------|
-| `AuthController` | `/api/auth` | login, refresh, logout, reset password (pubblico: login/refresh) |
-| `WorkspaceController` | `/api/workspaces` | workspace, membri, ruoli, creazione utenti, impostazioni |
-| `UserController` | `/api/users` | profilo (`/me`), onboarding, "le mie task", elenco utenti |
+| `AdminUserController` | `/api/admin/users` | creazione account (solo admin di sistema) via API di Authentik |
+| `WorkspaceController` | `/api/workspaces` | workspace, membri, ruoli, impostazioni |
+| `UserController` | `/api/users` | profilo (`/me`), tour di benvenuto, "le mie task", elenco utenti |
 | `ElementController` | `/api/workspaces/{wsId}/elements` | CRUD elementi (epica/storia/task/evento) |
 | `AttachmentController` | `…/elements/{id}/attachments` | allegati degli elementi |
 | `DriveController` | `…/drive` | cartelle e file, editor, lock |
@@ -55,14 +56,51 @@ Gli errori sono normalizzati da `GlobalExceptionHandler` nella forma `{ "error":
 
 `SecurityConfig` (stateless, CSRF off, CORS aperto a tutte le origini con credenziali):
 
-- **Endpoint pubblici**: `/api/auth/**`, `/ws/**`, `/actuator/health`. Tutto il resto autenticato.
-- **Catena di filtri**: `ApiKeyAuthFilter` → `JwtAuthFilter` → filtri standard.
-- Una richiesta non autenticata torna **401** (non 403), così il frontend distingue
-  "token scaduto/assente" e fa refresh o redirect al login.
+- **Endpoint pubblici**: `/ws/**` (autenticazione alla CONNECT STOMP), `/api/livekit/webhook` (firma),
+  `/actuator/health`, `GET /api/users/*/avatar`. Tutto il resto autenticato. Non esistono più
+  endpoint di login/registrazione: l'accesso avviene su **Authentik**.
+- **Catena di filtri**: `ApiKeyAuthFilter` (token `wt_…`) → `OidcAuthFilter` → filtri standard.
+- Una richiesta non autenticata torna **401** (non 403), così il frontend rinnova il token o torna
+  alla schermata di accesso.
 
-### JWT (`security/JwtUtil`, `JwtAuthFilter`)
-- Access token a breve scadenza (`JWT_EXPIRY_MS`, default 15 min) + refresh token persistito
-  (`RefreshToken`, default 7 giorni). Il principal autenticato è l'entità `User`.
+### Login tramite Authentik (OIDC) — `security/OidcConfig`, `OidcAuthFilter`, `service/OidcUserService`
+- Il frontend fa login con **Authorization Code + PKCE** (client pubblico `worktogether`) e manda
+  l'**access token di Authentik** come `Authorization: Bearer …` (REST) e nell'header nativo della
+  CONNECT STOMP.
+- `OidcConfig` crea un `JwtDecoder` Nimbus: firma **RS256** con le chiavi del **JWKS**
+  (`OIDC_JWKS_URL`, altrimenti `<OIDC_ISSUER>jwks/`; in cache, riscaricato a `kid` nuovo), `iss` =
+  `OIDC_ISSUER` (sempre quello pubblico, anche se il JWKS si scarica dalla rete interna), `aud`
+  contiene `OIDC_AUDIENCE`, `exp` obbligatorio e non superato (tolleranza 60 s), `sub` presente.
+  Token non valido ⇒ nessuna autenticazione ⇒ 401. Se `OIDC_ISSUER` manca, nessun token è accettato.
+- `OidcUserService.resolve(jwt)` associa l'identità all'utente interno:
+  1. `users.oidc_subject = sub` (colonna nuova, V24) ⇒ è lui;
+  2. primo accesso con un'email già presente ⇒ **collegamento** solo se `email_verified=true` e
+     l'utente non è già legato a un altro `sub` (altrimenti 403/409 con messaggio: niente loop di login);
+  3. altrimenti **crea** un utente normale (nome da `name`/`preferred_username`, reso univoco).
+  L'utente con email verificata = `ADMIN_INIT_EMAIL` diventa **admin di sistema** al primo accesso.
+  L'email viene risincronizzata se Authentik ne dichiara una nuova verificata e libera.
+- **Chi può entrare** lo decide Authentik (gruppo `AUTHENTIK_USER_GROUP` sulla policy dell'applicazione):
+  il backend non filtra i gruppi.
+- **Sessione singola rimossa**: con i token di Authentik non esiste più un "login" lato app su cui
+  incrementare una versione; la durata della sessione è quella di Authentik (access token brevi +
+  refresh token). Le colonne legacy `password_hash`, `must_reset_password`, `token_version` restano in
+  tabella (non mappate) per un eventuale rollback; `refresh_tokens` e `verification_codes` sono eliminate.
+- **WebSocket**: la CONNECT valida lo stesso token e ne registra la scadenza in
+  `websocket/WsSessionExpiryGuard`, che chiude la connessione (codice 4001) quando il token è scaduto
+  da più di `OIDC_WS_GRACE_SECONDS` (default 60). Il client si riconnette con il token già rinnovato.
+
+### Creazione account — `service/AdminUserService`, `service/AuthentikClient`
+- `POST /api/admin/users` (solo `systemAdmin`): verifica duplicati lato app e in Authentik, poi chiama
+  l'API v3 con `AUTHENTIK_API_TOKEN`: `POST /core/users/` → `POST /core/users/{pk}/set_password/` →
+  `POST /core/groups/{gruppo}/add_user/`. Se un passo dopo la creazione fallisce, l'utente Authentik
+  viene eliminato. Poi crea l'utente interno con `oidc_subject` = `uid` di Authentik (il `sub` con la
+  modalità di default *hashed user id*; con altre modalità il collegamento avviene al primo accesso
+  per email verificata) e, se indicato, lo aggiunge al workspace.
+- Errori di Authentik ⇒ messaggi leggibili: username/email già esistenti (409), dati o password
+  rifiutati (400 con il dettaglio), token API rifiutato o Authentik irraggiungibile (502), API non
+  configurata (503).
+- Gli **inviti** ai workspace restano, ma solo per account **già esistenti** (non creano account);
+  anteprima (`GET /api/invitations/{token}`) e accettazione richiedono il login.
 
 ### API key (`security/ApiKeyAuthFilter`, `ApiKeyScopeInterceptor`, `service/ApiKeyService`)
 - Token `wt_…`; in DB solo l'**hash SHA-256** (`ApiKey`). Validità: legata a un singolo workspace,
@@ -75,7 +113,9 @@ Gli errori sono normalizzati da `GlobalExceptionHandler` nella forma `{ "error":
 
 | Service | Responsabilità |
 |---------|----------------|
-| `AuthService` | login, refresh non distruttivo, logout, reset password |
+| `OidcUserService` | utente interno dall'access token di Authentik (sub, collegamento email, admin iniziale) |
+| `AdminUserService` · `AuthentikClient` | creazione account in Authentik + utente interno |
+| `MailService` | invio email singole (inviti) |
 | `WorkspaceService` | workspace, membri, ruoli; `assertMember`/`assertRole` riusati ovunque |
 | `ElementService` | elementi, gerarchia, progress, assegnatari, tag; eventi a giornata intera |
 | `DriveService` | cartelle/file, upload/download, move/rename/copy, **lock** di modifica |
@@ -109,11 +149,13 @@ Gli errori sono normalizzati da `GlobalExceptionHandler` nella forma `{ "error":
 |--------|--------|------|
 | Datasource | `DB_HOST/PORT/NAME/USER/PASSWORD` | Postgres |
 | JPA/Flyway | `ddl-auto: validate`, migration `classpath:db/migration` | lo schema è gestito da Flyway |
-| JWT | `JWT_SECRET`, `JWT_EXPIRY_MS`, `JWT_REFRESH_EXPIRY_MS` | |
-| Admin init | `ADMIN_INIT_EMAIL`, `ADMIN_INIT_PASSWORD` | account creato al primo avvio |
+| OIDC | `OIDC_ISSUER`, `OIDC_AUDIENCE` (= client id, default `worktogether`), `OIDC_JWKS_URL` (opz.) | validazione degli access token di Authentik |
+| OIDC (opz.) | `OIDC_REQUIRE_EMAIL_VERIFIED` (default `true`), `OIDC_WS_GRACE_SECONDS` (default 60) | collegamento per email; chiusura WS a token scaduto |
+| Authentik API | `AUTHENTIK_API_URL` (es. `http://authentik-server:9000/api/v3`), `AUTHENTIK_API_TOKEN`, `AUTHENTIK_USER_GROUP` (default `worktogether`) | creazione account dal pannello |
+| Admin iniziale | `ADMIN_INIT_EMAIL` (opz.) | chi accede con questa email verificata diventa admin di sistema |
 | Upload | `UPLOAD_DIR` | volume per allegati/file |
 | Mail | `MAIL_HOST/PORT/USERNAME/PASSWORD`, `app.mail.from` | per Gmail usa una app password |
-| AI | `app.ai.secret` (default = JWT secret), `OPENROUTER_BASE_URL` | la chiave OpenRouter è in DB cifrata |
+| AI | `AI_SECRET` (obbligatorio in produzione; `JWT_SECRET` resta solo come fallback legacy per decifrare le chiavi già salvate), `OPENROUTER_BASE_URL` | le chiavi dei provider sono in DB cifrate |
 | LiveKit | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_TOKEN_TTL` | voce/screen share |
 
 ## 7. Build e test
@@ -146,10 +188,8 @@ In assenza di JDK/Maven locale, è possibile compilare in un container usa-e-get
 
 ## Novità v1.2
 
-- **Sessione singola**: `users.token_version` (migration V14) incluso negli access token come claim
-  `sv` (`JwtUtil`). A ogni login `AuthService.buildAuthResponse` incrementa la versione (e cancella i
-  refresh token); `JwtAuthFilter` rifiuta i token con `sv` diverso dalla versione corrente ⇒ le
-  sessioni precedenti su altri dispositivi cadono subito (401 → logout lato client).
+- ~~**Sessione singola**~~ (rimossa con il login tramite Authentik, vedi §3): `users.token_version`
+  (migration V14) era incluso negli access token come claim `sv` e incrementato a ogni login.
 - **Cartelle sola lettura in cascata**: `folders.editable_by_all` (migration V15).
   `DriveService.setFolderEditableByAll` propaga il flag a tutti i file e sottocartelle discendenti
   (`cascadeEditable`); upload/creazione ereditano il flag della cartella contenitore (`folderEditable`).
@@ -203,8 +243,7 @@ In assenza di JDK/Maven locale, è possibile compilare in un container usa-e-get
   committati). Fuori transazione (agente AI, presenza, scheduler) invia subito.
 - **Coda personale STOMP**: broker `/topic` + `/queue`, prefisso utente `/user`. Alla `CONNECT` STOMP
   l'header nativo `Authorization: Bearer <jwt>` (già inviato dal frontend) associa la sessione allo
-  userId; un token assente/scaduto non rifiuta la connessione, ma quella sessione non riceve eventi
-  personali. `WorkspaceEventPublisher.publishToUser(userId, type, payload)` → `/user/queue/events`.
+  userId. (Oggi un token assente o non valido rifiuta la CONNECT: vedi §3.) `WorkspaceEventPublisher.publishToUser(userId, type, payload)` → `/user/queue/events`.
   **`CHANNEL_READ` ora va solo all'utente che ha letto** (payload `{workspaceId, channelId, userId}`),
   non più a tutto il workspace. `TYPING` resta sul topic del workspace.
 - **Paginazione messaggi** (`GET …/channels/{id}/messages`): `limit` (default 50, max 100) e `before`
