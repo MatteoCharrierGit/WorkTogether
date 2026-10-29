@@ -20,6 +20,9 @@ const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 export const oidcConfigured = AUTHORITY.length > 0
 
+/** Secondi prima della scadenza in cui l'access token viene già rinnovato. */
+const EXPIRY_MARGIN_S = 30
+
 /** Pagina "Account" di Authentik: password, nome, email, MFA. */
 export const accountUrl = oidcConfigured ? `${new URL(AUTHORITY).origin}/if/user/#/settings` : null
 
@@ -38,8 +41,10 @@ export function userManager(): UserManager {
       scope: 'openid profile email offline_access',
       userStore: new WebStorageStateStore({ store: window.sessionStorage }),
       stateStore: new WebStorageStateStore({ store: window.sessionStorage }),
-      // Rinnovo automatico ~60 s prima della scadenza, col refresh token (niente iframe).
+      // Rinnovo automatico 30 s prima della scadenza, col refresh token (niente iframe).
+      // (Con token che durano meno di 30 s si rinnoverebbe in continuazione: Authentik usa minuti.)
       automaticSilentRenew: true,
+      accessTokenExpiringNotificationTimeInSeconds: EXPIRY_MARGIN_S,
       loadUserInfo: false,
     })
     manager.events.addUserLoaded(u => useAuthStore.getState().setAccessToken(u.access_token))
@@ -53,7 +58,6 @@ export function userManager(): UserManager {
 
 // ---- Token ----
 
-const EXPIRY_MARGIN_S = 30
 let renewing: Promise<string | null> | null = null
 
 /** Rinnova l'access token col refresh token (una sola richiesta alla volta). null se non si può. */
