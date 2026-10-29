@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -19,7 +20,10 @@ import { ListHeader, ROLE_LABELS, RoleSelectItems, SettingsSection, apiError } f
 
 // ─── Create User Dialog ───────────────────────────────────────────────────────
 // Solo admin di sistema: l'account nasce in Authentik (password iniziale + gruppo dell'app) e
-// viene subito aggiunto a questo workspace. Niente registrazione pubblica.
+// viene subito aggiunto a questo workspace. Niente registrazione pubblica. Con «Invia invito per
+// email» l'utente riceve le credenziali e deve scegliere una nuova password al primo accesso.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 function CreateUserDialog({ wsId, open, onClose }: { wsId: string; open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient()
   const [username, setUsername] = useState('')
@@ -27,12 +31,21 @@ function CreateUserDialog({ wsId, open, onClose }: { wsId: string; open: boolean
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
   const [role, setRole] = useState<WorkspaceRole>('COLLABORATORE')
+  const [sendInvite, setSendInvite] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  // Account creato ma email non partita: il dialog resta aperto con l'avviso (niente nuovo invio del form).
+  const [inviteFailure, setInviteFailure] = useState<{ username: string; email: string; reason: string } | null>(null)
+
+  const emailValid = EMAIL_RE.test(email.trim())
+  const inviteActive = sendInvite && emailValid
 
   const reset = () => {
-    setUsername(''); setEmail(''); setName(''); setPassword(''); setRole('COLLABORATORE'); setError('')
+    setUsername(''); setEmail(''); setName(''); setPassword(''); setRole('COLLABORATORE')
+    setSendInvite(false); setError(''); setInviteFailure(null)
   }
+
+  const close = () => { onClose(); reset() }
 
   const handle = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -40,18 +53,29 @@ function CreateUserDialog({ wsId, open, onClose }: { wsId: string; open: boolean
     setError('')
     setLoading(true)
     try {
-      await adminUsersApi.create({
+      const created = await adminUsersApi.create({
         username: username.trim(),
         email: email.trim(),
         name: name.trim() || undefined,
         password,
         workspaceId: wsId,
         role,
+        sendInvite: inviteActive,
       })
       queryClient.invalidateQueries({ queryKey: ['members', wsId] })
-      toast('Account creato. Comunica username e password iniziale: potrà cambiarla dal suo account.')
-      onClose()
-      reset()
+      if (!inviteActive) {
+        toast('Account creato. Comunica username e password iniziale: potrà cambiarla dal suo account.', 'success')
+        close()
+      } else if (created.inviteSent) {
+        toast(`Account creato e invito inviato a ${email.trim()}.`, 'success')
+        close()
+      } else {
+        setInviteFailure({
+          username: username.trim(),
+          email: email.trim(),
+          reason: created.inviteError || 'motivo sconosciuto',
+        })
+      }
     } catch (err) {
       setError(apiError(err, 'Impossibile creare l\'account'))
     } finally {
@@ -60,12 +84,26 @@ function CreateUserDialog({ wsId, open, onClose }: { wsId: string; open: boolean
   }
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) { onClose(); setError('') } }}>
+    <Dialog open={open} onOpenChange={v => { if (!v) close() }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Nuovo utente</DialogTitle>
           <DialogDescription>Crea l&apos;account di accesso (Authentik) e aggiungilo a questo workspace.</DialogDescription>
         </DialogHeader>
+        {inviteFailure ? (
+          <div className="space-y-4">
+            <Callout variant="warning" title="Account creato, ma l'email non è partita">
+              <p>Motivo: {inviteFailure.reason}.</p>
+              <p className="mt-1.5">
+                L&apos;account <strong>{inviteFailure.username}</strong> esiste già: comunica tu username e password
+                iniziale a {inviteFailure.email}. Al primo accesso dovrà comunque sceglierne una nuova.
+              </p>
+            </Callout>
+            <DialogFooter>
+              <Button type="button" onClick={close} autoFocus>Chiudi</Button>
+            </DialogFooter>
+          </div>
+        ) : (
         <form onSubmit={handle} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="cu-username">Username</Label>
@@ -92,12 +130,33 @@ function CreateUserDialog({ wsId, open, onClose }: { wsId: string; open: boolean
               <SelectContent><RoleSelectItems /></SelectContent>
             </Select>
           </div>
+          <div className="flex items-start gap-2.5">
+            <Checkbox
+              id="cu-invite"
+              className="mt-0.5"
+              checked={inviteActive}
+              disabled={!emailValid}
+              onCheckedChange={v => setSendInvite(v === true)}
+              aria-describedby="cu-invite-help"
+            />
+            <div className="min-w-0 space-y-0.5">
+              <Label htmlFor="cu-invite" className={emailValid ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}>
+                Invia invito per email
+              </Label>
+              <p id="cu-invite-help" className="text-caption text-muted-foreground">
+                {emailValid
+                  ? 'L\'utente riceve username e password temporanea e dovrà sceglierne una nuova al primo accesso.'
+                  : 'Inserisci un\'email valida per poter inviare l\'invito.'}
+              </p>
+            </div>
+          </div>
           {error && <Callout variant="destructive">{error}</Callout>}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>Annulla</Button>
-            <Button type="submit" loading={loading}>Crea utente</Button>
+            <Button type="button" variant="outline" onClick={close}>Annulla</Button>
+            <Button type="submit" loading={loading}>{inviteActive ? 'Crea e invia invito' : 'Crea utente'}</Button>
           </DialogFooter>
         </form>
+        )}
       </DialogContent>
     </Dialog>
   )

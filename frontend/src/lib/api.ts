@@ -111,8 +111,8 @@ export const tagsApi = {
 
 // Account (solo admin di sistema): creati in Authentik + utente interno collegato.
 export const adminUsersApi = {
-  create: (data: { username: string; email: string; name?: string; password: string; workspaceId?: string; role?: string }) =>
-    api.post<import('@/types').User>('/admin/users', data).then(r => r.data),
+  create: (data: { username: string; email: string; name?: string; password: string; workspaceId?: string; role?: string; sendInvite?: boolean }) =>
+    api.post<import('@/types').CreatedUser>('/admin/users', data).then(r => r.data),
 }
 
 // Users

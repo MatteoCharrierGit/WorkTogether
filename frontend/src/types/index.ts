@@ -12,6 +12,14 @@ export interface User {
   avatar?: string
 }
 
+/** Risposta di POST /admin/users: l'utente creato più l'esito dell'email di invito. */
+export interface CreatedUser extends User {
+  /** true se l'email con le credenziali è partita. */
+  inviteSent: boolean
+  /** Motivo per cui l'invito non è partito (null se non richiesto o inviato). */
+  inviteError?: string | null
+}
+
 export interface Folder {
   id: string
   parentId?: string
