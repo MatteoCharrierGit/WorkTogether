@@ -171,8 +171,19 @@ Dettagli su token, qualità (audio Opus; screen share 1080p a ~15 fps), presenza
   Se il backend rifiuta l'account (403 con messaggio) la pagina mostra l'errore con *Riprova* /
   *Esci da Authentik*, senza rimandare in automatico ad Authentik (niente loop).
 - **Token**: in `sessionStorage` (user store e state store di oidc-client-ts), mai in localStorage.
-  Rinnovo automatico col **refresh token** 30 s prima della scadenza; `getAccessToken()` lo usa anche
-  su richiesta. All'avvio `initAuth()` (in `main.tsx`) riprende la sessione della scheda.
+  Rinnovo col **refresh token** 30 s prima della scadenza (evento `accessTokenExpiring`); `getAccessToken()`
+  lo usa anche su richiesta. All'avvio `initAuth()` (in `main.tsx`) riprende la sessione della scheda.
+- **Rinnovo single-flight**: `automaticSilentRenew` di oidc-client-ts è **spento**; timer di scadenza,
+  `getAccessToken()` e interceptor del 401 passano tutti da `renewAccessToken()`, che condivide una sola
+  promise. Prima il rinnovo automatico della libreria e `renewAccessToken()` potevano partire insieme
+  con lo stesso refresh token: Authentik lo ruota, il secondo prendeva `invalid_grant` e la richiesta
+  usciva senza token (401, es. sull'heartbeat). Scheda in background (timer rallentati): nessun rinnovo
+  perso, perché ogni chiamata passa da `getAccessToken()` che rinnova un token in scadenza o scaduto.
+  **Più schede**: i token sono nel `sessionStorage` della scheda, quindi ogni scheda ha la sua sessione e
+  il suo refresh token e non si disturbano. Una scheda **duplicata** (copia il `sessionStorage`) parte
+  invece con lo stesso refresh token: la prima che rinnova lo invalida e l'altra, al rinnovo, va alla
+  schermata di accesso (un clic: la sessione Authentik è ancora valida). Comportamento voluto per
+  semplicità (niente `BroadcastChannel`/`navigator.locks`).
 - **401**: l'interceptor rinnova una volta e ripete; se non basta → `/login?returnTo=…&expired=1`.
   Le chiamate `fetch` (stream SSE di Akari) prendono il token da `getAccessToken()`.
 - **WebSocket**: `beforeConnect` usa `getAccessToken()`; il server chiude la connessione quando il

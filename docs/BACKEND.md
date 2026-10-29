@@ -214,6 +214,19 @@ In assenza di JDK/Maven locale, è possibile compilare in un container usa-e-get
   `folders`/`drive_files`, alberatura preservata, dedup dei nomi, cartelle vuote incluse. Accesso a
   qualunque membro (`drive:read`). Lo streaming gira fuori dalla transazione della request (usa solo
   query dei repository), e il re-dispatch `ASYNC` è già `permitAll` in `SecurityConfig`.
+  **Timeout**: `StreamingResponseBody` è una richiesta asincrona; senza un timeout proprio valeva quello
+  di Tomcat (30 s) e le cartelle grandi o lente arrivavano **troncate** (ma con un 200 «finito»), con
+  `AsyncRequestTimeoutException` e «No converter … application/zip» nel log. Ora `DriveController`
+  imposta un timeout solo per questa rotta (`app.drive.zip-timeout`, env `DRIVE_ZIP_TIMEOUT`, default
+  `6h`) tramite un `CallableProcessingInterceptor` registrato sulla richiesta (prima di `startAsync`).
+  Content-Disposition con `filename` ASCII di ripiego e `filename*=UTF-8''…` col nome vero. Cartella
+  inesistente ⇒ 404, di un altro workspace ⇒ 403, sempre in JSON (anche con `Accept: application/zip`:
+  `GlobalExceptionHandler` fissa `Content-Type: application/json`). Se un errore arriva a risposta già
+  iniziata il gestore generico rilancia: Tomcat chiude la connessione e il client vede un download
+  interrotto invece di uno ZIP troncato. Catena: nginx (`proxy_buffering off`, `proxy_read_timeout 3600s`
+  tra due letture, gzip non applicato a `application/zip`) e Caddy (`flush_interval -1`, nessun timeout
+  di risposta) vanno già bene. Test: `DriveFolderZipDownloadTest` (Tomcat vero, timeout async globale
+  a 500 ms), `DriveFolderZipTest` (alberatura, nomi UTF-8, streaming).
 - **Gestione Sprint** (migration **V17**): nuova entità `Sprint` (`SprintStatus PLANNED|ACTIVE|CLOSED`),
   `SprintService`/`SprintController` (`…/sprints`). Avvio/chiusura **manuali** e **admin-only**; indice
   unico parziale `uq_sprint_active` ⇒ **una sola sprint ACTIVE per workspace**. Collegamento Task↔Sprint
