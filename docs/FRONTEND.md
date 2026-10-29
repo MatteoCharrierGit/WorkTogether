@@ -186,3 +186,9 @@ Dettagli su token, qualità (audio Opus; screen share 1080p a ~15 fps), presenza
 - **Nuovi account**: *Amministrazione → Membri → Nuovo utente* (visibile solo all'admin di sistema):
   username, email, nome, password iniziale e ruolo → `POST /api/admin/users`, che crea l'account in
   Authentik e lo aggiunge al workspace. Gli inviti servono solo per account già esistenti.
+  La spunta **«Invia invito per email»** (disattivata, con nota, finché l'email non è valida) manda
+  `sendInvite: true`: l'utente riceve username e password temporanea e al primo accesso Authentik gli
+  chiede di sceglierne una nuova. Esiti: invito partito ⇒ toast di conferma; account creato ma email non
+  partita (`inviteSent: false`) ⇒ il dialog resta aperto con un avviso «Account creato, ma l'email non è
+  partita» e il motivo (niente secondo invio del form: l'account esiste già); errore vero ⇒ messaggio
+  nel dialog come prima.

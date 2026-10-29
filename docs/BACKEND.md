@@ -99,6 +99,16 @@ Gli errori sono normalizzati da `GlobalExceptionHandler` nella forma `{ "error":
 - Errori di Authentik ⇒ messaggi leggibili: username/email già esistenti (409), dati o password
   rifiutati (400 con il dettaglio), token API rifiutato o Authentik irraggiungibile (502), API non
   configurata (503).
+- **Invito per email** (`sendInvite: true`, `service/AccountInviteService`): l'attributo
+  `must_change_password: true` va **nel body del `POST /core/users/`** (basta il permesso `add_user`
+  dell'utente di servizio; una PATCH richiederebbe `change_user`). Dopo la creazione (Authentik + utente
+  interno + workspace) parte un'email Markdown «Il tuo account WorkTogether» con username, password
+  iniziale (in un code span, quindi letterale), link `FRONTEND_BASE_URL` e l'avviso del cambio al primo
+  accesso; il nome è escapato (niente HTML iniettato). Esito in `inviteSent`/`inviteError`: SMTP non
+  configurato (`MailService.isSmtpConfigured()`: host, username, password e mittente) ⇒ nessun tentativo;
+  errore SMTP ⇒ messaggio breve. L'account non viene mai annullato per colpa dell'email. La password non
+  finisce nei log (né il corpo della mail: `MailService.sendEmailOrThrow` non registra nulla).
+- Tutti i body verso Authentik partono come `byte[]` (Content-Length): Authentik non legge il chunked.
 - Gli **inviti** ai workspace restano, ma solo per account **già esistenti** (non creano account);
   anteprima (`GET /api/invitations/{token}`) e accettazione richiedono il login.
 
@@ -115,7 +125,8 @@ Gli errori sono normalizzati da `GlobalExceptionHandler` nella forma `{ "error":
 |---------|----------------|
 | `OidcUserService` | utente interno dall'access token di Authentik (sub, collegamento email, admin iniziale) |
 | `AdminUserService` · `AuthentikClient` | creazione account in Authentik + utente interno |
-| `MailService` | invio email singole (inviti) |
+| `MailService` | invio email singole (inviti ai workspace, credenziali dei nuovi account) |
+| `AccountInviteService` | email con le credenziali iniziali di un account creato dall'admin |
 | `WorkspaceService` | workspace, membri, ruoli; `assertMember`/`assertRole` riusati ovunque |
 | `ElementService` | elementi, gerarchia, progress, assegnatari, tag; eventi a giornata intera |
 | `DriveService` | cartelle/file, upload/download, move/rename/copy, **lock** di modifica |
@@ -154,7 +165,7 @@ Gli errori sono normalizzati da `GlobalExceptionHandler` nella forma `{ "error":
 | Authentik API | `AUTHENTIK_API_URL` (es. `http://authentik-server:9000/api/v3`), `AUTHENTIK_API_TOKEN`, `AUTHENTIK_USER_GROUP` (default `worktogether`) | creazione account dal pannello |
 | Admin iniziale | `ADMIN_INIT_EMAIL` (opz.) | chi accede con questa email verificata diventa admin di sistema |
 | Upload | `UPLOAD_DIR` | volume per allegati/file |
-| Mail | `MAIL_HOST/PORT/USERNAME/PASSWORD`, `app.mail.from` | per Gmail usa una app password |
+| Mail | `MAIL_HOST/PORT/USERNAME/PASSWORD`, `MAIL_FROM` (`app.mail.from`) | SMTP con autenticazione e STARTTLS (porta 587); `MAIL_FROM` vuoto ⇒ mittente = `MAIL_USERNAME`; per Gmail usa una app password |
 | AI | `AI_SECRET` (obbligatorio in produzione; `JWT_SECRET` resta solo come fallback legacy per decifrare le chiavi già salvate), `OPENROUTER_BASE_URL` | le chiavi dei provider sono in DB cifrate |
 | LiveKit | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_TOKEN_TTL` | voce/screen share |
 

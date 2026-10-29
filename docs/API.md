@@ -55,8 +55,18 @@ l'admin di sistema (§2).
 |--------|----------|---------|------|
 | POST | `` | ⭐ | Crea l'account in Authentik (utente + password iniziale + gruppo `AUTHENTIK_USER_GROUP`) e l'utente interno collegato; con `workspaceId` lo aggiunge al workspace (serve essere ADMIN di quel workspace) |
 
-Body: `{ username, email, name?, password (min 8), workspaceId?, role? }` → `201` con l'utente
-(`UserResponse`). Errori: `409` username/email già esistenti (in Authentik o nell'app), `400` dati o
+Body: `{ username, email, name?, password (min 8), workspaceId?, role?, sendInvite? }` → `201` con
+l'utente (campi di `UserResponse`) più `inviteSent` (boolean) e `inviteError` (stringa o `null`).
+
+`sendInvite: true` (default `false`): l'utente nasce in Authentik con `attributes.must_change_password = true`
+(al primo accesso il flusso `worktogether-accesso` gli chiede una nuova password, vedi DEPLOY.md §3) e riceve
+un'email con username, password iniziale e link al sito (`FRONTEND_BASE_URL`). L'invio **non** fa fallire la
+richiesta: se SMTP non è configurato (`MAIL_HOST`, `MAIL_USERNAME`, `MAIL_PASSWORD` o mittente vuoti) non viene
+nemmeno tentato e si ottiene `inviteSent: false, inviteError: "SMTP non configurato"`; se il server SMTP
+rifiuta o non risponde, `inviteSent: false` e `inviteError` con il motivo. L'account resta creato in entrambi i
+casi. Senza `sendInvite`: `inviteSent: false, inviteError: null`, nessun obbligo di cambio password.
+
+Errori: `409` username/email già esistenti (in Authentik o nell'app), `400` dati o
 password rifiutati da Authentik (messaggio con il dettaglio), `502` Authentik irraggiungibile o token
 API rifiutato, `503` API di Authentik non configurata.
 

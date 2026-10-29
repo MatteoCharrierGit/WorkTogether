@@ -94,6 +94,59 @@ possibile ma toglie al backend la creazione degli utenti.
 Aggiungere l'amministratore iniziale al gruppo (una volta, a mano, dall'interfaccia: Gruppi, `worktogether`,
 Utenti, Aggiungi utente esistente), altrimenti non potrà entrare.
 
+### Cambio password obbligatorio al primo accesso (proposta)
+
+Serve alla spunta «Invia invito per email» del dialog *Nuovo utente*: il backend crea l'utente con
+`attributes.must_change_password = true`, e il flusso `worktogether-accesso` deve chiedergli una nuova
+password. La versione del blueprint che lo fa è **`/home/akari/srv-tmp/wt/infra-proposte/worktogether-cambio-password.yaml`**:
+è `worktogether.yaml` più soli oggetti nuovi (prefisso `worktogether-`), con lo stesso `metadata.name`, quindi
+va copiata **al posto** di `worktogether.yaml`, non accanto:
+
+```bash
+cd ~/srv/infra/authentik/blueprints
+cp worktogether.yaml ~/akari-archive/worktogether.yaml.bak-$(date +%Y%m%d)    # copia di sicurezza
+cp /home/akari/srv-tmp/wt/infra-proposte/worktogether-cambio-password.yaml worktogether.yaml
+# il worker lo riapplica da solo; per non aspettare:
+cd ~/srv/infra/authentik && docker compose exec worker ak apply_blueprint /blueprints/custom/worktogether.yaml
+```
+
+(`./blueprints` è montata in `/blueprints/custom` sia nel server sia nel worker). Verifica in *Flussi e stage → Flussi → worktogether-accesso →
+Associazioni stage*: dopo `worktogether-mfa` (20) compaiono `worktogether-cambio-password` (30) e
+`worktogether-cambio-password-scrittura` (40), ciascuno con la policy `worktogether-deve-cambiare-password`.
+
+Cosa aggiunge:
+- `worktogether-deve-cambiare-password` (policy di espressione): vera solo se
+  `request.context["pending_user"].attributes["must_change_password"]` è `true` (booleano o testo).
+  Legata ai due binding con `evaluate_on_plan: false` e `re_evaluate_policies: true` (alla pianificazione
+  l'utente non è ancora noto).
+- `worktogether-cambio-password` (prompt): avviso, «Nuova password», «Ripeti la nuova password» (due campi
+  password: lo stage controlla che coincidano) e un campo nascosto `attributes.must_change_password` =
+  `"false"`. Policy di validazione: `worktogether-password-robusta` (8 caratteri, zxcvbn ≥ 2, niente HIBP) e
+  `worktogether-password-diversa` (rifiuta la password temporanea).
+- `worktogether-cambio-password-scrittura` (user_write, `user_creation_mode: never_create`): salva la nuova
+  password e l'attributo, che resta come testo `"false"`.
+
+Prova a mano, dopo l'applicazione: crea dal pannello un utente di prova con la spunta attiva (o, senza
+SMTP, controlla in Authentik *Directory → Utenti → utente → Attributi* che ci sia `must_change_password: true`);
+apri `https://worktogether.mchaservice.tech` in una finestra anonima, entra con username e password
+temporanea: dopo la password deve comparire la richiesta della nuova. Prova la stessa password temporanea
+(rifiutata: «deve essere diversa»), una password corta (rifiutata), due password diverse (rifiutate), poi una
+valida: si entra nell'app e l'attributo diventa `"false"`. Esci e rientra con la nuova: nessuna richiesta.
+La temporanea non funziona più. Un utente creato senza spunta entra senza richieste. Poi elimina l'utente di
+prova (in Authentik e, se serve, nel pannello).
+
+Note: finché il blueprint non è applicato, la spunta manda comunque l'email ma Authentik non impone il
+cambio. Un reset della password fatto dall'admin in Authentik non rimette l'obbligo: per farlo, imposta a
+mano l'attributo `must_change_password: true` sull'utente.
+
+### Email (invito con le credenziali)
+
+Variabili in `deploy/.env`, vuote = nessuna email (l'account si crea comunque e il pannello avvisa
+«SMTP non configurato»): `MAIL_HOST`, `MAIL_PORT` (587, STARTTLS sempre attivo e autenticazione
+obbligatoria, come in `application.yml`), `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`. Se `MAIL_FROM` è vuoto il
+mittente è `MAIL_USERNAME`; se è un'altra casella, il server SMTP deve consentire di spedire a suo nome (con Gmail:
+alias verificato in «Invia messaggio come»). Dopo averle impostate: `docker compose up -d backend`.
+
 ## 4. Token dell'utente di servizio
 
 Il token non può stare nel blueprint. Dall'interfaccia: Directory, Token e password app, Crea, identificatore
