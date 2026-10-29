@@ -64,6 +64,10 @@ app:
     init-email: ${ADMIN_INIT_EMAIL:}
   upload:
     dir: ${UPLOAD_DIR:/app/uploads}
+  drive:
+    # Tempo massimo per scaricare una cartella come ZIP (streaming asincrono: senza questo valeva il
+    # timeout di Tomcat di 30 s e lo ZIP arrivava troncato). Solo per quella rotta.
+    zip-timeout: ${DRIVE_ZIP_TIMEOUT:6h}
   ai:
     # Segreto per cifrare le chiavi dei provider AI a riposo. Obbligatorio in produzione.
     # JWT_SECRET resta solo come fallback legacy: le installazioni senza AI_SECRET cifravano con
